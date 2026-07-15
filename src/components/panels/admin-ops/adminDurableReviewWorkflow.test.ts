@@ -13,8 +13,13 @@ const sessionB = "sess-b|2F4OperatorB";
 const start = (
   state: AdminDurableReviewWorkflowState,
   operation: Parameters<typeof nextAdminDurableReviewRequestToken>[1],
+  expectedContentHash?: string,
 ) => {
-  const token = nextAdminDurableReviewRequestToken(state, operation);
+  const token = nextAdminDurableReviewRequestToken(
+    state,
+    operation,
+    expectedContentHash ? { expectedContentHash } : undefined,
+  );
   return {
     state: adminDurableReviewWorkflowReducer(state, { token, type: "requestStarted" }),
     token,
@@ -175,12 +180,195 @@ describe("admin durable review workflow", () => {
       reviewState: "pending_review",
     });
     expect(state.reads.detail.lastGood?.data).toEqual(state.reads.detail.current);
-    expect(state.diagnostic).toMatchObject({ code: "BRIDGE_REQUEST_TIMEOUT" });
+    expect(state.diagnostic).toMatchObject({
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      epoch: state.epoch,
+      failedOperation: "detail",
+      retryTarget: {
+        epoch: state.epoch,
+        operation: "detail",
+        selectedCampaignId: "campaign-a",
+        selectedParticipantId: "participant-a",
+        sessionKey: sessionA,
+      },
+      selectedCampaignId: "campaign-a",
+      selectedParticipantId: "participant-a",
+      sessionKey: sessionA,
+    });
     expect(selectAdminDurableReviewCapabilities(state)).toEqual({
       canDecide: false,
       canDownload: false,
       canGenerate: false,
       readOnly: true,
+    });
+  });
+
+  it("keeps download failure independent and retries only its identity-scoped validated hash", () => {
+    const expectedContentHash = "d".repeat(64);
+    let state = createAdminDurableReviewWorkflowState(sessionA);
+    state = adminDurableReviewWorkflowReducer(state, {
+      campaignId: "campaign-a",
+      type: "campaignSelected",
+    });
+    state = adminDurableReviewWorkflowReducer(state, {
+      artifactId: "artifact-a",
+      type: "artifactSelected",
+    });
+
+    const request = start(state, "download", expectedContentHash);
+    state = adminDurableReviewWorkflowReducer(request.state, {
+      failure: {
+        code: "BRIDGE_REQUEST_TIMEOUT",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-download-timeout",
+      },
+      token: request.token,
+      type: "requestFailed",
+    });
+
+    expect(state.status).toBe("ready");
+    expect(state.diagnostic).toBeNull();
+    expect(state.downloadFailure).toMatchObject({
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      failedOperation: "download",
+      retryTarget: {
+        epoch: state.epoch,
+        expectedContentHash,
+        operation: "download",
+        selectedArtifactId: "artifact-a",
+        selectedCampaignId: "campaign-a",
+        sessionKey: sessionA,
+      },
+      traceId: "trace-download-timeout",
+    });
+
+    const retry = start(state, "download", expectedContentHash);
+    expect(retry.state.downloadFailure).toBeNull();
+    state = adminDurableReviewWorkflowReducer(retry.state, {
+      token: retry.token,
+      type: "downloadSucceeded",
+    });
+
+    expect(state.downloadFailure).toBeNull();
+    expect(state.status).toBe("ready");
+  });
+
+  it("ignores superseded download responses and never exposes command retries", () => {
+    const expectedContentHash = "d".repeat(64);
+    let state = createAdminDurableReviewWorkflowState(sessionA);
+    state = adminDurableReviewWorkflowReducer(state, {
+      campaignId: "campaign-a",
+      type: "campaignSelected",
+    });
+    state = adminDurableReviewWorkflowReducer(state, {
+      artifactId: "artifact-a",
+      type: "artifactSelected",
+    });
+    const first = start(state, "download", expectedContentHash);
+    const retry = start(first.state, "download", expectedContentHash);
+    state = adminDurableReviewWorkflowReducer(retry.state, {
+      token: retry.token,
+      type: "downloadSucceeded",
+    });
+
+    const lateFailure = adminDurableReviewWorkflowReducer(state, {
+      failure: {
+        code: "BRIDGE_REQUEST_TIMEOUT",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-late-download",
+      },
+      token: first.token,
+      type: "requestFailed",
+    });
+
+    expect(lateFailure).toBe(state);
+    expect(state.downloadFailure).toBeNull();
+
+    for (const operation of ["decision", "generate"] as const) {
+      const command = start(state, operation);
+      state = adminDurableReviewWorkflowReducer(command.state, {
+        failure: {
+          code: "BRIDGE_REQUEST_TIMEOUT",
+          reconnectRequired: false,
+          retryable: true,
+          traceId: `trace-${operation}`,
+        },
+        token: command.token,
+        type: "requestFailed",
+      });
+      expect(state.diagnostic).toMatchObject({
+        failedOperation: operation,
+        retryTarget: null,
+      });
+    }
+  });
+
+  it("clears a failed download target on Artifact or session identity changes", () => {
+    const expectedContentHash = "d".repeat(64);
+    let state = createAdminDurableReviewWorkflowState(sessionA);
+    state = adminDurableReviewWorkflowReducer(state, {
+      campaignId: "campaign-a",
+      type: "campaignSelected",
+    });
+    state = adminDurableReviewWorkflowReducer(state, {
+      artifactId: "artifact-a",
+      type: "artifactSelected",
+    });
+    const artifactARequest = start(state, "download", expectedContentHash);
+    state = adminDurableReviewWorkflowReducer(artifactARequest.state, {
+      failure: {
+        code: "BRIDGE_REQUEST_TIMEOUT",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-artifact-a",
+      },
+      token: artifactARequest.token,
+      type: "requestFailed",
+    });
+    expect(state.downloadFailure).not.toBeNull();
+
+    const artifactB = adminDurableReviewWorkflowReducer(state, {
+      artifactId: "artifact-b",
+      type: "artifactSelected",
+    });
+    expect(artifactB.downloadFailure).toBeNull();
+    expect(artifactB.identity.selectedArtifactId).toBe("artifact-b");
+
+    const lateArtifactA = adminDurableReviewWorkflowReducer(artifactB, {
+      failure: {
+        code: "BRIDGE_REQUEST_TIMEOUT",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-late-artifact-a",
+      },
+      token: artifactARequest.token,
+      type: "requestFailed",
+    });
+    expect(lateArtifactA).toBe(artifactB);
+
+    const artifactBRequest = start(artifactB, "download", "e".repeat(64));
+    state = adminDurableReviewWorkflowReducer(artifactBRequest.state, {
+      failure: {
+        code: "BRIDGE_REQUEST_TIMEOUT",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-artifact-b",
+      },
+      token: artifactBRequest.token,
+      type: "requestFailed",
+    });
+    state = adminDurableReviewWorkflowReducer(state, {
+      sessionKey: sessionB,
+      type: "sessionChanged",
+    });
+
+    expect(state.downloadFailure).toBeNull();
+    expect(state.identity).toMatchObject({
+      selectedArtifactId: null,
+      selectedCampaignId: null,
+      sessionKey: sessionB,
     });
   });
 

@@ -48,6 +48,7 @@ export interface AdminDurableReviewIdentity {
 }
 
 export interface AdminDurableReviewRequestToken extends AdminDurableReviewIdentity {
+  expectedContentHash?: string;
   epoch: number;
   operation: AdminDurableReviewOperation;
   sequence: number;
@@ -61,6 +62,29 @@ export interface AdminDurableReviewWorkflowFailure {
   traceId: string;
 }
 
+export interface AdminDurableReviewReadRetryTarget extends AdminDurableReviewIdentity {
+  epoch: number;
+  operation: AdminDurableReviewReadOperation;
+}
+
+export interface AdminDurableReviewDownloadRetryTarget extends AdminDurableReviewIdentity {
+  epoch: number;
+  expectedContentHash: string;
+  operation: "download";
+}
+
+export type AdminDurableReviewRetryTarget =
+  | AdminDurableReviewDownloadRetryTarget
+  | AdminDurableReviewReadRetryTarget;
+
+export interface AdminDurableReviewOperationFailure
+  extends AdminDurableReviewIdentity, AdminDurableReviewWorkflowFailure {
+  epoch: number;
+  failedOperation: AdminDurableReviewOperation;
+  retryTarget: AdminDurableReviewRetryTarget | null;
+  sequence: number;
+}
+
 export interface AdminDurableReviewLastGood<T = unknown> {
   data: T;
   identityKey: string;
@@ -68,7 +92,7 @@ export interface AdminDurableReviewLastGood<T = unknown> {
 
 export interface AdminDurableReviewReadSlot<T = unknown> {
   current: T | null;
-  failure: AdminDurableReviewWorkflowFailure | null;
+  failure: AdminDurableReviewOperationFailure | null;
   lastGood: AdminDurableReviewLastGood<T> | null;
   status: "blocked" | "degraded" | "idle" | "loading" | "ready";
 }
@@ -98,7 +122,8 @@ export type AdminDurableReviewRefreshState = Record<
 
 export interface AdminDurableReviewWorkflowState {
   activeRequests: Partial<Record<AdminDurableReviewOperation, AdminDurableReviewRequestToken>>;
-  diagnostic: AdminDurableReviewWorkflowFailure | null;
+  diagnostic: AdminDurableReviewOperationFailure | null;
+  downloadFailure: AdminDurableReviewOperationFailure | null;
   draft: AdminDurableReviewDraft;
   epoch: number;
   identity: AdminDurableReviewIdentity;
@@ -213,6 +238,7 @@ export const createAdminDurableReviewWorkflowState = (
 ): AdminDurableReviewWorkflowState => ({
   activeRequests: {},
   diagnostic: null,
+  downloadFailure: null,
   draft: initialDraft(),
   epoch: 0,
   identity: emptyIdentity(sessionKey),
@@ -282,13 +308,24 @@ const tokenMatches = (
   && token.sessionKey === active.sessionKey
   && token.selectedCampaignId === active.selectedCampaignId
   && token.selectedParticipantId === active.selectedParticipantId
-  && token.selectedArtifactId === active.selectedArtifactId;
+  && token.selectedArtifactId === active.selectedArtifactId
+  && token.expectedContentHash === active.expectedContentHash;
+
+const sha256Pattern = /^[a-f0-9]{64}$/u;
+
+interface AdminDurableReviewRequestOptions {
+  expectedContentHash: string;
+}
 
 export const nextAdminDurableReviewRequestToken = (
   state: AdminDurableReviewWorkflowState,
   operation: AdminDurableReviewOperation,
+  options?: AdminDurableReviewRequestOptions,
 ): AdminDurableReviewRequestToken => ({
   ...state.identity,
+  ...(operation === "download" && sha256Pattern.test(options?.expectedContentHash ?? "")
+    ? { expectedContentHash: options?.expectedContentHash }
+    : {}),
   epoch: state.epoch,
   operation,
   sequence: state.sequences[operation] + 1,
@@ -310,6 +347,7 @@ const resetForSession = (
   ...state,
   activeRequests: {},
   diagnostic: null,
+  downloadFailure: null,
   draft: initialDraft(),
   epoch: state.epoch + 1,
   identity: emptyIdentity(sessionKey),
@@ -326,6 +364,7 @@ const resetForCampaign = (
   ...state,
   activeRequests: {},
   diagnostic: null,
+  downloadFailure: null,
   draft: initialDraft(),
   epoch: state.epoch + 1,
   identity: {
@@ -352,6 +391,7 @@ const resetForParticipant = (
   ...state,
   activeRequests: {},
   diagnostic: null,
+  downloadFailure: null,
   draft: {
     ...state.draft,
     decision: "approved",
@@ -378,6 +418,7 @@ const resetForArtifact = (
   ...state,
   activeRequests: {},
   diagnostic: null,
+  downloadFailure: null,
   epoch: state.epoch + 1,
   identity: { ...state.identity, selectedArtifactId: artifactId },
   reads: { ...state.reads, artifactDetail: emptyReadSlot() },
@@ -393,7 +434,7 @@ const blockedByIdentityFailure = (failure: AdminDurableReviewWorkflowFailure): b
   || /(?:AUTH|IDENTITY|SESSION)/u.test(failure.code);
 
 const aggregateReadFailure = (reads: AdminDurableReviewReads) => {
-  let degraded: AdminDurableReviewWorkflowFailure | null = null;
+  let degraded: AdminDurableReviewOperationFailure | null = null;
   for (const operation of Object.keys(reads) as AdminDurableReviewReadOperation[]) {
     const slot = reads[operation];
     if (!slot.failure) {
@@ -408,6 +449,51 @@ const aggregateReadFailure = (reads: AdminDurableReviewReads) => {
     ? { diagnostic: degraded, status: "degraded" as const }
     : { diagnostic: null, status: "ready" as const };
 };
+
+const retryTargetFor = (
+  token: AdminDurableReviewRequestToken,
+  failure: AdminDurableReviewWorkflowFailure,
+): AdminDurableReviewRetryTarget | null => {
+  if (!failure.retryable) {
+    return null;
+  }
+  const identity = {
+    epoch: token.epoch,
+    selectedArtifactId: token.selectedArtifactId,
+    selectedCampaignId: token.selectedCampaignId,
+    selectedParticipantId: token.selectedParticipantId,
+    sessionKey: token.sessionKey,
+  };
+  if (readOperations.has(token.operation)) {
+    return {
+      ...identity,
+      operation: token.operation as AdminDurableReviewReadOperation,
+    };
+  }
+  if (token.operation === "download" && sha256Pattern.test(token.expectedContentHash ?? "")) {
+    return {
+      ...identity,
+      expectedContentHash: token.expectedContentHash as string,
+      operation: "download",
+    };
+  }
+  return null;
+};
+
+const operationFailure = (
+  token: AdminDurableReviewRequestToken,
+  failure: AdminDurableReviewWorkflowFailure,
+): AdminDurableReviewOperationFailure => ({
+  ...failure,
+  epoch: token.epoch,
+  failedOperation: token.operation,
+  retryTarget: retryTargetFor(token, failure),
+  selectedArtifactId: token.selectedArtifactId,
+  selectedCampaignId: token.selectedCampaignId,
+  selectedParticipantId: token.selectedParticipantId,
+  sequence: token.sequence,
+  sessionKey: token.sessionKey,
+});
 
 const readOutcome = (
   reads: AdminDurableReviewReads,
@@ -441,11 +527,25 @@ const failRequest = (
     return state;
   }
 
+  const scopedFailure = operationFailure(token, failure);
+
   if (blockedByIdentityFailure(failure)) {
     return {
       ...resetForSession(state, state.identity.sessionKey),
-      diagnostic: failure,
+      diagnostic: { ...scopedFailure, retryTarget: null },
       status: "reconnect",
+    };
+  }
+
+  if (token.operation === "download") {
+    const activeRequests = withoutActive(state, token.operation);
+    const outcome = readOutcome(state.reads, activeRequests);
+    return {
+      ...state,
+      activeRequests,
+      diagnostic: outcome.diagnostic,
+      downloadFailure: scopedFailure,
+      status: outcome.status,
     };
   }
 
@@ -454,7 +554,7 @@ const failRequest = (
     const operation = token.operation as AdminDurableReviewReadOperation;
     reads[operation] = {
       ...reads[operation],
-      failure,
+      failure: scopedFailure,
       status: failure.retryable ? "degraded" : "blocked",
     };
   }
@@ -462,7 +562,7 @@ const failRequest = (
   return {
     ...state,
     activeRequests: withoutActive(state, token.operation),
-    diagnostic: failure,
+    diagnostic: scopedFailure,
     reads,
     status: failure.retryable ? "degraded" : "blocked",
   };
@@ -522,6 +622,10 @@ export const adminDurableReviewWorkflowReducer = (
         !state.identity.sessionKey
         || !identityMatches(event.token, state)
         || event.token.sequence !== state.sequences[event.token.operation] + 1
+        || (event.token.operation === "download"
+          && !sha256Pattern.test(event.token.expectedContentHash ?? ""))
+        || (event.token.operation !== "download"
+          && event.token.expectedContentHash !== undefined)
       ) {
         return state;
       }
@@ -541,6 +645,9 @@ export const adminDurableReviewWorkflowReducer = (
         ...state,
         activeRequests,
         diagnostic: outcome.diagnostic,
+        downloadFailure: event.token.operation === "download"
+          ? null
+          : state.downloadFailure,
         reads,
         sequences: {
           ...state.sequences,
@@ -642,6 +749,7 @@ export const adminDurableReviewWorkflowReducer = (
         ...state,
         activeRequests,
         diagnostic: outcome.diagnostic,
+        downloadFailure: null,
         status: outcome.status,
       };
     }
@@ -704,4 +812,27 @@ export const selectAdminDurableReviewCapabilities = (
     ),
     readOnly,
   };
+};
+
+const retryTargetMatchesIdentity = (
+  target: AdminDurableReviewRetryTarget,
+  state: AdminDurableReviewWorkflowState,
+): boolean => target.epoch === state.epoch
+  && target.sessionKey === state.identity.sessionKey
+  && target.selectedCampaignId === state.identity.selectedCampaignId
+  && target.selectedParticipantId === state.identity.selectedParticipantId
+  && target.selectedArtifactId === state.identity.selectedArtifactId;
+
+export const selectAdminDurableReviewRetryTarget = (
+  state: AdminDurableReviewWorkflowState,
+  operation: AdminDurableReviewOperation,
+): AdminDurableReviewRetryTarget | null => {
+  const target = operation === "download"
+    ? state.downloadFailure?.retryTarget ?? null
+    : state.diagnostic?.retryTarget ?? null;
+  return target
+    && target.operation === operation
+    && retryTargetMatchesIdentity(target, state)
+    ? target
+    : null;
 };

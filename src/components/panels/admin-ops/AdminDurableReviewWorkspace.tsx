@@ -18,6 +18,7 @@ import type {
   AdminArtifactDetailData,
   AdminArtifactDownloadData,
   AdminArtifactListData,
+  AdminArtifactMetadata,
   AdminCampaignListData,
   AdminDurableReviewApiBridge,
   AdminDurableReviewRequestContext,
@@ -34,6 +35,8 @@ import {
   createAdminDurableReviewWorkflowState,
   nextAdminDurableReviewRequestToken,
   selectAdminDurableReviewCapabilities,
+  selectAdminDurableReviewRetryTarget,
+  type AdminDurableReviewDownloadRetryTarget,
   type AdminDurableReviewOperation,
   type AdminDurableReviewReadOperation,
   type AdminDurableReviewRefreshOperation,
@@ -64,18 +67,43 @@ const readOperations = [
   "artifactDetail",
 ] as const satisfies readonly AdminDurableReviewReadOperation[];
 const objectUrlReleaseDelayMs = 0;
+const snapshotTextMaxLength = 4_096;
+const diagnosticCodeMaxLength = 128;
+const diagnosticCodeMaxCount = 64;
+const modalFocusableSelector = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+const unsafeSnapshotTextPattern = /[\u0000-\u001f\u007f-\u009f]/u;
+const diagnosticCodePattern = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u;
 
 const readValue = <T,>(value: unknown): T | null => value && typeof value === "object"
   ? value as T
   : null;
+
+const safeSnapshotText = (value: unknown, maxLength = snapshotTextMaxLength): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0
+    && normalized.length <= maxLength
+    && !unsafeSnapshotTextPattern.test(normalized)
+    ? normalized
+    : null;
+};
 
 const safeSnapshotField = (
   record: Readonly<Record<string, unknown>>,
   fields: readonly string[],
 ): string => {
   for (const field of fields) {
-    const value = record[field];
-    if (typeof value === "string" && value.length > 0 && value.length <= 4_096) {
+    const value = safeSnapshotText(record[field]);
+    if (value) {
       return value;
     }
   }
@@ -87,12 +115,28 @@ const safeSnapshotDetails = (
   fields: readonly string[],
 ): readonly string[] => fields.flatMap((field) => {
   const value = record[field];
-  return (typeof value === "string" && value.length > 0 && value.length <= 4_096)
+  const safeText = safeSnapshotText(value);
+  return safeText
     || (typeof value === "number" && Number.isFinite(value))
     || typeof value === "boolean"
-    ? [`${field}: ${String(value)}`]
+    ? [`${field}: ${safeText ?? String(value)}`]
     : [];
 });
+
+const safeSnapshotDiagnosticDetails = (
+  record: Readonly<Record<string, unknown>>,
+): readonly string[] => {
+  const value = record.diagnosticCodes;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.slice(0, diagnosticCodeMaxCount).flatMap((item) => {
+    const safeCode = safeSnapshotText(item, diagnosticCodeMaxLength);
+    return safeCode && diagnosticCodePattern.test(safeCode)
+      ? [`diagnosticCodes: ${safeCode}`]
+      : [];
+  });
+};
 
 const workflowFailure = (result: Exclude<AdminDurableReviewResult, { ok: true }>) => ({
   code: result.code,
@@ -114,15 +158,42 @@ interface DecisionIdempotencyInput {
   readonly snapshotFingerprint: string;
 }
 
+interface DecisionAttempt extends DecisionIdempotencyInput {
+  readonly attemptNonce: string;
+}
+
+const decisionPayloadIdentity = (input: DecisionIdempotencyInput): string => JSON.stringify([
+  input.operatorAddress,
+  input.campaignId,
+  input.participantId,
+  input.snapshotFingerprint,
+  input.decision,
+  input.reasonCode,
+  input.note,
+]);
+
+const createDecisionAttemptNonce = (): string | null => {
+  try {
+    if (!globalThis.crypto?.getRandomValues) {
+      return null;
+    }
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
+  }
+};
+
 const createDecisionIdempotencyKey = async (
-  input: DecisionIdempotencyInput,
+  input: DecisionAttempt,
 ): Promise<string | null> => {
   try {
-    if (!globalThis.crypto?.subtle) {
+    if (!globalThis.crypto?.subtle || !/^[a-f0-9]{32}$/u.test(input.attemptNonce)) {
       return null;
     }
     const canonicalPayload = JSON.stringify([
-      "admin-decision-v1",
+      "admin-decision-v2",
+      input.attemptNonce,
       input.operatorAddress,
       input.campaignId,
       input.participantId,
@@ -145,6 +216,15 @@ const createDecisionIdempotencyKey = async (
   }
 };
 
+type ArtifactFreshness = "current" | "stale";
+
+const artifactFreshness = (
+  item: AdminArtifactMetadata,
+  winnerSourceFingerprint: string | null,
+): ArtifactFreshness | null => winnerSourceFingerprint
+  ? item.sourceFingerprint === winnerSourceFingerprint ? "current" : "stale"
+  : null;
+
 export const AdminDurableReviewWorkspace = ({
   bridge,
   locale,
@@ -158,15 +238,20 @@ export const AdminDurableReviewWorkspace = ({
     sessionKey,
     createAdminDurableReviewWorkflowState,
   );
-  const [decisionConfirmation, setDecisionConfirmation] = useState<DecisionIdempotencyInput | null>(
+  const [decisionConfirmation, setDecisionConfirmation] = useState<DecisionAttempt | null>(
     null,
   );
+  const ambiguousDecisionAttemptRef = useRef<DecisionAttempt | null>(null);
   const bridgeRef = useRef(bridge);
   const stateRef = useRef(state);
   const sessionRef = useRef(session);
   const controllersRef = useRef<Partial<Record<AdminDurableReviewOperation, AbortController>>>({});
+  const confirmationCancelRef = useRef<HTMLButtonElement | null>(null);
   const confirmationRef = useRef<HTMLDivElement | null>(null);
+  const confirmationInitiatorRef = useRef<HTMLButtonElement | null>(null);
+  const confirmationRestorePendingRef = useRef(false);
   const diagnosticRef = useRef<HTMLDivElement | null>(null);
+  const downloadDiagnosticRef = useRef<HTMLDivElement | null>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const focusedParticipantRef = useRef<string | null>(null);
   const mountedRef = useRef(false);
@@ -234,14 +319,26 @@ export const AdminDurableReviewWorkspace = ({
     traceId: `admin-ui-${operation}-${token.epoch}-${token.sequence}`,
   }), []);
 
-  const beginRequest = useCallback((operation: AdminDurableReviewOperation) => {
+  const beginRequest = useCallback((
+    operation: AdminDurableReviewOperation,
+    options?: { expectedContentHash: string },
+  ) => {
     abortOperation(operation);
     const controller = new AbortController();
     controllersRef.current[operation] = controller;
-    const token = nextAdminDurableReviewRequestToken(stateRef.current, operation);
+    const token = nextAdminDurableReviewRequestToken(stateRef.current, operation, options);
     applyEvent({ token, type: "requestStarted" });
     return { controller, token };
   }, [abortOperation, applyEvent]);
+
+  const closeDecisionConfirmation = useCallback(() => {
+    confirmationRestorePendingRef.current = true;
+    const initiator = confirmationInitiatorRef.current;
+    if (initiator?.isConnected && !initiator.disabled) {
+      initiator.focus();
+    }
+    setDecisionConfirmation(null);
+  }, []);
 
   const finishRequest = useCallback((
     operation: AdminDurableReviewOperation,
@@ -372,10 +469,12 @@ export const AdminDurableReviewWorkspace = ({
   }, [abortAll, applyEvent, loadCampaigns, releaseObjectUrl, sessionKey]);
 
   useEffect(() => {
-    if (state.diagnostic) {
+    if (state.downloadFailure) {
+      downloadDiagnosticRef.current?.focus();
+    } else if (state.diagnostic) {
       diagnosticRef.current?.focus();
     }
-  }, [state.diagnostic]);
+  }, [state.diagnostic, state.downloadFailure]);
 
   const pendingReadOperations = () => readOperations.filter(
     (operation) => Boolean(stateRef.current.activeRequests[operation]),
@@ -454,6 +553,7 @@ export const AdminDurableReviewWorkspace = ({
   };
 
   const selectDecision = (decision: "approved" | "needs_review" | "rejected") => {
+    ambiguousDecisionAttemptRef.current = null;
     applyEvent({ field: "decision", type: "draftChanged", value: decision });
     applyEvent({
       field: "reasonCode",
@@ -462,7 +562,7 @@ export const AdminDurableReviewWorkspace = ({
     });
   };
 
-  const requestDecisionConfirmation = () => {
+  const requestDecisionConfirmation = (initiator: HTMLButtonElement) => {
     const current = stateRef.current;
     const { selectedCampaignId, selectedParticipantId } = current.identity;
     const detail = readValue<AdminReviewDetailData>(current.reads.detail.current);
@@ -476,7 +576,7 @@ export const AdminDurableReviewWorkspace = ({
     ) {
       return;
     }
-    setDecisionConfirmation({
+    const input: DecisionIdempotencyInput = {
       campaignId: selectedCampaignId,
       decision: current.draft.decision,
       note: current.draft.decisionNote.trim(),
@@ -484,11 +584,25 @@ export const AdminDurableReviewWorkspace = ({
       participantId: selectedParticipantId,
       reasonCode: current.draft.reasonCode,
       snapshotFingerprint: detail.snapshot.fingerprint,
+    };
+    const ambiguousAttempt = ambiguousDecisionAttemptRef.current;
+    const retryAttempt = ambiguousAttempt
+      && decisionPayloadIdentity(ambiguousAttempt) === decisionPayloadIdentity(input)
+      ? ambiguousAttempt
+      : null;
+    if (!retryAttempt) {
+      ambiguousDecisionAttemptRef.current = null;
+    }
+    confirmationInitiatorRef.current = initiator;
+    confirmationRestorePendingRef.current = false;
+    setDecisionConfirmation({
+      ...input,
+      attemptNonce: retryAttempt?.attemptNonce ?? createDecisionAttemptNonce() ?? "",
     });
   };
 
-  const submitDecision = async (confirmation: DecisionIdempotencyInput) => {
-    setDecisionConfirmation(null);
+  const submitDecision = async (confirmation: DecisionAttempt) => {
+    closeDecisionConfirmation();
     const current = stateRef.current;
     const { selectedCampaignId, selectedParticipantId } = current.identity;
     const detail = readValue<AdminReviewDetailData>(current.reads.detail.current);
@@ -505,6 +619,7 @@ export const AdminDurableReviewWorkspace = ({
       || current.draft.reasonCode !== confirmation.reasonCode
       || current.draft.decisionNote.trim() !== confirmation.note
     ) {
+      ambiguousDecisionAttemptRef.current = null;
       return;
     }
     const { controller, token } = beginRequest("decision");
@@ -514,7 +629,8 @@ export const AdminDurableReviewWorkspace = ({
         return;
       }
       if (!idempotencyKey) {
-        applyEvent({
+        const before = stateRef.current;
+        const next = applyEvent({
           failure: {
             code: "ADMIN_IDEMPOTENCY_CRYPTO_UNAVAILABLE",
             reconnectRequired: false,
@@ -524,6 +640,9 @@ export const AdminDurableReviewWorkspace = ({
           token,
           type: "requestFailed",
         });
+        if (next !== before) {
+          ambiguousDecisionAttemptRef.current = null;
+        }
         return;
       }
       const result = await bridgeRef.current.submitDecision(
@@ -539,12 +658,17 @@ export const AdminDurableReviewWorkspace = ({
         requestContext("decision", token, controller),
       );
       if (!result.ok) {
-        applyEvent({ failure: workflowFailure(result), token, type: "requestFailed" });
+        const before = stateRef.current;
+        const next = applyEvent({ failure: workflowFailure(result), token, type: "requestFailed" });
+        if (next !== before) {
+          ambiguousDecisionAttemptRef.current = result.retryable ? confirmation : null;
+        }
         return;
       }
       const before = stateRef.current;
       const next = applyEvent({ receipt: result.data, token, type: "decisionSucceeded" });
       if (next !== before) {
+        ambiguousDecisionAttemptRef.current = null;
         consumeRefresh("queue", loadQueue);
         consumeRefresh("detail", loadDetail);
       }
@@ -591,27 +715,48 @@ export const AdminDurableReviewWorkspace = ({
     }
   };
 
-  const downloadArtifact = async () => {
+  const downloadArtifact = async (
+    retryTarget?: AdminDurableReviewDownloadRetryTarget,
+  ) => {
     const current = stateRef.current;
     const { selectedArtifactId, selectedCampaignId } = current.identity;
     const detail = readValue<AdminArtifactDetailData>(current.reads.artifactDetail.current);
     const activeSession = sessionRef.current;
+    const target = retryTarget ?? (selectedCampaignId && selectedArtifactId && detail
+      ? {
+          ...current.identity,
+          epoch: current.epoch,
+          expectedContentHash: detail.artifact.contentHash,
+          operation: "download" as const,
+        }
+      : null);
     if (
       !selectAdminDurableReviewCapabilities(current).canDownload
       || !activeSession
       || !selectedCampaignId
       || !selectedArtifactId
       || !detail
+      || !target
+      || target.epoch !== current.epoch
+      || target.sessionKey !== current.identity.sessionKey
+      || target.selectedCampaignId !== selectedCampaignId
+      || target.selectedParticipantId !== current.identity.selectedParticipantId
+      || target.selectedArtifactId !== selectedArtifactId
+      || detail.artifact.campaignId !== selectedCampaignId
+      || detail.artifact.artifactId !== selectedArtifactId
+      || detail.artifact.contentHash !== target.expectedContentHash
     ) {
       return;
     }
-    const { controller, token } = beginRequest("download");
+    const { controller, token } = beginRequest("download", {
+      expectedContentHash: target.expectedContentHash,
+    });
     try {
       const result = await bridgeRef.current.downloadArtifact(
-        selectedCampaignId,
-        selectedArtifactId,
+        target.selectedCampaignId,
+        target.selectedArtifactId,
         requestContext("download", token, controller),
-        { expectedContentHash: detail.artifact.contentHash },
+        { expectedContentHash: target.expectedContentHash },
       );
       if (!result.ok) {
         applyEvent({ failure: workflowFailure(result), token, type: "requestFailed" });
@@ -682,6 +827,18 @@ export const AdminDurableReviewWorkspace = ({
     }
   };
 
+  const retryFailedRequest = (operation: AdminDurableReviewOperation) => {
+    const target = selectAdminDurableReviewRetryTarget(stateRef.current, operation);
+    if (!target) {
+      return;
+    }
+    if (target.operation === "download") {
+      void downloadArtifact(target);
+      return;
+    }
+    void restartReadOperation(target.operation);
+  };
+
   const refreshWorkspace = () => {
     void loadCampaigns();
     if (stateRef.current.identity.selectedCampaignId) {
@@ -701,10 +858,18 @@ export const AdminDurableReviewWorkspace = ({
   const winners = readValue<AdminWinnerListData>(state.reads.winners.current);
   const artifacts = readValue<AdminArtifactListData>(state.reads.artifacts.current)?.artifacts ?? [];
   const artifactDetail = readValue<AdminArtifactDetailData>(state.reads.artifactDetail.current);
+  const winnerSourceFingerprint = winners?.sourceFingerprint ?? null;
+  const artifactDetailFreshness = artifactDetail
+    ? artifactFreshness(artifactDetail.artifact, winnerSourceFingerprint)
+    : null;
+  const diagnosticRetryOperation = state.diagnostic?.retryTarget?.operation ?? null;
   const capabilities = selectAdminDurableReviewCapabilities(state);
   const reconnectActionRequired = !sessionKey || state.status === "reconnect";
 
   useEffect(() => {
+    ambiguousDecisionAttemptRef.current = null;
+    confirmationInitiatorRef.current = null;
+    confirmationRestorePendingRef.current = false;
     setDecisionConfirmation(null);
   }, [
     detail?.snapshot.fingerprint,
@@ -717,15 +882,59 @@ export const AdminDurableReviewWorkspace = ({
     if (!decisionConfirmation) {
       return;
     }
-    confirmationRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
+    confirmationCancelRef.current?.focus();
+    const containModalFocus = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setDecisionConfirmation(null);
+        event.preventDefault();
+        closeDecisionConfirmation();
+        return;
+      }
+      if (event.key !== "Tab") {
+        return;
+      }
+      const dialog = confirmationRef.current;
+      if (!dialog) {
+        return;
+      }
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(modalFocusableSelector),
+      ).filter((element) => !element.hasAttribute("disabled"));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialog.contains(active))) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+        event.preventDefault();
+        first?.focus();
       }
     };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [decisionConfirmation]);
+    document.addEventListener("keydown", containModalFocus);
+    return () => document.removeEventListener("keydown", containModalFocus);
+  }, [closeDecisionConfirmation, decisionConfirmation]);
+
+  useEffect(() => {
+    if (decisionConfirmation || !confirmationRestorePendingRef.current) {
+      return;
+    }
+    const initiator = confirmationInitiatorRef.current;
+    if (!initiator?.isConnected) {
+      confirmationInitiatorRef.current = null;
+      confirmationRestorePendingRef.current = false;
+      return;
+    }
+    if (!initiator.disabled && capabilities.canDecide) {
+      initiator.focus();
+      confirmationInitiatorRef.current = null;
+      confirmationRestorePendingRef.current = false;
+    }
+  }, [capabilities.canDecide, decisionConfirmation]);
 
   useEffect(() => {
     const participantId = state.identity.selectedParticipantId;
@@ -789,6 +998,39 @@ export const AdminDurableReviewWorkspace = ({
           <ShieldAlert aria-hidden="true" size={18} />
           <span>{state.diagnostic.code}</span>
           <code>{state.diagnostic.traceId}</code>
+          {diagnosticRetryOperation ? (
+            <button
+              className="admin-durable-diagnostic__retry"
+              onClick={() => retryFailedRequest(diagnosticRetryOperation)}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={16} />
+              {copy.durableRetryRequest}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {state.downloadFailure ? (
+        <div
+          className="admin-durable-diagnostic admin-durable-diagnostic--download"
+          ref={downloadDiagnosticRef}
+          role="alert"
+          tabIndex={-1}
+        >
+          <FileDown aria-hidden="true" size={18} />
+          <span>{state.downloadFailure.code}</span>
+          <code>{state.downloadFailure.traceId}</code>
+          {state.downloadFailure.retryTarget?.operation === "download" ? (
+            <button
+              className="admin-durable-diagnostic__retry"
+              onClick={() => retryFailedRequest("download")}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={16} />
+              {copy.durableRetryDownload}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -920,13 +1162,17 @@ export const AdminDurableReviewWorkspace = ({
                           const value = safeSnapshotField(item, ["evidenceHash", "id"]);
                           return (
                             <span key={`${value}:${index}`}>
-                              {safeSnapshotDetails(item, [
-                                "id",
-                                "taskId",
-                                "evidenceHash",
-                                "referenceId",
-                                "diagnosticCode",
-                              ]).map((line) => <code key={line}>{line}</code>)}
+                              {[
+                                ...safeSnapshotDetails(item, [
+                                  "id",
+                                  "taskId",
+                                  "evidenceHash",
+                                  "evidenceRef",
+                                ]),
+                                ...safeSnapshotDiagnosticDetails(item),
+                              ].map((line, detailIndex) => (
+                                <code key={`${line}:${detailIndex}`}>{line}</code>
+                              ))}
                             </span>
                           );
                         })}
@@ -959,11 +1205,14 @@ export const AdminDurableReviewWorkspace = ({
                       <label>
                         <span>{copy.durableReason}</span>
                         <select
-                          onChange={(event) => applyEvent({
-                            field: "reasonCode",
-                            type: "draftChanged",
-                            value: event.currentTarget.value,
-                          })}
+                          onChange={(event) => {
+                            ambiguousDecisionAttemptRef.current = null;
+                            applyEvent({
+                              field: "reasonCode",
+                              type: "draftChanged",
+                              value: event.currentTarget.value,
+                            });
+                          }}
                           value={state.draft.reasonCode}
                         >
                           {reasonCodes[state.draft.decision].map((reason) => (
@@ -976,11 +1225,14 @@ export const AdminDurableReviewWorkspace = ({
                         <textarea
                           aria-label={copy.durableNote}
                           maxLength={1_000}
-                          onChange={(event) => applyEvent({
-                            field: "decisionNote",
-                            type: "draftChanged",
-                            value: event.currentTarget.value,
-                          })}
+                          onChange={(event) => {
+                            ambiguousDecisionAttemptRef.current = null;
+                            applyEvent({
+                              field: "decisionNote",
+                              type: "draftChanged",
+                              value: event.currentTarget.value,
+                            });
+                          }}
                           rows={3}
                           value={state.draft.decisionNote}
                         />
@@ -988,7 +1240,7 @@ export const AdminDurableReviewWorkspace = ({
                       <button
                         className="admin-durable-command"
                         disabled={!capabilities.canDecide}
-                        onClick={requestDecisionConfirmation}
+                        onClick={(event) => requestDecisionConfirmation(event.currentTarget)}
                         type="button"
                       >
                         <Check aria-hidden="true" size={17} />
@@ -1048,18 +1300,28 @@ export const AdminDurableReviewWorkspace = ({
               ) : null}
               <div className="admin-durable-artifact-grid">
                 <div className="admin-durable-artifact-list">
-                  {artifacts.map((item) => (
-                    <button
-                      aria-pressed={state.identity.selectedArtifactId === item.artifactId}
-                      key={item.artifactId}
-                      onClick={() => selectArtifact(item.artifactId)}
-                      type="button"
-                    >
-                      <strong>{item.artifactId}</strong>
-                      <span>{item.format.toUpperCase()} · {item.rowCount} {copy.durableRows}</span>
-                      <code>{item.contentHash}</code>
-                    </button>
-                  ))}
+                  {artifacts.map((item) => {
+                    const freshness = artifactFreshness(item, winnerSourceFingerprint);
+                    return (
+                      <button
+                        aria-pressed={state.identity.selectedArtifactId === item.artifactId}
+                        key={item.artifactId}
+                        onClick={() => selectArtifact(item.artifactId)}
+                        type="button"
+                      >
+                        <strong>{item.artifactId}</strong>
+                        <span>{item.format.toUpperCase()} · {item.rowCount} {copy.durableRows}</span>
+                        {freshness ? (
+                          <span className={`admin-durable-artifact-state admin-durable-artifact-state--${freshness}`}>
+                            {freshness === "current"
+                              ? copy.durableArtifactCurrent
+                              : copy.durableArtifactStale}
+                          </span>
+                        ) : null}
+                        <code>{item.contentHash}</code>
+                      </button>
+                    );
+                  })}
                 </div>
                 <div className="admin-durable-artifact-detail">
                   <h4>{copy.durableArtifactDetail}</h4>
@@ -1068,6 +1330,13 @@ export const AdminDurableReviewWorkspace = ({
                   ) : (
                     <>
                       <strong>{artifactDetail.artifact.fileName}</strong>
+                      {artifactDetailFreshness ? (
+                        <span className={`admin-durable-artifact-state admin-durable-artifact-state--${artifactDetailFreshness}`}>
+                          {artifactDetailFreshness === "current"
+                            ? copy.durableArtifactCurrent
+                            : copy.durableArtifactStale}
+                        </span>
+                      ) : null}
                       <dl className="admin-durable-facts">
                         <div><dt>{copy.durableRows}</dt><dd>{artifactDetail.artifact.rowCount}</dd></div>
                         <div><dt>{copy.durableBytes}</dt><dd>{artifactDetail.artifact.contentBytes}</dd></div>
@@ -1151,7 +1420,8 @@ export const AdminDurableReviewWorkspace = ({
             <div className="admin-durable-confirmation__actions">
               <button
                 className="admin-durable-confirmation__cancel"
-                onClick={() => setDecisionConfirmation(null)}
+                onClick={closeDecisionConfirmation}
+                ref={confirmationCancelRef}
                 type="button"
               >
                 {copy.durableCancel}

@@ -3,6 +3,7 @@ import { act } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  AdminArtifactDownloadData,
   AdminArtifactMetadata,
   AdminCampaignListData,
   AdminCampaignSummary,
@@ -70,6 +71,24 @@ const success = <T,>(data: T, httpStatus = 200) => ({
   ok: true as const,
   traceId: "trace-admin-workspace",
 });
+
+const activateByKeyboard = (element: HTMLElement, key: " " | "Enter") => {
+  element.focus();
+  fireEvent.keyDown(element, { code: key === " " ? "Space" : "Enter", key });
+  fireEvent.click(element, { detail: 0 });
+  fireEvent.keyUp(element, { code: key === " " ? "Space" : "Enter", key });
+};
+
+const changeSelectByKeyboard = (
+  element: HTMLSelectElement,
+  value: string,
+  key: " " | "Enter",
+) => {
+  element.focus();
+  fireEvent.keyDown(element, { code: key === " " ? "Space" : "Enter", key });
+  fireEvent.change(element, { target: { value } });
+  fireEvent.keyUp(element, { code: key === " " ? "Space" : "Enter", key });
+};
 
 const campaign: AdminCampaignSummary = {
   campaignId: "campaign-admin-01",
@@ -150,7 +169,19 @@ const createBridge = () => {
       snapshot: {
         campaignId: campaign.campaignId,
         completions: [{ id: "completion-01", taskId: "task-01" }],
-        evidence: [{ evidenceHash: SHA_B, id: "evidence-01", taskId: "task-01" }],
+        evidence: [{
+          diagnosticCodes: ["MANUAL_REVIEW", "RISK_FLAG"],
+          evidenceHash: SHA_B,
+          evidenceRef: "aelfscan:tx-1",
+          id: "evidence-01",
+          taskId: "task-01",
+        }, {
+          diagnosticCodes: ["SAFE_CODE", `UNSAFE_${"x".repeat(256)}`],
+          evidenceHash: "f".repeat(64),
+          evidenceRef: `unsafe-${"x".repeat(4_096)}`,
+          id: "evidence-unsafe",
+          taskId: "task-02",
+        }],
         fingerprint: SHA_A,
         fingerprintVersion: "review-snapshot-v1" as const,
         participantId: queueItem.participantId,
@@ -262,6 +293,12 @@ describe("AdminDurableReviewWorkspace", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Participant detail" })).toHaveFocus());
     expect(screen.getByText("id: completion-01")).toBeInTheDocument();
     expect(screen.getByText(`evidenceHash: ${SHA_B}`)).toBeInTheDocument();
+    expect(screen.getByText("evidenceRef: aelfscan:tx-1")).toBeInTheDocument();
+    expect(screen.getByText("diagnosticCodes: MANUAL_REVIEW")).toBeInTheDocument();
+    expect(screen.getByText("diagnosticCodes: RISK_FLAG")).toBeInTheDocument();
+    expect(screen.getByText("diagnosticCodes: SAFE_CODE")).toBeInTheDocument();
+    expect(screen.queryByText(/UNSAFE_/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unsafe-x{20}/)).not.toBeInTheDocument();
     expect(await screen.findByText("#1")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
@@ -290,6 +327,10 @@ describe("AdminDurableReviewWorkspace", () => {
     expect(await screen.findByText(/2F4AdminOperatorA \(review_operator\)/)).toBeInTheDocument();
     expect(screen.getByText(artifact.createdAt)).toBeInTheDocument();
     expect(screen.getAllByText(SHA_C).length).toBeGreaterThan(0);
+    expect(within(screen.getByRole("button", { name: /artifact-admin-01/ }))
+      .getByText("Current artifact")).toBeInTheDocument();
+    expect(within(screen.getByRole("heading", { name: "Artifact detail" }).parentElement!)
+      .getByText("Current artifact")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
 
     await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(1));
@@ -304,6 +345,346 @@ describe("AdminDurableReviewWorkspace", () => {
       AdminDurableReviewRequestContext;
     expect(decisionContext.session?.sessionId).toBe("sess-admin-A");
     expect(decisionContext.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("derives localized current and stale Artifact status only from exact source fingerprints", async () => {
+    const staleArtifact: AdminArtifactMetadata = {
+      ...artifact,
+      artifactId: "artifact-admin-02",
+      contentHash: "d".repeat(64),
+      fileName: "campaign-admin-01-stale.json",
+      format: "json",
+      mimeType: "application/json;charset=utf-8",
+      sourceFingerprint: SHA_A,
+    };
+    const bridge = createBridge();
+    bridge.listArtifacts = vi.fn(async () => success({
+      artifacts: [artifact, staleArtifact],
+      campaignId: campaign.campaignId,
+    }));
+    bridge.getArtifactDetail = vi.fn(async (_campaignId, artifactId) => success({
+      artifact: artifactId === staleArtifact.artifactId ? staleArtifact : artifact,
+      sourceManifest: { rows: [], version: "artifact-source-v1" },
+    }));
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="zh-CN" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("活动") as HTMLSelectElement;
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    changeSelectByKeyboard(campaignSelect, campaign.campaignId, "Enter");
+
+    const currentRow = await screen.findByRole("button", { name: /artifact-admin-01/ });
+    const staleRow = await screen.findByRole("button", { name: /artifact-admin-02/ });
+    expect(within(currentRow).getByText("当前 Artifact")).toBeInTheDocument();
+    expect(within(staleRow).getByText("已过期 Artifact")).toBeInTheDocument();
+
+    activateByKeyboard(staleRow, " ");
+    await waitFor(() => expect(bridge.getArtifactDetail).toHaveBeenLastCalledWith(
+      campaign.campaignId,
+      staleArtifact.artifactId,
+      expect.any(Object),
+    ));
+    const artifactPanel = screen.getByRole("heading", { name: "Artifact 详情" }).parentElement;
+    expect(artifactPanel).not.toBeNull();
+    expect(within(artifactPanel!).getByText("已过期 Artifact")).toBeInTheDocument();
+  });
+
+  it("retries only the failed download with the selected Artifact validated expected hash", async () => {
+    const bridge = createBridge();
+    const retryableFailure: AdminDurableReviewResult<AdminArtifactDownloadData> = {
+      bridgeCode: "BRIDGE_REQUEST_FAILED",
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      traceId: "trace-download-retry",
+    };
+    bridge.downloadArtifact = vi.fn<AdminDurableReviewApiBridge["downloadArtifact"]>()
+      .mockResolvedValueOnce(retryableFailure)
+      .mockResolvedValueOnce(success({
+        bytes: new TextEncoder().encode("campaignId,participantId\n"),
+        contentBytes: 25,
+        contentHash: artifact.contentHash,
+        fileName: artifact.fileName,
+        mimeType: artifact.mimeType,
+      }));
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:retried-admin-artifact"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("Campaign") as HTMLSelectElement;
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
+
+    expect(await screen.findByText("trace-download-retry")).toBeInTheDocument();
+    expect(screen.getByText("BRIDGE_REQUEST_TIMEOUT")).toBeInTheDocument();
+    activateByKeyboard(screen.getByRole("button", { name: "Retry download" }), "Enter");
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(2));
+
+    expect(vi.mocked(bridge.downloadArtifact).mock.calls[0]?.[3]).toEqual({
+      expectedContentHash: artifact.contentHash,
+    });
+    expect(vi.mocked(bridge.downloadArtifact).mock.calls[1]?.[3]).toEqual({
+      expectedContentHash: artifact.contentHash,
+    });
+    expect(bridge.submitDecision).not.toHaveBeenCalled();
+    expect(bridge.generateArtifact).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText("trace-download-retry")).not.toBeInTheDocument());
+  });
+
+  it("routes simultaneous read and download retry controls to their own failed operations", async () => {
+    const bridge = createBridge();
+    const readFailure: AdminDurableReviewResult<AdminWinnerListData> = {
+      bridgeCode: "BRIDGE_REQUEST_FAILED",
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      traceId: "trace-winners-retry",
+    };
+    const downloadFailure: AdminDurableReviewResult<AdminArtifactDownloadData> = {
+      bridgeCode: "BRIDGE_REQUEST_FAILED",
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      traceId: "trace-download-retry",
+    };
+    bridge.listWinners = vi.fn<AdminDurableReviewApiBridge["listWinners"]>()
+      .mockResolvedValueOnce(success({
+        campaignId: campaign.campaignId,
+        rows: [],
+        sourceFingerprint: SHA_C,
+        sourceVersion: "artifact-source-v1",
+      }))
+      .mockResolvedValueOnce(readFailure)
+      .mockResolvedValueOnce(success({
+        campaignId: campaign.campaignId,
+        rows: [],
+        sourceFingerprint: SHA_C,
+        sourceVersion: "artifact-source-v1",
+      }));
+    bridge.downloadArtifact = vi.fn<AdminDurableReviewApiBridge["downloadArtifact"]>()
+      .mockResolvedValueOnce(downloadFailure)
+      .mockResolvedValueOnce(success({
+        bytes: new TextEncoder().encode("campaignId,participantId\n"),
+        contentBytes: 25,
+        contentHash: artifact.contentHash,
+        fileName: artifact.fileName,
+        mimeType: artifact.mimeType,
+      }));
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:simultaneous-retry"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
+    expect(await screen.findByText("trace-download-retry")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh review workspace" }));
+    expect(await screen.findByText("trace-winners-retry")).toBeInTheDocument();
+    expect(screen.getByText("trace-download-retry")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry request" }));
+    await waitFor(() => expect(bridge.listWinners).toHaveBeenCalledTimes(3));
+    expect(bridge.downloadArtifact).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry download" }));
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(2));
+  });
+
+  it("isolates a late download response from a newly selected Artifact", async () => {
+    const artifactB: AdminArtifactMetadata = {
+      ...artifact,
+      artifactId: "artifact-admin-02",
+      contentHash: "d".repeat(64),
+      fileName: "campaign-admin-01-current-02.csv",
+    };
+    let resolveArtifactA!: (
+      value: AdminDurableReviewResult<AdminArtifactDownloadData>,
+    ) => void;
+    const bridge = createBridge();
+    bridge.listArtifacts = vi.fn(async () => success({
+      artifacts: [artifact, artifactB],
+      campaignId: campaign.campaignId,
+    }));
+    bridge.getArtifactDetail = vi.fn(async (_campaignId, artifactId) => success({
+      artifact: artifactId === artifactB.artifactId ? artifactB : artifact,
+      sourceManifest: { rows: [], version: "artifact-source-v1" },
+    }));
+    bridge.downloadArtifact = vi.fn<AdminDurableReviewApiBridge["downloadArtifact"]>(
+      (_campaignId, artifactId) => artifactId === artifact.artifactId
+        ? new Promise((resolve) => {
+            resolveArtifactA = resolve;
+          })
+        : Promise.resolve(success({
+            bytes: new TextEncoder().encode("campaignId,participantId\n"),
+            contentBytes: 25,
+            contentHash: artifactB.contentHash,
+            fileName: artifactB.fileName,
+            mimeType: artifactB.mimeType,
+          })),
+    );
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:artifact-b"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(1));
+    const artifactASignal = vi.mocked(bridge.downloadArtifact).mock.calls[0]?.[2].signal;
+
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-02/ }));
+    expect(artifactASignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveArtifactA({
+        bridgeCode: "BRIDGE_REQUEST_FAILED",
+        code: "BRIDGE_REQUEST_TIMEOUT",
+        ok: false,
+        phase: "request",
+        reconnectRequired: false,
+        retryable: true,
+        traceId: "trace-late-artifact-a",
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("trace-late-artifact-a")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry download" })).not.toBeInTheDocument();
+    const downloadB = await screen.findByRole("button", { name: "Download artifact" });
+    await waitFor(() => expect(downloadB).toBeEnabled());
+    fireEvent.click(downloadB);
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(bridge.downloadArtifact).mock.calls[1]?.[3]).toEqual({
+      expectedContentHash: artifactB.contentHash,
+    });
+  });
+
+  it("rotates the decision idempotency key after a successful identical command", async () => {
+    const bridge = createBridge();
+    const submitDecision = vi.fn<AdminDurableReviewApiBridge["submitDecision"]>()
+      .mockResolvedValueOnce(success({
+        campaignId: campaign.campaignId,
+        created: true,
+        decisionId: "decision-admin-first",
+        participantId: queueItem.participantId,
+        snapshotFingerprint: SHA_A,
+        version: 1,
+      }, 201))
+      .mockResolvedValueOnce(success({
+        campaignId: campaign.campaignId,
+        created: true,
+        decisionId: "decision-admin-second",
+        participantId: queueItem.participantId,
+        snapshotFingerprint: SHA_A,
+        version: 2,
+      }, 201));
+    bridge.submitDecision = submitDecision;
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /participant-admin-01/ }));
+    const submit = await screen.findByRole("button", { name: "Submit decision" });
+    await waitFor(() => expect(submit).toBeEnabled());
+
+    for (const expectedCalls of [1, 2]) {
+      fireEvent.click(submit);
+      fireEvent.click(screen.getByRole("button", { name: "Confirm and submit" }));
+      await waitFor(() => expect(submitDecision).toHaveBeenCalledTimes(expectedCalls));
+      await waitFor(() => expect(submit).toBeEnabled());
+    }
+
+    expect(submitDecision.mock.calls[1]?.[2].idempotencyKey)
+      .not.toBe(submitDecision.mock.calls[0]?.[2].idempotencyKey);
+  });
+
+  it("supports keyboard workflow activation, modal containment, Escape, and focus restoration", async () => {
+    const bridge = createBridge();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:keyboard-admin-artifact"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("Campaign") as HTMLSelectElement;
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    changeSelectByKeyboard(campaignSelect, campaign.campaignId, "Enter");
+
+    const queueFilter = screen.getByLabelText("Queue state") as HTMLSelectElement;
+    changeSelectByKeyboard(queueFilter, "pending_review", " ");
+    await waitFor(() => expect(bridge.listReviews).toHaveBeenCalledTimes(2));
+    activateByKeyboard(await screen.findByRole("button", { name: /participant-admin-01/ }), "Enter");
+    await screen.findByText(SHA_A);
+
+    const reject = screen.getByRole("button", { name: "Reject" });
+    activateByKeyboard(reject, " ");
+    expect(reject).toHaveAttribute("aria-pressed", "true");
+
+    const submit = screen.getByRole("button", { name: "Submit decision" });
+    activateByKeyboard(submit, "Enter");
+    const firstDialog = screen.getByRole("dialog", { name: "Confirm decision" });
+    const firstCancel = within(firstDialog).getByRole("button", { name: "Cancel" });
+    const firstConfirm = within(firstDialog).getByRole("button", { name: "Confirm and submit" });
+    await waitFor(() => expect(firstCancel).toHaveFocus());
+
+    fireEvent.keyDown(firstDialog, { key: "Tab", shiftKey: true });
+    expect(firstConfirm).toHaveFocus();
+    fireEvent.keyDown(firstDialog, { key: "Tab" });
+    expect(firstCancel).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(submit).toHaveFocus();
+
+    activateByKeyboard(submit, " ");
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    activateByKeyboard(cancel, "Enter");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(submit).toHaveFocus();
+
+    activateByKeyboard(submit, "Enter");
+    const confirm = await screen.findByRole("button", { name: "Confirm and submit" });
+    activateByKeyboard(confirm, " ");
+    await waitFor(() => expect(bridge.submitDecision).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(submit).toBeEnabled());
+    await waitFor(() => expect(submit).toHaveFocus());
+
+    const jsonFormat = screen.getByRole("button", { name: "JSON" });
+    activateByKeyboard(jsonFormat, "Enter");
+    expect(jsonFormat).toHaveAttribute("aria-pressed", "true");
+    activateByKeyboard(screen.getByRole("button", { name: "Generate artifact" }), " ");
+    await waitFor(() => expect(bridge.generateArtifact).toHaveBeenCalledTimes(1));
+
+    activateByKeyboard(await screen.findByRole("button", { name: /artifact-admin-01/ }), "Enter");
+    const download = await screen.findByRole("button", { name: "Download artifact" });
+    await waitFor(() => expect(download).toBeEnabled());
+    activateByKeyboard(download, " ");
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(1));
   });
 
   it("exposes command pending state and keeps duplicate decision submission disabled", async () => {

@@ -242,6 +242,26 @@ h1 {
   color: #475569;
 }
 
+.admin-durable-diagnostic__retry {
+  min-height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: #ffffff;
+  color: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-durable-diagnostic__retry:hover,
+.admin-durable-diagnostic__retry:focus-visible {
+  background: #fff7ed;
+}
+
 .admin-durable-toolbar {
   min-width: 0;
   display: grid;
@@ -367,7 +387,8 @@ h1 {
 }
 
 .admin-durable-queue-row:hover,
-.admin-durable-queue-row[aria-pressed="true"] {
+.admin-durable-queue-row[aria-pressed="true"],
+.admin-durable-queue-row:focus-visible {
   border-color: #0f766e;
   background: #f0fdfa;
 }
@@ -648,7 +669,8 @@ h1 {
 }
 
 .admin-durable-artifact-list button:hover,
-.admin-durable-artifact-list button[aria-pressed="true"] {
+.admin-durable-artifact-list button[aria-pressed="true"],
+.admin-durable-artifact-list button:focus-visible {
   border-color: #2563eb;
   background: #eff6ff;
 }
@@ -657,6 +679,31 @@ h1 {
 .admin-durable-artifact-list code {
   color: #64748b;
   font-size: 0.73rem;
+}
+
+.admin-durable-artifact-list .admin-durable-artifact-state,
+.admin-durable-artifact-detail .admin-durable-artifact-state {
+  width: fit-content;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.admin-durable-artifact-state--current {
+  border-color: #15803d;
+  background: #f0fdf4;
+  color: #166534 !important;
+}
+
+.admin-durable-artifact-state--stale {
+  border-color: #d97706;
+  background: #fffbeb;
+  color: #92400e !important;
 }
 
 .admin-durable-artifact-detail {
