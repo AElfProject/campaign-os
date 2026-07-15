@@ -105,6 +105,7 @@ export type AdminDurableReviewReads = Record<
 export interface AdminDurableReviewDraft {
   artifactFormat: AdminDurableReviewArtifactFormat;
   decision: AdminDurableReviewDecision;
+  decisionExplicitlySelected: boolean;
   decisionNote: string;
   queueState: AdminDurableReviewQueueState;
   reasonCode: string;
@@ -221,8 +222,19 @@ const initialSequences = (): Record<AdminDurableReviewOperation, number> =>
 const initialDraft = (): AdminDurableReviewDraft => ({
   artifactFormat: "csv",
   decision: "approved",
+  decisionExplicitlySelected: false,
   decisionNote: "",
   queueState: "all",
+  reasonCode: "evidence_verified",
+});
+
+const resetDecisionDraft = (
+  draft: AdminDurableReviewDraft,
+): AdminDurableReviewDraft => ({
+  ...draft,
+  decision: "approved",
+  decisionExplicitlySelected: false,
+  decisionNote: "",
   reasonCode: "evidence_verified",
 });
 
@@ -398,12 +410,7 @@ const resetForParticipant = (
   activeRequests: {},
   diagnostic: null,
   downloadFailure: null,
-  draft: {
-    ...state.draft,
-    decision: "approved",
-    decisionNote: "",
-    reasonCode: "evidence_verified",
-  },
+  draft: resetDecisionDraft(state.draft),
   epoch: state.epoch + 1,
   identity: { ...state.identity, selectedParticipantId: participantId },
   lastReceipts: { ...state.lastReceipts, decision: null },
@@ -583,7 +590,14 @@ const updateDraft = (
     return { ...state, draft: { ...state.draft, artifactFormat: value as AdminDurableReviewArtifactFormat } };
   }
   if (field === "decision" && decisions.has(value as AdminDurableReviewDecision)) {
-    return { ...state, draft: { ...state.draft, decision: value as AdminDurableReviewDecision } };
+    return {
+      ...state,
+      draft: {
+        ...state.draft,
+        decision: value as AdminDurableReviewDecision,
+        decisionExplicitlySelected: true,
+      },
+    };
   }
   if (field === "queueState" && queueStates.has(value as AdminDurableReviewQueueState)) {
     return { ...state, draft: { ...state.draft, queueState: value as AdminDurableReviewQueueState } };
@@ -705,6 +719,7 @@ export const adminDurableReviewWorkflowReducer = (
         ...state,
         activeRequests,
         diagnostic: outcome.diagnostic,
+        draft: resetDecisionDraft(state.draft),
         lastReceipts: { ...state.lastReceipts, decision: event.receipt },
         refresh: {
           ...state.refresh,
@@ -796,6 +811,7 @@ export const selectAdminDurableReviewCapabilities = (
       && state.identity.sessionKey
       && state.identity.selectedCampaignId
       && state.identity.selectedParticipantId
+      && state.draft.decisionExplicitlySelected
       && state.reads.detail.current
       && state.reads.detail.status === "ready"
       && !state.activeRequests.decision

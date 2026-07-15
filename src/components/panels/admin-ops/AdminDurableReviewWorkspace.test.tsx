@@ -325,9 +325,20 @@ describe("AdminDurableReviewWorkspace", () => {
     expect(await screen.findByText("Approved winners: 0")).toBeInTheDocument();
     expect(screen.queryByText("#1")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    const approveDecision = screen.getByRole("button", { name: "Approve" });
+    const submitDecision = screen.getByRole("button", { name: "Submit decision" });
+    expect(approveDecision).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText("Reason")).toBeDisabled();
+    expect(screen.getByLabelText("Note")).toBeDisabled();
+    expect(submitDecision).toBeDisabled();
+
+    fireEvent.click(approveDecision);
+    expect(approveDecision).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Reason")).toBeEnabled();
+    expect(screen.getByLabelText("Note")).toBeEnabled();
+    expect(submitDecision).toBeEnabled();
     fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Evidence verified." } });
-    fireEvent.click(screen.getByRole("button", { name: "Submit decision" }));
+    fireEvent.click(submitDecision);
 
     const confirmation = screen.getByRole("dialog", { name: "Confirm decision" });
     expect(within(confirmation).getByText(campaign.campaignId)).toBeInTheDocument();
@@ -750,6 +761,8 @@ describe("AdminDurableReviewWorkspace", () => {
     await waitFor(() => expect(downloadAlert).toHaveFocus());
 
     const submit = await screen.findByRole("button", { name: "Submit decision" });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     fireEvent.click(screen.getByRole("button", { name: "Confirm and submit" }));
 
@@ -794,13 +807,16 @@ describe("AdminDurableReviewWorkspace", () => {
     fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
     fireEvent.click(await screen.findByRole("button", { name: /participant-admin-01/ }));
     const submit = await screen.findByRole("button", { name: "Submit decision" });
-    await waitFor(() => expect(submit).toBeEnabled());
+    const approve = screen.getByRole("button", { name: "Approve" });
+    expect(submit).toBeDisabled();
 
     for (const expectedCalls of [1, 2]) {
+      fireEvent.click(approve);
+      await waitFor(() => expect(submit).toBeEnabled());
       fireEvent.click(submit);
       fireEvent.click(screen.getByRole("button", { name: "Confirm and submit" }));
       await waitFor(() => expect(submitDecision).toHaveBeenCalledTimes(expectedCalls));
-      await waitFor(() => expect(submit).toBeEnabled());
+      await waitFor(() => expect(submit).toBeDisabled());
     }
 
     expect(submitDecision.mock.calls[1]?.[2].idempotencyKey)
@@ -856,8 +872,8 @@ describe("AdminDurableReviewWorkspace", () => {
     const confirm = await screen.findByRole("button", { name: "Confirm and submit" });
     activateByKeyboard(confirm, " ");
     await waitFor(() => expect(bridge.submitDecision).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(submit).toBeEnabled());
-    await waitFor(() => expect(submit).toHaveFocus());
+    await waitFor(() => expect(submit).toBeDisabled());
+    expect(reject).toHaveAttribute("aria-pressed", "false");
 
     const jsonFormat = screen.getByRole("button", { name: "JSON" });
     activateByKeyboard(jsonFormat, "Enter");
@@ -886,6 +902,7 @@ describe("AdminDurableReviewWorkspace", () => {
     fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
     fireEvent.click(await screen.findByRole("button", { name: /participant-admin-01/ }));
     const submit = await screen.findByRole("button", { name: "Submit decision" });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     fireEvent.click(screen.getByRole("button", { name: "Confirm and submit" }));
@@ -944,6 +961,7 @@ describe("AdminDurableReviewWorkspace", () => {
     fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
     fireEvent.click(await screen.findByRole("button", { name: /participant-admin-01/ }));
     const submit = await screen.findByRole("button", { name: "Submit decision" });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     fireEvent.click(screen.getByRole("button", { name: "Confirm and submit" }));

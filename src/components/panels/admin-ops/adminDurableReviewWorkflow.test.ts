@@ -428,6 +428,11 @@ describe("admin durable review workflow", () => {
       token: initial.token,
       type: "readSucceeded",
     });
+    state = adminDurableReviewWorkflowReducer(state, {
+      field: "decision",
+      type: "draftChanged",
+      value: "approved",
+    });
     expect(selectAdminDurableReviewCapabilities(state).canDecide).toBe(true);
 
     state = start(state, "detail").state;
@@ -607,6 +612,7 @@ describe("admin durable review workflow", () => {
     expect(state.draft).toEqual({
       artifactFormat: "csv",
       decision: "approved",
+      decisionExplicitlySelected: false,
       decisionNote: "",
       queueState: "all",
       reasonCode: "evidence_verified",
@@ -637,6 +643,7 @@ describe("admin durable review workflow", () => {
     expect(state.draft).toEqual({
       artifactFormat: "json",
       decision: "approved",
+      decisionExplicitlySelected: false,
       decisionNote: "",
       queueState: "stale",
       reasonCode: "evidence_verified",

@@ -582,6 +582,7 @@ export const AdminDurableReviewWorkspace = ({
     const activeSession = sessionRef.current;
     if (
       !selectAdminDurableReviewCapabilities(current).canDecide
+      || !current.draft.decisionExplicitlySelected
       || !activeSession
       || !selectedCampaignId
       || !selectedParticipantId
@@ -628,6 +629,7 @@ export const AdminDurableReviewWorkspace = ({
       || !detail
       || detail.snapshot.fingerprint !== confirmation.snapshotFingerprint
       || activeSession.address !== confirmation.operatorAddress
+      || !current.draft.decisionExplicitlySelected
       || current.draft.decision !== confirmation.decision
       || current.draft.reasonCode !== confirmation.reasonCode
       || current.draft.decisionNote.trim() !== confirmation.note
@@ -1212,17 +1214,20 @@ export const AdminDurableReviewWorkspace = ({
                     <div className="admin-durable-decision">
                       <div aria-label={copy.durableDecision} className="admin-durable-segments" role="group">
                         <button
-                          aria-pressed={state.draft.decision === "approved"}
+                          aria-pressed={state.draft.decisionExplicitlySelected
+                            && state.draft.decision === "approved"}
                           onClick={() => selectDecision("approved")}
                           type="button"
                         ><Check aria-hidden="true" size={16} />{copy.durableApprove}</button>
                         <button
-                          aria-pressed={state.draft.decision === "rejected"}
+                          aria-pressed={state.draft.decisionExplicitlySelected
+                            && state.draft.decision === "rejected"}
                           onClick={() => selectDecision("rejected")}
                           type="button"
                         ><X aria-hidden="true" size={16} />{copy.durableReject}</button>
                         <button
-                          aria-pressed={state.draft.decision === "needs_review"}
+                          aria-pressed={state.draft.decisionExplicitlySelected
+                            && state.draft.decision === "needs_review"}
                           onClick={() => selectDecision("needs_review")}
                           type="button"
                         ><AlertTriangle aria-hidden="true" size={16} />{copy.durableNeedsReview}</button>
@@ -1230,6 +1235,7 @@ export const AdminDurableReviewWorkspace = ({
                       <label>
                         <span>{copy.durableReason}</span>
                         <select
+                          disabled={!state.draft.decisionExplicitlySelected}
                           onChange={(event) => {
                             ambiguousDecisionAttemptRef.current = null;
                             applyEvent({
@@ -1249,6 +1255,7 @@ export const AdminDurableReviewWorkspace = ({
                         <span>{copy.durableNote}</span>
                         <textarea
                           aria-label={copy.durableNote}
+                          disabled={!state.draft.decisionExplicitlySelected}
                           maxLength={1_000}
                           onChange={(event) => {
                             ambiguousDecisionAttemptRef.current = null;
