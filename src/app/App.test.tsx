@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { act } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AdminDurableReviewApiBridge } from "../api/adminDurableReviewApiBridge";
 import { submitWalletSessionApiPreview, type WalletSessionApiBridgeState } from "../api/walletSessionApiBridge";
 import type {
   OwnerCampaignDetailResult,
@@ -1042,6 +1043,7 @@ describe("Campaign OS app shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
+    expect(screen.getByText("Legacy local Admin preview")).toBeInTheDocument();
     expect(screen.getByText("Analytics overview")).toBeInTheDocument();
     expect(screen.getByText("Risk dashboard")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Anti-Sybil v2 graph intelligence" })).toBeInTheDocument();
@@ -1363,6 +1365,31 @@ const appParticipantBridge = (
   ...overrides,
 });
 
+const appAdminFailure = () => ({
+  bridgeCode: "BRIDGE_REQUEST_FAILED" as const,
+  code: "BRIDGE_REQUEST_FAILED" as const,
+  ok: false as const,
+  phase: "request" as const,
+  reconnectRequired: false,
+  retryable: true,
+  traceId: "trace-app-admin-failed",
+});
+
+const appAdminBridge = (
+  overrides: Partial<AdminDurableReviewApiBridge> = {},
+): AdminDurableReviewApiBridge => ({
+  downloadArtifact: vi.fn(async () => appAdminFailure()),
+  generateArtifact: vi.fn(async () => appAdminFailure()),
+  getArtifactDetail: vi.fn(async () => appAdminFailure()),
+  getReviewDetail: vi.fn(async () => appAdminFailure()),
+  listArtifacts: vi.fn(async () => appAdminFailure()),
+  listCampaigns: vi.fn(async () => appAdminFailure()),
+  listReviews: vi.fn(async () => appAdminFailure()),
+  listWinners: vi.fn(async () => appAdminFailure()),
+  submitDecision: vi.fn(async () => appAdminFailure()),
+  ...overrides,
+});
+
 describe("App Owner campaign authority", () => {
   const submitWalletSession = vi.mocked(submitWalletSessionApiPreview);
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
@@ -1415,6 +1442,46 @@ describe("App Owner campaign authority", () => {
       session: appOwnerSessionA,
       signal: expect.any(AbortSignal),
     }));
+  });
+
+  it("passes the same API-issued wallet session to the Admin durable review bridge", async () => {
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA));
+    const adminBridge = appAdminBridge();
+
+    render(<App adminDurableReviewBridge={adminBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
+
+    await waitFor(() => expect(adminBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(adminBridge.listCampaigns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: appOwnerSessionA,
+        signal: expect.any(AbortSignal),
+      }),
+      { limit: 100 },
+    );
+  });
+
+  it("keeps Admin durable review blocked for an invalid issued-session projection", async () => {
+    const invalidIssuedSession: NormalizedWalletSession = {
+      ...appOwnerSessionA,
+      issuer: {
+        ...appOwnerSessionA.issuer!,
+        referenceId: "invalid-app-admin-session",
+        valid: false,
+      },
+      sessionId: "invalid-app-admin-session",
+    };
+    submitWalletSession.mockResolvedValueOnce(appWalletSessionState(invalidIssuedSession));
+    const adminBridge = appAdminBridge();
+
+    render(<App adminDurableReviewBridge={adminBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
+
+    expect(await screen.findByRole("heading", { name: "Durable Evidence Review" })).toBeInTheDocument();
+    expect(screen.getByText("Reconnect required")).toBeInTheDocument();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
   it("clears session A journey diagnostics before session B feed resolves", async () => {

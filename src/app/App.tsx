@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  createAdminDurableReviewApiBridge,
+  type AdminDurableReviewApiBridge,
+} from "../api/adminDurableReviewApiBridge";
+import {
   createParticipantJourneyApiBridge,
   type ParticipantJourneyApiBridge,
   type ParticipantJourneyMode,
@@ -295,11 +299,16 @@ const applyCampaignMetadata = (fields: readonly CampaignMetadataField[]) => {
 };
 
 export interface AppProps {
+  adminDurableReviewBridge?: AdminDurableReviewApiBridge;
   ownerCampaignBridge?: ProjectOwnerCampaignApiBridge;
   participantJourneyBridge?: ParticipantJourneyApiBridge;
 }
 
-export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps = {}) => {
+export const App = ({
+  adminDurableReviewBridge,
+  ownerCampaignBridge,
+  participantJourneyBridge,
+}: AppProps = {}) => {
   const routeContext = useMemo(
     () => parseCampaignRoutePath(readBrowserPathname()),
     [],
@@ -337,6 +346,15 @@ export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps 
       },
     }),
     [apiBaseUrl, participantJourneyBridge],
+  );
+  const resolvedAdminDurableReviewBridge = useMemo(
+    () => adminDurableReviewBridge ?? createAdminDurableReviewApiBridge({
+      config: {
+        baseUrl: apiBaseUrl,
+        tracePrefix: "admin-durable-review",
+      },
+    }),
+    [adminDurableReviewBridge, apiBaseUrl],
   );
   const ownerSessionReady = isIssuedOwnerSessionReady(
     headerWalletSessionBridgeState,
@@ -488,7 +506,12 @@ export const App = ({ ownerCampaignBridge, participantJourneyBridge }: AppProps 
             walletModalLocale={walletModalLocale}
           />
         ) : (
-          <AdminOpsPanel locale={contentLocale} />
+          <AdminOpsPanel
+            durableReviewBridge={resolvedAdminDurableReviewBridge}
+            locale={locale}
+            onDurableReviewReconnect={openHeaderWalletModal}
+            session={ownerSessionReady ? headerWalletSession : null}
+          />
         )}
       </AppLayout>
       {headerWalletModalOpen ? (

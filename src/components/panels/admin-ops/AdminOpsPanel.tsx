@@ -1,5 +1,9 @@
 import { useState, type CSSProperties } from "react";
 import { CheckCircle2, FileCheck2, FolderOpen, RotateCcw, Save, XCircle, type LucideIcon } from "lucide-react";
+import {
+  createAdminDurableReviewApiBridge,
+  type AdminDurableReviewApiBridge,
+} from "../../../api/adminDurableReviewApiBridge";
 import { createContractWriterRuntimeApiSeededFallbackState } from "../../../api/contractWriterRuntimeApiBridge";
 import {
   campaignDetail,
@@ -68,6 +72,7 @@ import {
   type LiveWalletConnectorLiveEvidenceStatus,
   type LiveWalletConnectorReadiness,
   type MetricTone,
+  type NormalizedWalletSession,
   type P1LocaleActivationEvidenceState,
   type P1LocaleActivationStatus,
   type P1LocaleExpansionReadinessStatus,
@@ -121,10 +126,14 @@ import {
 } from "../../badges/Badges";
 import { ContractWriterRuntimePanel } from "../project-console/ContractWriterRuntimePanel";
 import { adminOpsCopy } from "./copy";
+import { AdminDurableReviewWorkspace } from "./AdminDurableReviewWorkspace";
 
 interface AdminOpsPanelProps {
   campaign?: CampaignShellDetail;
+  durableReviewBridge?: AdminDurableReviewApiBridge;
   locale: SupportedLocale;
+  onDurableReviewReconnect?: () => void;
+  session?: NormalizedWalletSession | null;
 }
 
 type PublishState = "blocker" | "warning" | "ready";
@@ -169,6 +178,8 @@ const rowStyle: CSSProperties = {
   gap: 8,
   justifyContent: "space-between",
 };
+
+const unavailableAdminDurableReviewBridge = createAdminDurableReviewApiBridge();
 
 const companionEvidenceDetailHeaderStyle: CSSProperties = {
   display: "grid",
@@ -2010,7 +2021,10 @@ const walletCompatibilityLabel = (
 
 export const AdminOpsPanel = ({
   campaign = campaignDetail,
+  durableReviewBridge = unavailableAdminDurableReviewBridge,
   locale,
+  onDurableReviewReconnect,
+  session = null,
 }: AdminOpsPanelProps) => {
   const copy = adminOpsCopy[locale];
   const adminOps = createAdminOpsReadModel(campaign);
@@ -3525,7 +3539,15 @@ export const AdminOpsPanel = ({
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
-      <section style={panelStyle}>
+      <AdminDurableReviewWorkspace
+        bridge={durableReviewBridge}
+        locale={locale}
+        onReconnect={onDurableReviewReconnect}
+        session={session}
+      />
+      <div aria-label="Legacy Admin preview" className="admin-ops-legacy-preview">
+        <p className="admin-ops-legacy-preview__label">{copy.durableLegacyPreview}</p>
+        <section style={panelStyle}>
         <div style={rowStyle}>
           <div>
             <p style={labelStyle}>{copy.title}</p>
@@ -10590,7 +10612,8 @@ export const AdminOpsPanel = ({
             </tbody>
           </table>
         </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 };

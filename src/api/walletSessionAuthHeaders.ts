@@ -17,6 +17,8 @@ export type WalletSessionAuthHeaders = Readonly<
   Record<ProtectedWalletSessionAuthHeaderName, string>
 >;
 
+export type WalletSessionRequestedRole = "participant" | "review_operator";
+
 export type WalletSessionAuthHeaderFailureCode =
   | "WALLET_SESSION_AUTH_HEADER_CONFLICT"
   | "WALLET_SESSION_AUTH_INVALID";
@@ -136,8 +138,62 @@ const credentialBoundaryForSession = (session: NormalizedWalletSession): string 
     ? "internal_agent_credential"
     : "ordinary_user_wallet";
 
+const invalidReviewOperatorAuthorityField = (
+  session: NormalizedWalletSession,
+): string | undefined => {
+  const issuer = session.issuer;
+  if (!issuer) {
+    return "session.issuer";
+  }
+  if (issuer.issuerMode !== "local_opaque") {
+    return "session.issuer.issuerMode";
+  }
+  if (issuer.cookieIssued !== false) {
+    return "session.issuer.cookieIssued";
+  }
+  if (issuer.jwtIssued !== false) {
+    return "session.issuer.jwtIssued";
+  }
+  if (issuer.liveSigningExecuted !== false) {
+    return "session.issuer.liveSigningExecuted";
+  }
+
+  const proof = session.proof;
+  if (!proof) {
+    return "session.proof";
+  }
+  if (proof.proofType !== "wallet_signature") {
+    return "session.proof.proofType";
+  }
+  if (proof.trustLevel !== "verified_local") {
+    return "session.proof.trustLevel";
+  }
+  if (proof.status !== "verified") {
+    return "session.proof.status";
+  }
+  if (proof.liveVerificationExecuted !== false) {
+    return "session.proof.liveVerificationExecuted";
+  }
+  if (session.signatureStatus !== "signed") {
+    return "session.signatureStatus";
+  }
+  if (session.verificationStatus !== "verified") {
+    return "session.verificationStatus";
+  }
+  if (session.walletTypeVerified !== true) {
+    return "session.walletTypeVerified";
+  }
+  if (!session.capabilities.includes("SIGN_MESSAGE")) {
+    return "session.capabilities";
+  }
+  return credentialBoundaryForSession(session) === "ordinary_user_wallet"
+    ? undefined
+    : "session.credentialBoundary";
+};
+
 export const createWalletSessionAuthHeaders = (
   value: NormalizedWalletSession | unknown,
+  requestedRole: WalletSessionRequestedRole = "participant",
 ): WalletSessionAuthHeaderResult => {
   try {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -149,6 +205,10 @@ export const createWalletSessionAuthHeaders = (
     const address = transportText(session.address);
     const accountType = transportText(session.accountType);
     const walletSource = transportText(session.walletSource);
+
+    if (requestedRole !== "participant" && requestedRole !== "review_operator") {
+      return invalid("requestedRole");
+    }
 
     if (!sessionId) {
       return invalid("session.sessionId");
@@ -197,12 +257,18 @@ export const createWalletSessionAuthHeaders = (
         return invalid("session.proof.status");
       }
     }
+    if (requestedRole === "review_operator") {
+      const invalidAuthorityField = invalidReviewOperatorAuthorityField(session);
+      if (invalidAuthorityField) {
+        return invalid(invalidAuthorityField);
+      }
+    }
 
     const headers: WalletSessionAuthHeaders = Object.freeze({
       "x-campaign-os-account-type": accountType,
       "x-campaign-os-credential-boundary": credentialBoundaryForSession(session),
       "x-campaign-os-proof-status": proofStatusForSession(session),
-      "x-campaign-os-roles": "participant",
+      "x-campaign-os-roles": requestedRole,
       "x-campaign-os-session-id": sessionId,
       "x-campaign-os-wallet-address": address,
       "x-campaign-os-wallet-source": walletSource,
@@ -217,9 +283,13 @@ export const createWalletSessionAuthHeaders = (
 export const mergeWalletSessionAuthHeaders = (
   authHeaders: WalletSessionAuthHeaders,
   customHeaders?: HeadersInit,
+  additionalProtectedHeaderNames: readonly string[] = [],
 ): WalletSessionAuthHeaderMergeResult => {
   try {
     const normalizedCustomHeaders = new Headers(customHeaders);
+    const requestProtectedHeaderNames = new Set(
+      additionalProtectedHeaderNames.map((name) => name.trim().toLowerCase()),
+    );
     const merged: Record<string, string> = {};
     let failure: WalletSessionAuthHeaderFailure | undefined;
 
@@ -231,7 +301,7 @@ export const mergeWalletSessionAuthHeaders = (
       const name = rawName.trim().toLowerCase();
       const value = transportText(rawValue, maxCustomHeaderValueLength);
 
-      if (forbiddenCustomHeaderNames.has(name)) {
+      if (forbiddenCustomHeaderNames.has(name) || requestProtectedHeaderNames.has(name)) {
         failure = conflict(name);
         return;
       }
