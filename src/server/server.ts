@@ -17,6 +17,7 @@ import { createBackendServiceReadinessReport } from "./backendService";
 import { apiRuntimeContractRoutes } from "./routes";
 import {
   createAdminFailureEnvelope,
+  createServerRequestContext,
   evaluateServerRequestGuard,
   isAdminRequestTarget,
 } from "./serverRequestGuard";
@@ -268,8 +269,13 @@ export const startCampaignOsApiServer = async ({
   const getServiceReadiness = () => getServiceContract().readiness;
 
   const server = createServer((request, response) => {
+    const requestTarget = request.url ?? "/";
+    const adminRequest = isAdminRequestTarget(requestTarget);
+    const guardHeaders = toGuardHeaders(request, runtimeContract.requestGuard.traceHeaderName);
+    const requestContext = createServerRequestContext(guardHeaders, runtimeContract);
+
     if (shutdownState.state !== "running") {
-      const traceId = randomUUID();
+      const traceId = adminRequest ? requestContext.traceId : randomUUID();
       const runtimeError = persistenceUnavailable("server.shutdown").body;
 
       request.resume();
@@ -278,11 +284,12 @@ export const startCampaignOsApiServer = async ({
           response,
           503,
           {
+            ...(adminRequest ? requestContext.corsHeaders : {}),
             connection: "close",
             "content-type": "application/json",
             "x-campaign-os-trace-id": traceId,
           },
-          isAdminRequestTarget(request.url ?? "/")
+          adminRequest
             ? createAdminFailureEnvelope(runtimeError, traceId)
             : createFailureEnvelope({
               error: runtimeError,
@@ -306,10 +313,10 @@ export const startCampaignOsApiServer = async ({
         const guardDecision = evaluateServerRequestGuard({
           body: requestBody.body,
           bodyBytes: requestBody.bodyBytes,
-          headers: toGuardHeaders(request, runtimeContract.requestGuard.traceHeaderName),
+          headers: guardHeaders,
           method: request.method ?? "GET",
-          path: request.url ?? "/",
-        }, runtimeContract, apiRuntimeContractRoutes.length);
+          path: requestTarget,
+        }, runtimeContract, apiRuntimeContractRoutes.length, requestContext);
 
         if (guardDecision.kind === "preflight") {
           writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
@@ -346,7 +353,7 @@ export const startCampaignOsApiServer = async ({
           runtimeResponse.rawBody,
         );
       } catch {
-        const traceId = randomUUID();
+        const traceId = adminRequest ? requestContext.traceId : randomUUID();
         const runtimeError = internalRuntimeError().body;
 
         if (logger) {
@@ -361,10 +368,11 @@ export const startCampaignOsApiServer = async ({
               response,
               500,
               {
+                ...(adminRequest ? requestContext.corsHeaders : {}),
                 "content-type": "application/json",
                 "x-campaign-os-trace-id": traceId,
               },
-              isAdminRequestTarget(request.url ?? "/")
+              adminRequest
                 ? createAdminFailureEnvelope(runtimeError, traceId)
                 : createFailureEnvelope({
                   error: runtimeError,

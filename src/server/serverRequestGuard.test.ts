@@ -222,6 +222,7 @@ describe("server request guard", () => {
       traceId: "trace-unsupported-method",
     });
     expect(unsupportedMethod.headers["x-campaign-os-trace-id"]).toBe("trace-unsupported-method");
+    expect(unsupportedMethod.headers["access-control-allow-origin"]).toBeUndefined();
 
     if (unsupportedMethod.kind !== "rejected") {
       throw new Error("Expected rejected guard decision.");
@@ -251,6 +252,29 @@ describe("server request guard", () => {
     const serialized = JSON.stringify(unsupportedMethod.body).toLowerCase();
     expect(serialized).not.toContain("raw-secret-header");
     expect(serialized).not.toContain("raw-secret-query");
+  });
+
+  it("keeps legacy non-Admin POST rejection headers free of CORS metadata", () => {
+    const rejected = evaluateServerRequestGuard({
+      body: "{\"broken\":",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost:5173",
+        "x-campaign-os-trace-id": "trace-legacy-malformed",
+      },
+      method: "POST",
+      path: "/api/campaigns",
+    }, contract, 10);
+
+    expect(rejected).toMatchObject({
+      kind: "rejected",
+      status: 400,
+      traceId: "trace-legacy-malformed",
+    });
+    expect(rejected.headers).toEqual({
+      "content-type": "application/json; charset=utf-8",
+      "x-campaign-os-trace-id": "trace-legacy-malformed",
+    });
   });
 
   it("keeps guarded failures traceable without serializing secret-like inputs", () => {

@@ -42,6 +42,12 @@ export interface ServerRequestGuardInput {
   path: string;
 }
 
+export interface ServerRequestContext {
+  corsHeaders: Record<string, string>;
+  origin: string | undefined;
+  traceId: string;
+}
+
 export interface ServerRequestAcceptedDecision {
   body?: string;
   headers: Record<string, string>;
@@ -216,6 +222,19 @@ const withCorsHeaders = (
   ...createCorsHeaders(corsPolicy, origin),
 });
 
+export const createServerRequestContext = (
+  headers: ServerGuardHeaders | undefined,
+  contract: Pick<ApiServerRuntimeContract, "corsPolicy" | "requestGuard">,
+): ServerRequestContext => {
+  const origin = getHeader(headers, "origin");
+
+  return {
+    corsHeaders: createCorsHeaders(contract.corsPolicy, origin),
+    origin,
+    traceId: createServerTraceId(headers, contract.requestGuard.traceHeaderName),
+  };
+};
+
 const createRejectedRequest = ({
   corsPolicy,
   error,
@@ -243,7 +262,9 @@ const createRejectedRequest = ({
 
   return {
     ...rejected,
-    headers: withCorsHeaders(rejected.headers, corsPolicy, origin),
+    headers: isAdminRequestTarget(requestTarget)
+      ? withCorsHeaders(rejected.headers, corsPolicy, origin)
+      : rejected.headers,
   };
 };
 
@@ -285,9 +306,9 @@ export const evaluateServerRequestGuard = (
   input: ServerRequestGuardInput,
   contract: Pick<ApiServerRuntimeContract, "corsPolicy" | "requestGuard" | "runtimeVersion">,
   routeCount = 0,
+  requestContext = createServerRequestContext(input.headers, contract),
 ): ServerRequestGuardDecision => {
-  const traceId = createServerTraceId(input.headers, contract.requestGuard.traceHeaderName);
-  const origin = getHeader(input.headers, "origin");
+  const { origin, traceId } = requestContext;
   const method = normalizeMethod(input.method);
   const safePath = sanitizeRequestPath(input.path);
 

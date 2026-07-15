@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { connect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
 import type { ApiRuntimeResponse, CampaignOsApiRuntime } from "./apiRuntime";
@@ -369,6 +370,114 @@ describe("Campaign OS API server entrypoint", () => {
     });
   });
 
+  it("preserves the Admin request context while rejecting pipelined work during shutdown", async () => {
+    const trustedOrigin = "https://admin.campaign-os.test";
+    let enterRuntime!: () => void;
+    let releaseRuntime!: (response: ApiRuntimeResponse) => void;
+    const enteredRuntime = new Promise<void>((resolve) => {
+      enterRuntime = resolve;
+    });
+    const heldResponse = new Promise<ApiRuntimeResponse>((resolve) => {
+      releaseRuntime = resolve;
+    });
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => {
+        enterRuntime();
+        return heldResponse;
+      }),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [trustedOrigin],
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      shutdownTimeoutMs: 2_000,
+    });
+    const address = server.server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("Expected the API server to expose a TCP address.");
+    }
+
+    const socket = connect({ host: "127.0.0.1", port: address.port });
+    socket.setEncoding("utf8");
+    let rawResponses = "";
+    socket.on("data", (chunk) => {
+      rawResponses += chunk;
+    });
+    const socketEnded = new Promise<void>((resolve, reject) => {
+      socket.once("end", resolve);
+      socket.once("error", reject);
+    });
+
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write([
+      "GET /api/admin/campaigns HTTP/1.1",
+      `Host: 127.0.0.1:${address.port}`,
+      `Origin: ${trustedOrigin}`,
+      "X-Campaign-OS-Trace-ID: trace-admin-active-request",
+      "Connection: keep-alive",
+      "",
+      "",
+    ].join("\r\n"));
+    await enteredRuntime;
+
+    const stopPromise = server.stop();
+    socket.write([
+      "GET /api/admin/campaigns HTTP/1.1",
+      `Host: 127.0.0.1:${address.port}`,
+      `Origin: ${trustedOrigin}`,
+      "X-Campaign-OS-Trace-ID: trace-admin-shutdown-request",
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n"));
+    releaseRuntime({
+      body: {
+        data: { status: "held-request-released" },
+        ok: true,
+        traceId: "trace-admin-active-request",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-campaign-os-trace-id": "trace-admin-active-request",
+      },
+      status: 200,
+    });
+
+    await Promise.all([stopPromise, socketEnded]);
+    const responses = rawResponses.split("HTTP/1.1 ").slice(1);
+    expect(responses).toHaveLength(2);
+    const shutdownResponse = responses[1] ?? "";
+    const [rawHeaders = "", chunkedBody = ""] = shutdownResponse.split("\r\n\r\n", 2);
+    const chunkSizeEnd = chunkedBody.indexOf("\r\n");
+    const chunkSize = Number.parseInt(chunkedBody.slice(0, chunkSizeEnd), 16);
+    const rawBody = chunkedBody.slice(chunkSizeEnd + 2, chunkSizeEnd + 2 + chunkSize);
+    const payload = JSON.parse(rawBody) as Record<string, unknown>;
+    const normalizedHeaders = rawHeaders.toLowerCase();
+
+    expect(rawHeaders.split("\r\n")[0]).toBe("503 Service Unavailable");
+    expect(normalizedHeaders).toContain(
+      `access-control-allow-origin: ${trustedOrigin}`.toLowerCase(),
+    );
+    expect(normalizedHeaders).toContain(
+      "x-campaign-os-trace-id: trace-admin-shutdown-request",
+    );
+    expect(payload).toEqual({
+      error: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        details: {
+          operation: "server.shutdown",
+        },
+        message: expect.any(String),
+      },
+      ok: false,
+      traceId: "trace-admin-shutdown-request",
+    });
+    expect(runtime.handle).toHaveBeenCalledTimes(1);
+  });
+
   it("handles the complete Admin workflow CORS preflight without widening authority", async () => {
     const runtimeResponse = {
       body: createSuccessEnvelope({
@@ -550,6 +659,121 @@ describe("Campaign OS API server entrypoint", () => {
       ]) {
         expect(serialized).not.toContain(forbidden);
       }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("preserves Admin Trace ID and trusted CORS when the runtime transport fails", async () => {
+    const trustedOrigin = "https://admin.campaign-os.test";
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => {
+        throw new Error("Bearer secret-token postgres://user:password@db.invalid/private");
+      }),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [trustedOrigin],
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+
+    try {
+      const response = await fetch(`${server.url}/api/admin/campaigns`, {
+        headers: {
+          origin: trustedOrigin,
+          "x-campaign-os-trace-id": "trace-admin-transport-failure",
+        },
+      });
+      const payload = await response.json() as Record<string, unknown>;
+      const error = payload.error as Record<string, unknown>;
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
+      expect(response.headers.get("x-campaign-os-trace-id"))
+        .toBe("trace-admin-transport-failure");
+      expect(Object.keys(payload).sort()).toEqual(["error", "ok", "traceId"]);
+      expect(Object.keys(error).sort()).toEqual(["code", "message"]);
+      expect(payload).toEqual({
+        error: {
+          code: "INTERNAL_RUNTIME_ERROR",
+          message: expect.any(String),
+        },
+        ok: false,
+        traceId: "trace-admin-transport-failure",
+      });
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toMatch(/bearer|local_seeded|password|postgres:\/\/|seededDataOnly/i);
+      expect(runtime.handle).toHaveBeenCalledTimes(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it.each([
+    {
+      body: undefined,
+      contentType: undefined,
+      method: "DELETE",
+      name: "unsupported method",
+      path: "/api/health",
+      status: 405,
+    },
+    {
+      body: "{\"broken\":",
+      contentType: "application/json",
+      method: "POST",
+      name: "malformed JSON",
+      path: "/api/campaigns",
+      status: 400,
+    },
+  ])("keeps legacy non-Admin headers for $name guard rejection", async ({
+    body,
+    contentType,
+    method,
+    path,
+    status,
+  }) => {
+    const trustedOrigin = "https://admin.campaign-os.test";
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [trustedOrigin],
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+    const traceId = `trace-legacy-${method.toLowerCase()}`;
+
+    try {
+      const response = await fetch(`${server.url}${path}`, {
+        ...(body === undefined ? {} : { body }),
+        headers: {
+          ...(contentType === undefined ? {} : { "content-type": contentType }),
+          origin: trustedOrigin,
+          "x-campaign-os-trace-id": traceId,
+        },
+        method,
+      });
+      const payload = await response.json() as Record<string, unknown>;
+
+      expect(response.status).toBe(status);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+      expect(response.headers.get("access-control-allow-methods")).toBeNull();
+      expect(response.headers.get("access-control-expose-headers")).toBeNull();
+      expect(payload).toMatchObject({
+        ok: false,
+        runtime: expect.any(Object),
+        safety: expect.any(Object),
+        timestamp: expect.any(String),
+        traceId,
+      });
+      expect(runtime.handle).not.toHaveBeenCalled();
     } finally {
       await server.stop();
     }
