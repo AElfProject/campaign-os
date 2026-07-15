@@ -459,23 +459,26 @@ describe("API server resource shutdown", () => {
     });
     socket.on("error", (error) => socketErrors.push(error.message));
     await new Promise<void>((resolve) => socket.once("connect", resolve));
-    socket.write([
+    const writeRequest = (lines: readonly string[]) => new Promise<void>((resolve, reject) => {
+      socket.write(lines.join("\r\n"), (error) => error ? reject(error) : resolve());
+    });
+    await writeRequest([
       "GET /api/health HTTP/1.1",
       `Host: 127.0.0.1:${address.port}`,
       "Connection: keep-alive",
       "",
       "",
-    ].join("\r\n"));
+    ]);
     await requestEntered;
 
     const stopping = server.stop();
-    socket.write([
+    await writeRequest([
       "GET /api/contracts HTTP/1.1",
       `Host: 127.0.0.1:${address.port}`,
       "Connection: close",
       "",
       "",
-    ].join("\r\n"));
+    ]);
     releaseRequest?.();
 
     await Promise.all([stopping, socketClosed]);
