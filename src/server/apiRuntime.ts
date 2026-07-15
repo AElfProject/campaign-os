@@ -37,7 +37,6 @@ import {
   persistenceUnavailable,
   routeNotFound,
   toApiRuntimeErrorBody,
-  type ApiRuntimeErrorBody,
 } from "./errors";
 import type { ApiRuntimeRouteContract } from "./contracts";
 import {
@@ -93,6 +92,11 @@ import {
   type AdminReviewStore,
 } from "./adminReviewStore";
 import {
+  createAdminFailureEnvelope,
+  isAdminRequestTarget,
+  type AdminApiFailureEnvelope,
+} from "./serverRequestGuard";
+import {
   createPostgresAdminReviewStore,
   type PostgresAdminReviewStorePool,
 } from "./postgresAdminReviewStore";
@@ -119,18 +123,7 @@ export interface AdminApiSuccessEnvelope<TPayload> {
   traceId: string;
 }
 
-export interface AdminApiFailureEnvelope {
-  error: {
-    code: string;
-    details?: Record<string, string | boolean>;
-    message: string;
-  };
-  ok: false;
-  runtime?: never;
-  safety?: never;
-  timestamp?: never;
-  traceId: string;
-}
+export type { AdminApiFailureEnvelope } from "./serverRequestGuard";
 
 export type ApiRuntimeResponseBody<TPayload = unknown> =
   | ApiRuntimeEnvelope<TPayload>
@@ -451,17 +444,6 @@ const responseHeaders = (traceId: string): Record<string, string> => ({
   "x-campaign-os-trace-id": traceId,
 });
 
-const ADMIN_ERROR_STRING_DETAIL_KEYS = new Set([
-  "diagnosticCode",
-  "field",
-  "operation",
-  "routeId",
-]);
-const ADMIN_ERROR_BOOLEAN_DETAIL_KEYS = new Set([
-  "reconnectRequired",
-  "retryable",
-]);
-
 const createAdminSuccessEnvelope = <TPayload>(
   data: TPayload,
   traceId: string,
@@ -470,32 +452,6 @@ const createAdminSuccessEnvelope = <TPayload>(
   ok: true,
   traceId,
 });
-
-const createAdminFailureEnvelope = (
-  error: ApiRuntimeErrorBody,
-  traceId: string,
-): AdminApiFailureEnvelope => {
-  const details = Object.fromEntries(Object.entries(error.details ?? {}).filter(([key, value]) =>
-    (ADMIN_ERROR_STRING_DETAIL_KEYS.has(key) && typeof value === "string")
-    || (ADMIN_ERROR_BOOLEAN_DETAIL_KEYS.has(key) && typeof value === "boolean")
-  )) as Record<string, string | boolean>;
-
-  return {
-    error: {
-      code: error.code,
-      ...(Object.keys(details).length === 0 ? {} : { details }),
-      message: error.message["en-US"],
-    },
-    ok: false,
-    traceId,
-  };
-};
-
-const isAdminRequestTarget = (requestTarget: string): boolean => {
-  const pathname = requestTarget.trim().split(/[?#]/u, 1)[0] ?? "";
-
-  return pathname === "/api/admin" || pathname.startsWith("/api/admin/");
-};
 
 const normalizeMethod = (method: string) => method.trim().toUpperCase();
 

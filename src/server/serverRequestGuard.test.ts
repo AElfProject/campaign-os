@@ -140,6 +140,72 @@ describe("server request guard", () => {
     }
   });
 
+  it.each([
+    {
+      body: "{bad",
+      expectedCode: "MALFORMED_JSON",
+      expectedField: undefined,
+      name: "malformed JSON",
+    },
+    {
+      body: "plain",
+      contentType: "text/plain",
+      expectedCode: "INVALID_REQUEST",
+      expectedField: "content-type",
+      name: "unsupported content type",
+    },
+    {
+      body: JSON.stringify({ payload: "x".repeat(64) }),
+      expectedCode: "INVALID_REQUEST",
+      expectedField: "body",
+      name: "body limit",
+    },
+  ])("uses the strict Admin envelope for $name failures", ({
+    body,
+    contentType = "application/json",
+    expectedCode,
+    expectedField,
+  }) => {
+    const decision = evaluateServerRequestGuard({
+      body,
+      headers: {
+        "content-type": contentType,
+        origin: "http://localhost:5173",
+        "x-campaign-os-trace-id": "trace-admin-guard",
+      },
+      method: "POST",
+      path: "/api/admin/campaigns/campaign-a/reviews/participant-a/decisions",
+    }, contract, 10);
+
+    expect(decision).toMatchObject({
+      kind: "rejected",
+      status: 400,
+      traceId: "trace-admin-guard",
+    });
+    if (decision.kind !== "rejected") {
+      throw new Error("Expected rejected Admin guard decision.");
+    }
+
+    expect(Object.keys(decision.body).sort()).toEqual(["error", "ok", "traceId"]);
+    expect(decision.body).toEqual({
+      error: {
+        code: expectedCode,
+        ...(expectedField
+          ? { details: { diagnosticCode: "INVALID_REQUEST", field: expectedField } }
+          : {}),
+        message: expect.any(String),
+      },
+      ok: false,
+      traceId: "trace-admin-guard",
+    });
+    expect(decision.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(decision.headers["x-campaign-os-trace-id"]).toBe("trace-admin-guard");
+
+    const serialized = JSON.stringify(decision.body);
+    expect(serialized).not.toContain("local_seeded");
+    expect(serialized).not.toContain("seededDataOnly");
+  });
+
   it("rejects unsupported methods with sanitized runtime envelopes", () => {
     const unsupportedMethod = evaluateServerRequestGuard({
       headers: {

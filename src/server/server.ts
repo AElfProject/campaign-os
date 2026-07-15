@@ -15,7 +15,11 @@ import { createFailureEnvelope, type ApiRuntimeEnvelope } from "./envelope";
 import { internalRuntimeError, persistenceUnavailable } from "./errors";
 import { createBackendServiceReadinessReport } from "./backendService";
 import { apiRuntimeContractRoutes } from "./routes";
-import { evaluateServerRequestGuard } from "./serverRequestGuard";
+import {
+  createAdminFailureEnvelope,
+  evaluateServerRequestGuard,
+  isAdminRequestTarget,
+} from "./serverRequestGuard";
 import {
   createServerRuntimeReadiness,
   withServerRuntimeReadiness,
@@ -266,6 +270,7 @@ export const startCampaignOsApiServer = async ({
   const server = createServer((request, response) => {
     if (shutdownState.state !== "running") {
       const traceId = randomUUID();
+      const runtimeError = persistenceUnavailable("server.shutdown").body;
 
       request.resume();
       try {
@@ -277,12 +282,14 @@ export const startCampaignOsApiServer = async ({
             "content-type": "application/json",
             "x-campaign-os-trace-id": traceId,
           },
-          createFailureEnvelope({
-            error: persistenceUnavailable("server.shutdown").body,
-            routeCount: apiRuntimeContractRoutes.length,
-            traceId,
-            version: runtimeContract.runtimeVersion,
-          }),
+          isAdminRequestTarget(request.url ?? "/")
+            ? createAdminFailureEnvelope(runtimeError, traceId)
+            : createFailureEnvelope({
+              error: runtimeError,
+              routeCount: apiRuntimeContractRoutes.length,
+              traceId,
+              version: runtimeContract.runtimeVersion,
+            }),
         );
       } catch {
         response.destroy();
@@ -340,6 +347,7 @@ export const startCampaignOsApiServer = async ({
         );
       } catch {
         const traceId = randomUUID();
+        const runtimeError = internalRuntimeError().body;
 
         if (logger) {
           logger.error(
@@ -356,12 +364,14 @@ export const startCampaignOsApiServer = async ({
                 "content-type": "application/json",
                 "x-campaign-os-trace-id": traceId,
               },
-              createFailureEnvelope({
-                error: internalRuntimeError().body,
-                routeCount: apiRuntimeContractRoutes.length,
-                traceId,
-                version: runtimeContract.runtimeVersion,
-              }),
+              isAdminRequestTarget(request.url ?? "/")
+                ? createAdminFailureEnvelope(runtimeError, traceId)
+                : createFailureEnvelope({
+                  error: runtimeError,
+                  routeCount: apiRuntimeContractRoutes.length,
+                  traceId,
+                  version: runtimeContract.runtimeVersion,
+                }),
             );
           } catch {
             response.destroy();

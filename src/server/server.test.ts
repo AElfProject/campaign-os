@@ -455,6 +455,108 @@ describe("Campaign OS API server entrypoint", () => {
 
   it.each([
     {
+      body: "{\"decision\":",
+      contentType: "application/json",
+      expectedCode: "MALFORMED_JSON",
+      expectedField: undefined,
+      name: "malformed JSON",
+      traceId: "trace-admin-malformed-review",
+    },
+    {
+      body: "plain",
+      contentType: "text/plain",
+      expectedCode: "INVALID_REQUEST",
+      expectedField: "content-type",
+      name: "unsupported content type",
+      traceId: "trace-admin-content-type-review",
+    },
+    {
+      body: JSON.stringify({ decision: "approved", note: "x".repeat(96) }),
+      contentType: "application/json",
+      expectedCode: "INVALID_REQUEST",
+      expectedField: "body",
+      name: "body limit",
+      traceId: "trace-admin-body-limit-review",
+    },
+  ])("returns the strict Admin envelope for pre-runtime $name rejection", async ({
+    body,
+    contentType,
+    expectedCode,
+    expectedField,
+    traceId,
+  }) => {
+    const runtimeResponse = {
+      body: createSuccessEnvelope({
+        data: { status: "unexpected" },
+        routeCount: apiRuntimeContractRoutes.length,
+        timestamp: "2026-07-15T04:00:00.000Z",
+        traceId: "trace-unexpected-runtime",
+        version: "test",
+      }),
+      headers: { "content-type": "application/json; charset=utf-8" },
+      status: 200,
+    } satisfies ApiRuntimeResponse;
+    const trustedOrigin = "https://admin.campaign-os.test";
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => runtimeResponse),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [trustedOrigin],
+      logger: false,
+      maxBodyBytes: 48,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+    const path = "/api/admin/campaigns/campaign-a/reviews/participant-a/decisions";
+
+    try {
+      const response = await fetch(`${server.url}${path}`, {
+        body,
+        headers: {
+          "content-type": contentType,
+          origin: trustedOrigin,
+          "x-campaign-os-trace-id": traceId,
+        },
+        method: "POST",
+      });
+      const payload = await response.json() as Record<string, unknown>;
+      const error = payload.error as Record<string, unknown>;
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
+      expect(response.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
+      expect(Object.keys(payload).sort()).toEqual(["error", "ok", "traceId"]);
+      expect(error).toEqual({
+        code: expectedCode,
+        ...(expectedField
+          ? { details: { diagnosticCode: "INVALID_REQUEST", field: expectedField } }
+          : {}),
+        message: expect.any(String),
+      });
+      expect(typeof error.message).toBe("string");
+      expect(runtime.handle).not.toHaveBeenCalled();
+
+      const serialized = JSON.stringify(payload);
+      for (const forbidden of [
+        "local_seeded",
+        "routeCount",
+        "runtime",
+        "safety",
+        "seededDataOnly",
+        "timestamp",
+        "version",
+      ]) {
+        expect(serialized).not.toContain(forbidden);
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it.each([
+    {
       content: "campaignId,participantId,note\r\ncampaign-transport,p-1,caf\u00e9\r\n",
       fileName: "campaign-transport-winners.csv",
       format: "csv",
