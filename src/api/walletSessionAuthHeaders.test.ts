@@ -72,6 +72,33 @@ describe("wallet session auth headers", () => {
       .not.toBe("2f4xyzab9mqcaseexact");
   });
 
+  it("requests the typed review operator role without changing issued identity", () => {
+    const result = createWalletSessionAuthHeaders(session(), "review_operator");
+
+    expect(result).toMatchObject({
+      headers: {
+        "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+        "x-campaign-os-roles": "review_operator",
+        "x-campaign-os-session-id": "sess-participant-issued",
+        "x-campaign-os-wallet-address": "2F4xYZaB9mQCaseExact",
+      },
+      ok: true,
+    });
+  });
+
+  it("rejects an opaque requested role at runtime", () => {
+    const result = createWalletSessionAuthHeaders(
+      session(),
+      "internal_operator" as never,
+    );
+
+    expect(result).toEqual({
+      code: "WALLET_SESSION_AUTH_INVALID",
+      field: "requestedRole",
+      ok: false,
+    });
+  });
+
   it("prefers issued proof status and safely derives a missing proof status", () => {
     const stale = createWalletSessionAuthHeaders(session({
       proof: {
@@ -155,6 +182,56 @@ describe("wallet session auth headers", () => {
     });
   });
 
+  it.each([
+    ["issuerMode", {
+      issuer: { ...session().issuer!, issuerMode: "production_blocked" },
+    }, "session.issuer.issuerMode"],
+    ["issuer cookie", {
+      issuer: { ...session().issuer!, cookieIssued: true },
+    }, "session.issuer.cookieIssued"],
+    ["issuer JWT", {
+      issuer: { ...session().issuer!, jwtIssued: true },
+    }, "session.issuer.jwtIssued"],
+    ["issuer live signing", {
+      issuer: { ...session().issuer!, liveSigningExecuted: true },
+    }, "session.issuer.liveSigningExecuted"],
+    ["missing proof", { proof: undefined }, "session.proof"],
+    ["proofType", {
+      proof: { ...session().proof!, proofType: "address_only" },
+    }, "session.proof.proofType"],
+    ["trustLevel", {
+      proof: { ...session().proof!, trustLevel: "untrusted" },
+    }, "session.proof.trustLevel"],
+    ["proof status", {
+      proof: { ...session().proof!, status: "stale" },
+    }, "session.proof.status"],
+    ["live proof verification", {
+      proof: { ...session().proof!, liveVerificationExecuted: true },
+    }, "session.proof.liveVerificationExecuted"],
+    ["signatureStatus", { signatureStatus: "missing" }, "session.signatureStatus"],
+    ["verificationStatus", {
+      verificationStatus: "missing_signature",
+    }, "session.verificationStatus"],
+    ["walletTypeVerified", { walletTypeVerified: false }, "session.walletTypeVerified"],
+    ["SIGN_MESSAGE capability", {
+      capabilities: ["CONTRACT_VIEW"],
+    }, "session.capabilities"],
+    ["ordinary wallet credential", {
+      capabilities: ["SIGN_MESSAGE", "INTERNAL_AUTOMATION"],
+    }, "session.credentialBoundary"],
+  ])("rejects invalid Admin %s authority", (_name, overrides, field) => {
+    const result = createWalletSessionAuthHeaders(
+      session(overrides as Partial<NormalizedWalletSession>),
+      "review_operator",
+    );
+
+    expect(result).toEqual({
+      code: "WALLET_SESSION_AUTH_INVALID",
+      field,
+      ok: false,
+    });
+  });
+
   it("rejects custom authority header collisions while merging safe transport headers", () => {
     const auth = createWalletSessionAuthHeaders(session());
     expect(auth.ok).toBe(true);
@@ -187,4 +264,61 @@ describe("wallet session auth headers", () => {
     });
     expect(protectedWalletSessionAuthHeaderNames).toContain("x-campaign-os-wallet-address");
   });
+
+  it("allows callers to protect operation-specific transport authority", () => {
+    const auth = createWalletSessionAuthHeaders(session(), "review_operator");
+    expect(auth.ok).toBe(true);
+    if (!auth.ok) {
+      throw new Error("Expected valid auth fixture");
+    }
+
+    const result = mergeWalletSessionAuthHeaders(
+      auth.headers,
+      {
+        "x-campaign-os-idempotency-key": "external-command-key",
+        "x-campaign-os-trace-id": "external-trace",
+      },
+      ["x-campaign-os-idempotency-key", "x-campaign-os-trace-id"],
+    );
+
+    expect(result).toEqual({
+      code: "WALLET_SESSION_AUTH_HEADER_CONFLICT",
+      field: "x-campaign-os-idempotency-key",
+      ok: false,
+    });
+  });
+
+  it.each([
+    ["X-Campaign-OS-Roles", "spoofed-role", "x-campaign-os-roles", []],
+    ["X-Campaign-OS-Session-ID", "spoofed-session", "x-campaign-os-session-id", []],
+    ["X-Campaign-OS-Wallet-Address", "spoofed-wallet", "x-campaign-os-wallet-address", []],
+    ["X-Campaign-OS-Account-Type", "AA", "x-campaign-os-account-type", []],
+    ["X-Campaign-OS-Wallet-Source", "OTHER", "x-campaign-os-wallet-source", []],
+    ["X-Campaign-OS-Proof-Status", "verified", "x-campaign-os-proof-status", []],
+    ["X-Campaign-OS-Credential-Boundary", "ordinary_user_wallet", "x-campaign-os-credential-boundary", []],
+    ["Authorization", "Bearer secret", "authorization", []],
+    ["Cookie", "session=secret", "cookie", []],
+    ["X-Campaign-OS-Trace-ID", "spoofed-trace", "x-campaign-os-trace-id", ["x-campaign-os-trace-id"]],
+    ["Idempotency-Key", "spoofed-command", "idempotency-key", ["idempotency-key"]],
+    ["X-Campaign-OS-Idempotency-Key", "spoofed-command", "x-campaign-os-idempotency-key", ["x-campaign-os-idempotency-key"]],
+  ])(
+    "rejects a case-insensitive custom %s authority collision",
+    (name, value, field, additionalProtectedHeaderNames) => {
+      const auth = createWalletSessionAuthHeaders(session(), "review_operator");
+      expect(auth.ok).toBe(true);
+      if (!auth.ok) {
+        throw new Error("Expected valid auth fixture");
+      }
+
+      expect(mergeWalletSessionAuthHeaders(
+        auth.headers,
+        { [name as string]: value as string },
+        additionalProtectedHeaderNames as string[],
+      )).toEqual({
+        code: "WALLET_SESSION_AUTH_HEADER_CONFLICT",
+        field,
+        ok: false,
+      });
+    },
+  );
 });

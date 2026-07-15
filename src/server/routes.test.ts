@@ -20,9 +20,20 @@ import {
   toApiRuntimeErrorBody,
 } from "./index";
 import { createApiFoundationReport } from "./apiFoundation";
+import { getAdminOperatorRoutePolicy } from "./authEnforcement";
 import { getProtectedRouteAuth } from "./authSession";
 import { createApiServicePortReport } from "./servicePorts";
 import { createProductionBackendRouteCoverage } from "./productionBackendReadiness";
+import {
+  ADMIN_API_PATH_PARAMETER_MAX_LENGTH,
+  adminApiRuntimeRouteById,
+  adminApiRuntimeRoutes,
+  apiRuntimeRouteCatalog,
+  createAdminApiRuntimeRouteInventory,
+  resolveAdminApiRoute,
+  validateAdminApiRouteCatalog,
+  type AdminApiRuntimeRouteDefinition,
+} from "./routes";
 
 const unsafeKeys = [
   "apikey",
@@ -70,6 +81,289 @@ const expectNoUnsafeKeys = (value: unknown) => {
     expect(keys).not.toContain(unsafe);
   }
 };
+
+const expectedAdminRoutes = [
+  {
+    id: "admin.campaigns.list",
+    method: "GET",
+    operationId: "listAdminCampaigns",
+    path: "/api/admin/campaigns",
+    serviceGroup: "campaign",
+    serviceOwner: "campaign-service",
+  },
+  {
+    id: "admin.reviews.list",
+    method: "GET",
+    operationId: "listParticipantReviews",
+    path: "/api/admin/campaigns/:campaignId/reviews",
+    serviceGroup: "campaign",
+    serviceOwner: "campaign-service",
+  },
+  {
+    id: "admin.reviews.detail",
+    method: "GET",
+    operationId: "getParticipantReview",
+    path: "/api/admin/campaigns/:campaignId/reviews/:participantId",
+    serviceGroup: "campaign",
+    serviceOwner: "campaign-service",
+  },
+  {
+    id: "admin.reviews.decide",
+    method: "POST",
+    operationId: "submitParticipantReviewDecision",
+    path: "/api/admin/campaigns/:campaignId/reviews/:participantId/decisions",
+    serviceGroup: "campaign",
+    serviceOwner: "campaign-service",
+  },
+  {
+    id: "admin.winners.list",
+    method: "GET",
+    operationId: "listCurrentWinners",
+    path: "/api/admin/campaigns/:campaignId/winners",
+    serviceGroup: "campaign",
+    serviceOwner: "campaign-service",
+  },
+  {
+    id: "admin.artifacts.generate",
+    method: "POST",
+    operationId: "generateAdminArtifact",
+    path: "/api/admin/campaigns/:campaignId/artifacts",
+    serviceGroup: "export",
+    serviceOwner: "export-service",
+  },
+  {
+    id: "admin.artifacts.list",
+    method: "GET",
+    operationId: "listAdminArtifacts",
+    path: "/api/admin/campaigns/:campaignId/artifacts",
+    serviceGroup: "export",
+    serviceOwner: "export-service",
+  },
+  {
+    id: "admin.artifacts.detail",
+    method: "GET",
+    operationId: "getAdminArtifact",
+    path: "/api/admin/campaigns/:campaignId/artifacts/:artifactId",
+    serviceGroup: "export",
+    serviceOwner: "export-service",
+  },
+  {
+    id: "admin.artifacts.download",
+    method: "GET",
+    operationId: "downloadAdminArtifact",
+    path: "/api/admin/campaigns/:campaignId/artifacts/:artifactId/download",
+    serviceGroup: "export",
+    serviceOwner: "export-service",
+  },
+] as const;
+
+describe("Admin API route catalog", () => {
+  it("registers the nine OpenAPI operations once with service ownership and synchronized inventory", () => {
+    expect(adminApiRuntimeRoutes).toHaveLength(9);
+    expect(adminApiRuntimeRoutes).toEqual(
+      expectedAdminRoutes.map((expected) => expect.objectContaining(expected)),
+    );
+    expect(Object.keys(adminApiRuntimeRouteById)).toHaveLength(9);
+    expect(apiRuntimeRouteCatalog.slice(-9)).toEqual(adminApiRuntimeRoutes);
+
+    const inventory = createAdminApiRuntimeRouteInventory();
+
+    expect(inventory).toEqual({
+      operationIds: expectedAdminRoutes.map((route) => route.operationId),
+      readiness: { review_required: 9 },
+      routeCount: 9,
+      routeIds: expectedAdminRoutes.map((route) => route.id),
+    });
+    expect(validateAdminApiRouteCatalog()).toEqual({ issues: [], valid: true });
+  });
+
+  it("declares locally enforced operator auth with no anonymous Admin variant", () => {
+    for (const route of adminApiRuntimeRoutes) {
+      expect(route.auth).toEqual({
+        allowedRoles: ["internal_operator", "review_operator"],
+        anonymous: false,
+        enforcementStatus: "local_enforced",
+        membershipRequired: true,
+        policyId: route.id,
+        requestedRoleHeader: "x-campaign-os-roles",
+        requestedRoleRequired: true,
+        sessionRequired: true,
+      });
+      expect(getAdminOperatorRoutePolicy(route.id)).toMatchObject({
+        allowedRoles: route.auth.allowedRoles,
+        enforcementStatus: route.auth.enforcementStatus,
+        membershipRequired: route.auth.membershipRequired,
+        routeId: route.id,
+        sessionRequired: route.auth.sessionRequired,
+      });
+    }
+  });
+
+  it("publishes bounded command body, idempotency, query, and download contracts", () => {
+    expect(adminApiRuntimeRouteById["admin.reviews.decide"].request).toMatchObject({
+      body: {
+        contentType: "application/json",
+        required: true,
+        requiredFields: ["decision", "reasonCode", "snapshotFingerprint"],
+      },
+      headers: [
+        {
+          maxLength: 128,
+          minLength: 8,
+          name: "Idempotency-Key",
+          required: true,
+        },
+      ],
+      query: [],
+    });
+    expect(adminApiRuntimeRouteById["admin.artifacts.generate"].request).toMatchObject({
+      body: {
+        allowedFields: ["format", "expectedSourceFingerprint"],
+        contentType: "application/json",
+        fields: [
+          { allowedValues: ["csv", "json"], name: "format", required: true },
+          { maxLength: 64, minLength: 64, name: "expectedSourceFingerprint", required: false },
+        ],
+        required: true,
+        requiredFields: ["format"],
+      },
+      query: [],
+    });
+    expect(adminApiRuntimeRouteById["admin.reviews.list"].request.query).toEqual(["limit", "state"]);
+    expect(adminApiRuntimeRouteById["admin.artifacts.list"].request.query).toEqual(["limit", "format"]);
+    expect(adminApiRuntimeRouteById["admin.artifacts.download"].request).toMatchObject({
+      query: [],
+      range: "forbidden",
+    });
+  });
+
+  it("matches static, detail, and download routes without dynamic-route shadowing", () => {
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/artifacts")).toMatchObject({
+      matched: true,
+      params: { campaignId: "campaign-a" },
+      route: { id: "admin.artifacts.list" },
+    });
+    expect(resolveAdminApiRoute("POST", "/api/admin/campaigns/campaign-a/artifacts")).toMatchObject({
+      matched: true,
+      params: { campaignId: "campaign-a" },
+      route: { id: "admin.artifacts.generate" },
+    });
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/artifacts/artifact-a")).toMatchObject({
+      matched: true,
+      params: { artifactId: "artifact-a", campaignId: "campaign-a" },
+      route: { id: "admin.artifacts.detail" },
+    });
+    expect(
+      resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/artifacts/artifact-a/download"),
+    ).toMatchObject({
+      matched: true,
+      params: { artifactId: "artifact-a", campaignId: "campaign-a" },
+      route: { id: "admin.artifacts.download" },
+    });
+  });
+
+  it("accepts only bounded decoded single-segment path parameters", () => {
+    const atLimit = "a".repeat(ADMIN_API_PATH_PARAMETER_MAX_LENGTH);
+
+    expect(resolveAdminApiRoute("GET", `/api/admin/campaigns/${atLimit}/reviews`)).toMatchObject({
+      matched: true,
+      params: { campaignId: atLimit },
+    });
+
+    for (const requestTarget of [
+      "/api/admin/campaigns/campaign%2Fa/reviews",
+      "/api/admin/campaigns/campaign%2fa/reviews",
+      "/api/admin/campaigns/./reviews",
+      "/api/admin/campaigns/%2e/reviews",
+      "/api/admin/campaigns/../reviews",
+      "/api/admin/campaigns/%2E%2E/reviews",
+      "/api/admin/campaigns/campaign%00a/reviews",
+      "/api/admin/campaigns/campaign%1Fa/reviews",
+      "/api/admin/campaigns/campaign%C2%85a/reviews",
+      `/api/admin/campaigns/${"a".repeat(ADMIN_API_PATH_PARAMETER_MAX_LENGTH + 1)}/reviews`,
+      "/api/admin/campaigns/campaign%/reviews",
+      "/api/admin/campaigns//reviews",
+    ]) {
+      expect(resolveAdminApiRoute("GET", requestTarget)).toMatchObject({
+        matched: false,
+        reason: "malformed_path",
+      });
+    }
+  });
+
+  it("keeps method, query, and trailing-path behavior explicit", () => {
+    expect(resolveAdminApiRoute("patch", "/api/admin/campaigns")).toEqual({
+      allowedMethods: ["GET"],
+      matched: false,
+      reason: "method_not_allowed",
+    });
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns?limit=25")).toMatchObject({
+      matched: true,
+      query: { limit: "25" },
+      route: { id: "admin.campaigns.list" },
+    });
+    expect(
+      resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/reviews?state=stale&limit=10"),
+    ).toMatchObject({
+      matched: true,
+      query: { limit: "10", state: "stale" },
+    });
+    expect(
+      resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/artifacts/artifact-a/download?format=csv"),
+    ).toEqual({
+      matched: false,
+      queryParameter: "format",
+      reason: "query_not_allowed",
+    });
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns?limit=1&limit=2")).toEqual({
+      matched: false,
+      queryParameter: "limit",
+      reason: "duplicate_query_parameter",
+    });
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/reviews/")).toMatchObject({
+      matched: true,
+      route: { id: "admin.reviews.list" },
+    });
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/reviews//")).toMatchObject({
+      matched: false,
+      reason: "malformed_path",
+    });
+    expect(resolveAdminApiRoute("GET", "/api/admin/campaigns/campaign-a/reviews/participant-a/extra")).toEqual({
+      matched: false,
+      reason: "route_not_found",
+    });
+  });
+
+  it("rejects duplicate IDs, operations, method/path pairs, ambiguous matchers, and malformed definitions", () => {
+    const base = adminApiRuntimeRoutes[0];
+    const issuesFor = (...routes: AdminApiRuntimeRouteDefinition[]) =>
+      validateAdminApiRouteCatalog(routes).issues.map((issue) => issue.code);
+
+    expect(issuesFor(base, { ...base })).toContain("DUPLICATE_ROUTE_ID");
+    expect(issuesFor(base, {
+      ...base,
+      id: "admin.synthetic.operation",
+      path: "/api/admin/synthetic-operation",
+    })).toContain("DUPLICATE_OPERATION_ID");
+    expect(issuesFor(base, {
+      ...base,
+      id: "admin.synthetic.path",
+      operationId: "syntheticDuplicatePath",
+    })).toContain("DUPLICATE_METHOD_PATH");
+    expect(issuesFor(
+      adminApiRuntimeRoutes[2],
+      {
+        ...adminApiRuntimeRoutes[2],
+        id: "admin.synthetic.ambiguous",
+        operationId: "syntheticAmbiguousRoute",
+        path: "/api/admin/campaigns/:otherCampaignId/reviews/:otherParticipantId",
+      },
+    )).toContain("AMBIGUOUS_ROUTE_MATCHER");
+    expect(issuesFor({ ...base, path: "/api/admin//campaigns" })).toContain("MALFORMED_ROUTE_PATH");
+    expect(issuesFor({ ...base, path: "/api/admin/campaigns?limit=1" })).toContain("MALFORMED_ROUTE_PATH");
+    expect(issuesFor({ ...base, method: "PATCH" })).toContain("UNKNOWN_ROUTE_METHOD");
+  });
+});
 
 describe("API runtime route catalog", () => {
   it("declares unique local seeded routes with readiness and boundary metadata", () => {

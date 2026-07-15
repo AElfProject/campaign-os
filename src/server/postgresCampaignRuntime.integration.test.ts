@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveCampaignOsCampaignDbConfig } from "./config";
@@ -243,6 +243,151 @@ interface VerificationData {
   };
 }
 
+type AdminDecisionValue = "approved" | "needs_review" | "rejected";
+
+interface AdminCampaignListData {
+  campaigns: Array<{
+    campaignId: string;
+    ownerAddress: string;
+    participantCount: number;
+    projectId: string;
+    status: string;
+    taskCount: number;
+  }>;
+  repository: {
+    adapterId: string;
+    durable: boolean;
+    repositoryId: string;
+    storeId: string;
+  };
+}
+
+interface AdminDecisionSummary {
+  decidedAt: string;
+  decision: AdminDecisionValue;
+  decisionId: string;
+  operatorRole: string;
+  operatorSubject: string;
+  reasonCode: string;
+  snapshotFingerprint: string;
+  version: number;
+}
+
+interface AdminDecisionDetail extends AdminDecisionSummary {
+  note: string | null;
+  payloadHash: string;
+  traceId: string;
+}
+
+interface AdminQueueData {
+  campaignId: string;
+  items: Array<{
+    campaignId: string;
+    coverage: {
+      completedTasks: number;
+      evidenceCount: number;
+      requiredTasks: number;
+      totalTasks: number;
+    };
+    currentDecision: AdminDecisionSummary | null;
+    currentFingerprint: string;
+    eligible: boolean;
+    participantId: string;
+    rank: number | null;
+    reviewState: string;
+    riskFlags: string[];
+    totalPoints: number;
+    walletAddress: string;
+  }>;
+  summary: Record<string, number>;
+}
+
+interface AdminReviewDetailData {
+  campaignId: string;
+  currentDecision: AdminDecisionDetail | null;
+  history: AdminDecisionDetail[];
+  participantId: string;
+  reviewState: string;
+  snapshot: {
+    campaignId: string;
+    completions: Array<{ id: string; taskId: string }>;
+    evidence: Array<{ completionId?: string; id: string; taskId: string }>;
+    fingerprint: string;
+    fingerprintVersion: string;
+    participantId: string;
+    tasks: Array<{ id: string }>;
+  };
+}
+
+interface AdminDecisionReceiptData {
+  campaignId: string;
+  created: boolean;
+  decisionId: string;
+  participantId: string;
+  snapshotFingerprint: string;
+  version: number;
+}
+
+interface AdminWinnerRow {
+  campaignId: string;
+  decisionId: string;
+  decisionVersion: number;
+  evidenceHashes: string[];
+  participantId: string;
+  rank: number | null;
+  snapshotFingerprint: string;
+  totalPoints: number;
+  walletAddress: string;
+}
+
+interface AdminWinnerData {
+  campaignId: string;
+  rows: AdminWinnerRow[];
+  sourceFingerprint: string;
+  sourceVersion: string;
+}
+
+interface AdminArtifactMetadata {
+  artifactId: string;
+  campaignId: string;
+  contentBytes: number;
+  contentHash: string;
+  createdAt: string;
+  creatorRole: string;
+  creatorSubject: string;
+  fileName: string;
+  format: "csv" | "json";
+  mimeType: string;
+  rowCount: number;
+  sourceFingerprint: string;
+  sourceVersion: string;
+  traceId: string;
+}
+
+interface AdminArtifactReceiptData {
+  artifact: AdminArtifactMetadata;
+  created: boolean;
+}
+
+interface AdminArtifactListData {
+  artifacts: AdminArtifactMetadata[];
+  campaignId: string;
+}
+
+interface AdminArtifactDetailData {
+  artifact: AdminArtifactMetadata;
+  sourceManifest: Record<string, unknown> & { rows?: AdminWinnerRow[] };
+}
+
+interface AdminDownloadResult {
+  bytes: Buffer;
+  contentDisposition: string | null;
+  contentHash: string | null;
+  contentLength: string | null;
+  mimeType: string | null;
+  status: number;
+}
+
 const isLoopback = (hostname: string) => {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
@@ -268,6 +413,11 @@ interface ParticipantJourneyRowCounts {
   participantRows: number;
 }
 
+interface AdminDurableRowCounts {
+  artifactRows: number;
+  decisionRows: number;
+}
+
 interface IssuedWalletSession {
   data: WalletSessionData;
   headers: (
@@ -276,7 +426,7 @@ interface IssuedWalletSession {
   ) => Record<string, string>;
 }
 
-type IssuedSessionRole = "participant" | "project_owner";
+type IssuedSessionRole = "participant" | "project_owner" | "review_operator";
 
 const percentile95 = (samples: readonly number[]) => {
   const sorted = [...samples].sort((left, right) => left - right);
@@ -303,10 +453,12 @@ const timestampMillis = (value: unknown) =>
 
 integrationSuite("PostgreSQL Campaign API runtime", () => {
   const databaseName = `campaign_os_m239_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const adminOperatorAddress = `2F4PostgresReview${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const shutdownTimings: number[] = [];
   const timings: number[] = [];
   const servers = new Set<CampaignOsApiServerHandle>();
   let adminPool: pg.Pool;
+  let adminMembershipCampaignIds: readonly string[] | null = null;
   let databaseUrl = "";
   let participantPreviewCampaignIds = "";
   let sslMode = "verify-full";
@@ -355,6 +507,50 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
 
     return envelope.data;
   };
+
+  const requestAdminJson = async <T>(
+    server: CampaignOsApiServerHandle,
+    path: string,
+    init: RequestInit = {},
+    expectedStatuses: readonly number[] = [200],
+    timingSamples: number[] = timings,
+  ) => {
+    const result = await requestApi<T>(server, path, init, timingSamples);
+
+    if (
+      !expectedStatuses.includes(result.status)
+      || !result.envelope.ok
+      || !result.envelope.data
+    ) {
+      throw new Error(
+        `PostgreSQL Admin integration request failed with status ${result.status}`
+        + ` and diagnostic ${result.envelope.error?.details?.diagnosticCode ?? "unknown"}.`,
+      );
+    }
+
+    return {
+      data: result.envelope.data,
+      status: result.status,
+      traceId: result.envelope.traceId,
+    };
+  };
+
+  const requestAdminDownload = async (
+    server: CampaignOsApiServerHandle,
+    path: string,
+    headers: Record<string, string>,
+  ): Promise<AdminDownloadResult> => recordTiming(async () => {
+    const response = await fetch(`${server.url}${path}`, { headers });
+
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      contentDisposition: response.headers.get("content-disposition"),
+      contentHash: response.headers.get("x-campaign-os-content-sha256"),
+      contentLength: response.headers.get("content-length"),
+      mimeType: response.headers.get("content-type"),
+      status: response.status,
+    };
+  });
 
   const issueWalletSession = async (
     server: CampaignOsApiServerHandle,
@@ -438,11 +634,18 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     traceId: string,
   ) => issueWalletSession(server, input, traceId, "participant");
 
+  const issueAdminSession = (
+    server: CampaignOsApiServerHandle,
+    input: Parameters<typeof issueWalletSession>[1],
+    traceId: string,
+  ) => issueWalletSession(server, input, traceId, "review_operator");
+
   const startServer = async (
     selectedDatabaseUrl = databaseUrl,
     connectTimeoutMs = "5000",
   ) => {
     const env: Record<string, string | undefined> = {
+      CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
       CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
       CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: connectTimeoutMs,
       CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS: "5000",
@@ -450,6 +653,15 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       CAMPAIGN_OS_DATABASE_SSL_MODE: sslMode,
       CAMPAIGN_OS_DATABASE_URL: selectedDatabaseUrl,
     };
+    Object.defineProperty(env, "CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON", {
+      enumerable: true,
+      get: () => JSON.stringify([{
+        active: true,
+        campaignIds: adminMembershipCampaignIds,
+        roleIds: ["review_operator"],
+        subjectAddress: adminOperatorAddress,
+      }]),
+    });
     Object.defineProperty(env, "CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS", {
       enumerable: true,
       get: () => participantPreviewCampaignIds,
@@ -537,6 +749,39 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
   };
 
+  const readAdminDurableRowCounts = async (
+    campaignId: string,
+  ): Promise<AdminDurableRowCounts> => {
+    const pool = createAuditPool();
+
+    try {
+      const result = await pool.query<{
+        artifact_count: string;
+        decision_count: string;
+      }>(`
+        SELECT
+          (SELECT COUNT(*)::text
+             FROM campaign_os.campaign_review_decisions
+            WHERE campaign_id = $1) AS decision_count,
+          (SELECT COUNT(*)::text
+             FROM campaign_os.campaign_export_artifacts
+            WHERE campaign_id = $1) AS artifact_count
+      `, [campaignId]);
+      const row = result.rows[0];
+
+      if (!row) {
+        throw new Error("PostgreSQL Admin row-count query returned no row.");
+      }
+
+      return {
+        artifactRows: Number(row.artifact_count),
+        decisionRows: Number(row.decision_count),
+      };
+    } finally {
+      await pool.end();
+    }
+  };
+
   const expectNegativeCaseNoParticipantJourneyWrite = async <T>(
     caseName: string,
     expected: NegativeApiContract,
@@ -607,7 +852,18 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       ),
       pool.query(
         `
-          SELECT id, campaign_id, wallet_address, total_points, wallet_type_verified, created_at, updated_at
+          SELECT
+            id,
+            campaign_id,
+            wallet_address,
+            account_type,
+            wallet_source,
+            total_points,
+            rank,
+            risk_flags,
+            wallet_type_verified,
+            created_at,
+            updated_at
           FROM campaign_os.campaign_participants
           WHERE campaign_id = $1
           ORDER BY wallet_address
@@ -651,6 +907,16 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       referrals: referrals.rows,
       tasks: tasks.rows,
     };
+  };
+
+  const readCampaignSnapshotFromDatabase = async (campaignId: string) => {
+    const pool = createAuditPool();
+
+    try {
+      return await readCampaignSnapshot(pool, campaignId);
+    } finally {
+      await pool.end();
+    }
   };
 
   beforeAll(async () => {
@@ -706,15 +972,27 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     };
 
     try {
+      const migrations = await loadPostgresMigrations();
+
+      expect(migrations.map(({ id }) => id)).toEqual([
+        "0001_campaign_runtime",
+        "0002_admin_review_export",
+        "0003_admin_review_rank_projection",
+      ]);
       const migration = await runPostgresMigrations({
         approved: true,
-        migrations: await loadPostgresMigrations(),
+        migrations,
         mode: "apply",
         pool: migrationAdapter,
         traceId: "m239-postgres-runtime-integration-migration",
       });
 
       expect(migration.status).toBe("ready");
+      expect(migration.appliedMigrationIds).toEqual([
+        "0001_campaign_runtime",
+        "0002_admin_review_export",
+        "0003_admin_review_rank_projection",
+      ]);
       expect(migration.pendingMigrationIds).toEqual([]);
     } finally {
       await migrationPool.end();
@@ -757,7 +1035,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
   });
 
-  it("recovers exact Owner and Participant journey identities after a full PostgreSQL runtime restart", async () => {
+  it("recovers canonical Owner, Participant, Admin, and artifact facts after a full PostgreSQL restart", async () => {
+    adminMembershipCampaignIds = null;
     participantPreviewCampaignIds = "";
     const runtimeWriteWindowStartedAt = Date.now();
     const firstServer = await startServer();
@@ -785,6 +1064,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       method: "POST",
     });
     const campaignId = created.payload.id;
+    expect(adminMembershipCampaignIds).toBeNull();
+    adminMembershipCampaignIds = [campaignId];
     const task = await requestJson<TaskCreateData>(firstServer, `/api/campaigns/${campaignId}/tasks`, {
       body: JSON.stringify({
         evidenceRule: { minAmount: 1, source: "AELFSCAN" },
@@ -1402,6 +1683,491 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       status: "ready",
     });
     expect(exportPreview.payload).toMatchObject({ campaignId, readyRows: 2 });
+
+    const participantAId = participantJourneyA.payload.participant.participantId;
+    const participantBId = participantJourneyB.payload.participant.participantId;
+    if (!participantAId || !participantBId) {
+      throw new Error("Canonical Participant identities were not persisted before Admin review.");
+    }
+    const participantFactsBeforeAdmin = await readCampaignSnapshotFromDatabase(campaignId);
+    const adminSessionA1 = await issueAdminSession(
+      firstServer,
+      { address: adminOperatorAddress },
+      "trace-pg-admin-a1-session",
+    );
+    expect(adminSessionA1.data.payload.address).toBe(adminOperatorAddress);
+    const adminCampaignFeed = (await requestAdminJson<AdminCampaignListData>(
+      firstServer,
+      "/api/admin/campaigns?limit=10",
+      { headers: adminSessionA1.headers("trace-pg-admin-campaign-feed") },
+    )).data;
+    expect(adminCampaignFeed).toEqual({
+      campaigns: [{
+        campaignId,
+        ownerAddress,
+        participantCount: 2,
+        projectId: created.payload.projectId,
+        status: created.payload.status,
+        taskCount: 2,
+      }],
+      repository: {
+        adapterId: "campaign-db-postgresql-adapter",
+        durable: true,
+        repositoryId: "campaign-db-postgresql-runtime",
+        storeId: "campaign-db",
+      },
+    });
+
+    const pendingAdminQueue = (await requestAdminJson<AdminQueueData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews`,
+      { headers: adminSessionA1.headers("trace-pg-admin-pending-queue") },
+    )).data;
+    const pendingA = pendingAdminQueue.items.find(({ participantId }) =>
+      participantId === participantAId);
+    const pendingB = pendingAdminQueue.items.find(({ participantId }) =>
+      participantId === participantBId);
+    expect(pendingAdminQueue).toMatchObject({
+      campaignId,
+      summary: {
+        approvedCurrent: 0,
+        needsReviewCurrent: 0,
+        pendingReview: 2,
+        rejectedCurrent: 0,
+        stale: 0,
+        total: 2,
+      },
+    });
+    expect(pendingA).toMatchObject({
+      coverage: { completedTasks: 1, evidenceCount: 1, requiredTasks: 1, totalTasks: 2 },
+      currentDecision: null,
+      eligible: true,
+      rank: 1,
+      reviewState: "pending_review",
+      totalPoints: task.payload.points,
+      walletAddress,
+    });
+    expect(pendingB).toMatchObject({
+      coverage: { completedTasks: 1, evidenceCount: 1, requiredTasks: 1, totalTasks: 2 },
+      currentDecision: null,
+      eligible: true,
+      rank: 2,
+      reviewState: "pending_review",
+      totalPoints: task.payload.points,
+      walletAddress: walletBAddress,
+    });
+
+    const adminDetailA = (await requestAdminJson<AdminReviewDetailData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}`,
+      { headers: adminSessionA1.headers("trace-pg-admin-a-detail") },
+    )).data;
+    const adminDetailB = (await requestAdminJson<AdminReviewDetailData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantBId}`,
+      { headers: adminSessionA1.headers("trace-pg-admin-b-detail") },
+    )).data;
+    for (const [detailData, participantId, completionId, evidenceId] of [
+      [
+        adminDetailA,
+        participantAId,
+        firstVerification.campaignDbCompletion.completionId,
+        firstVerification.campaignDbEvidence.evidenceId,
+      ],
+      [
+        adminDetailB,
+        participantBId,
+        participantBVerification.campaignDbCompletion.completionId,
+        participantBVerification.campaignDbEvidence.evidenceId,
+      ],
+    ] as const) {
+      expect(detailData).toMatchObject({
+        campaignId,
+        currentDecision: null,
+        history: [],
+        participantId,
+        reviewState: "pending_review",
+        snapshot: {
+          campaignId,
+          fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          fingerprintVersion: "review-snapshot-v1",
+          participantId,
+        },
+      });
+      expect(detailData.snapshot.completions.map(({ id }) => id)).toEqual([completionId]);
+      expect(detailData.snapshot.evidence.map(({ id }) => id)).toEqual([evidenceId]);
+      expect(new Set(detailData.snapshot.tasks.map(({ id }) => id))).toEqual(
+        new Set([taskId, adoptedTaskId]),
+      );
+    }
+
+    const approveBody = JSON.stringify({
+      decision: "approved",
+      note: "Canonical evidence verified.",
+      reasonCode: "evidence_verified",
+      snapshotFingerprint: adminDetailA.snapshot.fingerprint,
+    });
+    const approveIdempotencyKey = `approve-a-${randomUUID()}`;
+    const approveRace = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      requestApi<AdminDecisionReceiptData>(
+        firstServer,
+        `/api/admin/campaigns/${campaignId}/reviews/${participantAId}/decisions`,
+        {
+          body: approveBody,
+          headers: adminSessionA1.headers(`trace-pg-admin-a-decision-${index}`, {
+            "Idempotency-Key": approveIdempotencyKey,
+          }),
+          method: "POST",
+        },
+      )));
+    expect(approveRace.filter(({ status }) => status === 201)).toHaveLength(1);
+    expect(approveRace.filter(({ status }) => status === 200)).toHaveLength(19);
+    const approveReceipts = approveRace.map(({ envelope, status }) => {
+      if (!envelope.ok || !envelope.data || (status !== 200 && status !== 201)) {
+        throw new Error("Concurrent Admin decision did not return a success receipt.");
+      }
+      return envelope.data;
+    });
+    const createdApproveReceipt = approveReceipts.find(({ created }) => created);
+    expect(createdApproveReceipt).toBeDefined();
+    expect(approveReceipts.filter(({ created }) => created)).toHaveLength(1);
+    expect(new Set(approveReceipts.map(({ decisionId }) => decisionId)).size).toBe(1);
+    expect(new Set(approveReceipts.map(({ version }) => version))).toEqual(new Set([1]));
+    expect(approveReceipts.every((receipt) =>
+      receipt.campaignId === campaignId
+      && receipt.participantId === participantAId
+      && receipt.snapshotFingerprint === adminDetailA.snapshot.fingerprint)).toBe(true);
+
+    const approveReplay = await requestAdminJson<AdminDecisionReceiptData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}/decisions`,
+      {
+        body: approveBody,
+        headers: adminSessionA1.headers("trace-pg-admin-a-decision-replay", {
+          "Idempotency-Key": approveIdempotencyKey,
+        }),
+        method: "POST",
+      },
+    );
+    expect(approveReplay.status).toBe(200);
+    expect(approveReplay.data).toEqual({ ...createdApproveReceipt, created: false });
+    expect(await readAdminDurableRowCounts(campaignId)).toEqual({
+      artifactRows: 0,
+      decisionRows: 1,
+    });
+
+    const approveConflict = await requestApi<AdminDecisionReceiptData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}/decisions`,
+      {
+        body: JSON.stringify({
+          decision: "needs_review",
+          reasonCode: "manual_review_required",
+          snapshotFingerprint: adminDetailA.snapshot.fingerprint,
+        }),
+        headers: adminSessionA1.headers("trace-pg-admin-a-decision-conflict", {
+          "Idempotency-Key": approveIdempotencyKey,
+        }),
+        method: "POST",
+      },
+    );
+    expect(approveConflict).toMatchObject({
+      status: 409,
+      envelope: {
+        error: {
+          code: "INVALID_REQUEST",
+          details: {
+            diagnosticCode: "ADMIN_REVIEW_DOMAIN_CONFLICT",
+            field: "idempotencyKey",
+          },
+        },
+        ok: false,
+        traceId: "trace-pg-admin-a-decision-conflict",
+      },
+    });
+    expect(await readAdminDurableRowCounts(campaignId)).toEqual({
+      artifactRows: 0,
+      decisionRows: 1,
+    });
+
+    const rejectB = await requestAdminJson<AdminDecisionReceiptData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantBId}/decisions`,
+      {
+        body: JSON.stringify({
+          decision: "rejected",
+          note: "Canonical evidence requires rejection.",
+          reasonCode: "evidence_invalid",
+          snapshotFingerprint: adminDetailB.snapshot.fingerprint,
+        }),
+        headers: adminSessionA1.headers("trace-pg-admin-b-decision", {
+          "Idempotency-Key": `reject-b-${randomUUID()}`,
+        }),
+        method: "POST",
+      },
+      [201],
+    );
+    expect(rejectB.data).toMatchObject({
+      campaignId,
+      created: true,
+      participantId: participantBId,
+      snapshotFingerprint: adminDetailB.snapshot.fingerprint,
+      version: 1,
+    });
+
+    const reviewedAdminQueue = (await requestAdminJson<AdminQueueData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews`,
+      { headers: adminSessionA1.headers("trace-pg-admin-reviewed-queue") },
+    )).data;
+    expect(reviewedAdminQueue.items.find(({ participantId }) => participantId === participantAId))
+      .toMatchObject({ currentDecision: { decision: "approved", version: 1 }, reviewState: "approved_current" });
+    expect(reviewedAdminQueue.items.find(({ participantId }) => participantId === participantBId))
+      .toMatchObject({ currentDecision: { decision: "rejected", version: 1 }, reviewState: "rejected_current" });
+    expect(reviewedAdminQueue.summary).toEqual({
+      approvedCurrent: 1,
+      needsReviewCurrent: 0,
+      pendingReview: 0,
+      rejectedCurrent: 1,
+      stale: 0,
+      total: 2,
+    });
+
+    const decidedAdminDetailA = (await requestAdminJson<AdminReviewDetailData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}`,
+      { headers: adminSessionA1.headers("trace-pg-admin-a-decided-detail") },
+    )).data;
+    const decidedAdminDetailB = (await requestAdminJson<AdminReviewDetailData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantBId}`,
+      { headers: adminSessionA1.headers("trace-pg-admin-b-decided-detail") },
+    )).data;
+    expect(decidedAdminDetailA.history).toEqual([decidedAdminDetailA.currentDecision]);
+    expect(decidedAdminDetailB.history).toEqual([decidedAdminDetailB.currentDecision]);
+    expect(decidedAdminDetailA.currentDecision).toMatchObject({
+      decision: "approved",
+      decisionId: createdApproveReceipt?.decisionId,
+      operatorRole: "review_operator",
+      operatorSubject: adminOperatorAddress,
+      version: 1,
+    });
+    expect(decidedAdminDetailB.currentDecision).toMatchObject({
+      decision: "rejected",
+      decisionId: rejectB.data.decisionId,
+      operatorRole: "review_operator",
+      operatorSubject: adminOperatorAddress,
+      version: 1,
+    });
+
+    const participantFactsAfterDecisions = await readCampaignSnapshotFromDatabase(campaignId);
+    const participantJourneyAAfterDecisions = await requestJson<ParticipantJourneyData>(
+      firstServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: participantSessionA1.headers("trace-pg-participant-a-after-admin-decisions") },
+    );
+    const participantJourneyBAfterDecisions = await requestJson<ParticipantJourneyData>(
+      firstServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: participantSessionB1.headers("trace-pg-participant-b-after-admin-decisions") },
+    );
+    expect(participantFactsAfterDecisions).toEqual(participantFactsBeforeAdmin);
+    expect(participantJourneyAAfterDecisions.payload).toEqual(participantJourneyA.payload);
+    expect(participantJourneyBAfterDecisions.payload).toEqual(participantJourneyB.payload);
+
+    const approvedWinners = (await requestAdminJson<AdminWinnerData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/winners`,
+      { headers: adminSessionA1.headers("trace-pg-admin-winners") },
+    )).data;
+    expect(approvedWinners).toMatchObject({
+      campaignId,
+      rows: [{
+        campaignId,
+        decisionId: createdApproveReceipt?.decisionId,
+        decisionVersion: 1,
+        participantId: participantAId,
+        rank: 1,
+        snapshotFingerprint: adminDetailA.snapshot.fingerprint,
+        totalPoints: task.payload.points,
+        walletAddress,
+      }],
+      sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      sourceVersion: "artifact-source-v1",
+    });
+    expect(JSON.stringify(approvedWinners.rows)).not.toContain(participantBId);
+    expect(JSON.stringify(approvedWinners.rows)).not.toContain(walletBAddress);
+
+    const csvRace = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      requestApi<AdminArtifactReceiptData>(
+        firstServer,
+        `/api/admin/campaigns/${campaignId}/artifacts`,
+        {
+          body: JSON.stringify({
+            expectedSourceFingerprint: approvedWinners.sourceFingerprint,
+            format: "csv",
+          }),
+          headers: adminSessionA1.headers(`trace-pg-admin-csv-${index}`),
+          method: "POST",
+        },
+      )));
+    expect(csvRace.filter(({ status }) => status === 201)).toHaveLength(1);
+    expect(csvRace.filter(({ status }) => status === 200)).toHaveLength(19);
+    const csvReceipts = csvRace.map(({ envelope, status }) => {
+      if (!envelope.ok || !envelope.data || (status !== 200 && status !== 201)) {
+        throw new Error("Concurrent CSV generation did not return a success receipt.");
+      }
+      return envelope.data;
+    });
+    expect(csvReceipts.filter(({ created }) => created)).toHaveLength(1);
+    expect(new Set(csvReceipts.map(({ artifact }) => artifact.artifactId)).size).toBe(1);
+    expect(new Set(csvReceipts.map(({ artifact }) => artifact.contentHash)).size).toBe(1);
+    const csvArtifact = csvReceipts[0]!.artifact;
+    expect(csvArtifact).toMatchObject({
+      campaignId,
+      format: "csv",
+      mimeType: "text/csv;charset=utf-8",
+      rowCount: 1,
+      sourceFingerprint: approvedWinners.sourceFingerprint,
+      sourceVersion: "artifact-source-v1",
+    });
+
+    const jsonArtifactRequest = {
+      body: JSON.stringify({
+        expectedSourceFingerprint: approvedWinners.sourceFingerprint,
+        format: "json",
+      }),
+      headers: adminSessionA1.headers("trace-pg-admin-json-create"),
+      method: "POST",
+    } as const;
+    const createdJsonArtifact = await requestAdminJson<AdminArtifactReceiptData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/artifacts`,
+      jsonArtifactRequest,
+      [201],
+    );
+    const replayedJsonArtifact = await requestAdminJson<AdminArtifactReceiptData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/artifacts`,
+      {
+        ...jsonArtifactRequest,
+        headers: adminSessionA1.headers("trace-pg-admin-json-replay"),
+      },
+      [200],
+    );
+    expect(createdJsonArtifact.data).toMatchObject({
+      artifact: {
+        campaignId,
+        format: "json",
+        mimeType: "application/json;charset=utf-8",
+        rowCount: 1,
+        sourceFingerprint: approvedWinners.sourceFingerprint,
+        sourceVersion: "artifact-source-v1",
+      },
+      created: true,
+    });
+    expect(replayedJsonArtifact.data).toEqual({
+      artifact: createdJsonArtifact.data.artifact,
+      created: false,
+    });
+    const jsonArtifact = createdJsonArtifact.data.artifact;
+    expect(jsonArtifact.artifactId).not.toBe(csvArtifact.artifactId);
+    expect(await readAdminDurableRowCounts(campaignId)).toEqual({
+      artifactRows: 2,
+      decisionRows: 2,
+    });
+
+    const artifactListBeforeRestart = (await requestAdminJson<AdminArtifactListData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/artifacts?limit=10`,
+      { headers: adminSessionA1.headers("trace-pg-admin-artifact-list") },
+    )).data;
+    expect(artifactListBeforeRestart.campaignId).toBe(campaignId);
+    expect(new Set(artifactListBeforeRestart.artifacts.map(({ artifactId }) => artifactId))).toEqual(
+      new Set([csvArtifact.artifactId, jsonArtifact.artifactId]),
+    );
+    const csvArtifactDetailBeforeRestart = (await requestAdminJson<AdminArtifactDetailData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/artifacts/${csvArtifact.artifactId}`,
+      { headers: adminSessionA1.headers("trace-pg-admin-csv-detail") },
+    )).data;
+    const jsonArtifactDetailBeforeRestart = (await requestAdminJson<AdminArtifactDetailData>(
+      firstServer,
+      `/api/admin/campaigns/${campaignId}/artifacts/${jsonArtifact.artifactId}`,
+      { headers: adminSessionA1.headers("trace-pg-admin-json-detail") },
+    )).data;
+    expect(csvArtifactDetailBeforeRestart).toEqual({
+      artifact: csvArtifact,
+      sourceManifest: expect.objectContaining({ rows: approvedWinners.rows }),
+    });
+    expect(jsonArtifactDetailBeforeRestart).toEqual({
+      artifact: jsonArtifact,
+      sourceManifest: csvArtifactDetailBeforeRestart.sourceManifest,
+    });
+
+    const assertExactArtifactDownload = async (
+      server: CampaignOsApiServerHandle,
+      session: IssuedWalletSession,
+      artifact: AdminArtifactMetadata,
+      traceId: string,
+    ) => {
+      const download = await requestAdminDownload(
+        server,
+        `/api/admin/campaigns/${campaignId}/artifacts/${artifact.artifactId}/download`,
+        session.headers(traceId),
+      );
+      const independentHash = createHash("sha256").update(download.bytes).digest("hex");
+
+      expect(download.status).toBe(200);
+      expect(download.bytes).toHaveLength(artifact.contentBytes);
+      expect(download.contentLength).toBe(String(artifact.contentBytes));
+      expect(download.contentHash).toBe(artifact.contentHash);
+      expect(download.mimeType).toBe(artifact.mimeType);
+      expect(download.contentDisposition).toBe(`attachment; filename="${artifact.fileName}"`);
+      expect(independentHash).toBe(artifact.contentHash);
+      expect(artifact.fileName).toMatch(new RegExp(`^[A-Za-z0-9._-]+\\.${artifact.format}$`));
+
+      return download;
+    };
+    const csvDownloadBeforeRestart = await assertExactArtifactDownload(
+      firstServer,
+      adminSessionA1,
+      csvArtifact,
+      "trace-pg-admin-csv-download",
+    );
+    const jsonDownloadBeforeRestart = await assertExactArtifactDownload(
+      firstServer,
+      adminSessionA1,
+      jsonArtifact,
+      "trace-pg-admin-json-download",
+    );
+    const toAdminDownloadManifest = (download: AdminDownloadResult) => ({
+      content: download.bytes.toString("base64"),
+      contentDisposition: download.contentDisposition,
+      contentHash: download.contentHash,
+      contentLength: download.contentLength,
+      mimeType: download.mimeType,
+      status: download.status,
+    });
+    const csvContentBeforeRestart = csvDownloadBeforeRestart.bytes.toString("utf8");
+    const jsonContentBeforeRestart = jsonDownloadBeforeRestart.bytes.toString("utf8");
+    expect(csvContentBeforeRestart).toContain(participantAId);
+    expect(csvContentBeforeRestart).toContain(walletAddress);
+    expect(csvContentBeforeRestart).not.toContain(participantBId);
+    expect(csvContentBeforeRestart).not.toContain(walletBAddress);
+    expect(JSON.parse(jsonContentBeforeRestart)).toEqual({
+      rows: approvedWinners.rows,
+      source: { campaignId, fingerprint: approvedWinners.sourceFingerprint },
+      version: approvedWinners.sourceVersion,
+    });
+    expect(jsonContentBeforeRestart).not.toContain(participantBId);
+    expect(jsonContentBeforeRestart).not.toContain(walletBAddress);
+    for (const content of [csvContentBeforeRestart, jsonContentBeforeRestart]) {
+      expect(content).not.toContain("operatorSubject");
+      expect(content).not.toContain("payloadHash");
+    }
+    expect(await readCampaignSnapshotFromDatabase(campaignId)).toEqual(participantFactsBeforeAdmin);
+
     const referralId = `referral-binding-${randomUUID()}`;
     const beforeRestartSnapshot = await (async () => {
       const pool = createAuditPool();
@@ -1526,10 +2292,73 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expect(createdAt).toBeLessThanOrEqual(runtimeWriteWindowEndedAt + 1_000);
       expect(updatedAt).toBeGreaterThanOrEqual(createdAt);
     }
+    const adminRestartManifest = Object.freeze({
+      artifactDetails: {
+        csv: (await requestAdminJson<AdminArtifactDetailData>(
+          firstServer,
+          `/api/admin/campaigns/${campaignId}/artifacts/${csvArtifact.artifactId}`,
+          { headers: adminSessionA1.headers("trace-pg-admin-manifest-csv-detail") },
+        )).data,
+        json: (await requestAdminJson<AdminArtifactDetailData>(
+          firstServer,
+          `/api/admin/campaigns/${campaignId}/artifacts/${jsonArtifact.artifactId}`,
+          { headers: adminSessionA1.headers("trace-pg-admin-manifest-json-detail") },
+        )).data,
+      },
+      artifacts: (await requestAdminJson<AdminArtifactListData>(
+        firstServer,
+        `/api/admin/campaigns/${campaignId}/artifacts?limit=10`,
+        { headers: adminSessionA1.headers("trace-pg-admin-manifest-artifacts") },
+      )).data,
+      campaignFeed: (await requestAdminJson<AdminCampaignListData>(
+        firstServer,
+        "/api/admin/campaigns?limit=10",
+        { headers: adminSessionA1.headers("trace-pg-admin-manifest-campaigns") },
+      )).data,
+      decisionDetails: {
+        participantA: (await requestAdminJson<AdminReviewDetailData>(
+          firstServer,
+          `/api/admin/campaigns/${campaignId}/reviews/${participantAId}`,
+          { headers: adminSessionA1.headers("trace-pg-admin-manifest-a-detail") },
+        )).data,
+        participantB: (await requestAdminJson<AdminReviewDetailData>(
+          firstServer,
+          `/api/admin/campaigns/${campaignId}/reviews/${participantBId}`,
+          { headers: adminSessionA1.headers("trace-pg-admin-manifest-b-detail") },
+        )).data,
+      },
+      downloads: {
+        csv: toAdminDownloadManifest(await assertExactArtifactDownload(
+          firstServer,
+          adminSessionA1,
+          csvArtifact,
+          "trace-pg-admin-manifest-csv-download",
+        )),
+        json: toAdminDownloadManifest(await assertExactArtifactDownload(
+          firstServer,
+          adminSessionA1,
+          jsonArtifact,
+          "trace-pg-admin-manifest-json-download",
+        )),
+      },
+      durableRows: await readAdminDurableRowCounts(campaignId),
+      queue: (await requestAdminJson<AdminQueueData>(
+        firstServer,
+        `/api/admin/campaigns/${campaignId}/reviews`,
+        { headers: adminSessionA1.headers("trace-pg-admin-manifest-queue") },
+      )).data,
+      winners: (await requestAdminJson<AdminWinnerData>(
+        firstServer,
+        `/api/admin/campaigns/${campaignId}/winners`,
+        { headers: adminSessionA1.headers("trace-pg-admin-manifest-winners") },
+      )).data,
+    });
+    expect(adminRestartManifest.durableRows).toEqual({ artifactRows: 2, decisionRows: 2 });
     await stopServer(firstServer);
     expect(shutdownTimings[shutdownTimings.length - 1]).toBeLessThanOrEqual(10_000);
     expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
 
+    adminMembershipCampaignIds = [campaignId, "000-nfr-campaign-001"];
     const secondServer = await startServer();
     const oldParticipantAAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
       "Runtime B rejects stale Participant A1",
@@ -1576,6 +2405,21 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         { headers: sessionA.headers("trace-pg-old-session-after-restart") },
       ),
     );
+    const oldAdminAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
+      "Runtime B rejects stale Admin A1",
+      {
+        diagnosticCode: "AUTH_SESSION_INVALID",
+        field: "x-campaign-os-session-id",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
+        traceId: "trace-pg-old-admin-after-restart",
+      },
+      () => requestApi(
+        secondServer,
+        `/api/admin/campaigns/${campaignId}/reviews`,
+        { headers: adminSessionA1.headers("trace-pg-old-admin-after-restart") },
+      ),
+    );
     const sessionB = await issueProjectOwnerSession(
       secondServer,
       { fixtureId: "sess-aa-001" },
@@ -1601,6 +2445,17 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { fixtureId: "sess-eoa-app-001" },
       "trace-pg-participant-b2-session",
     );
+    const adminSessionA2 = await issueAdminSession(
+      secondServer,
+      { address: adminOperatorAddress },
+      "trace-pg-admin-a2-session",
+    );
+    expect(adminSessionA2.data.payload).toMatchObject({
+      accountType: adminSessionA1.data.payload.accountType,
+      address: adminOperatorAddress,
+      walletSource: adminSessionA1.data.payload.walletSource,
+    });
+    expect(adminSessionA2.data.payload.sessionId).not.toBe(adminSessionA1.data.payload.sessionId);
 
     for (const [freshSession, staleSession, address] of [
       [participantSessionA2, participantSessionA1, walletAddress],
@@ -1663,6 +2518,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(oldSessionAfterRestart.envelope.data).toBeUndefined();
     expect(oldParticipantAAfterRestart.envelope.data).toBeUndefined();
     expect(oldParticipantBAfterRestart.envelope.data).toBeUndefined();
+    expect(oldAdminAfterRestart.envelope.data).toBeUndefined();
     expect(health.campaignDatabase).toMatchObject({
       liveConnectionAttempted: true,
       liveQueryExecutionEnabled: true,
@@ -1779,6 +2635,277 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }).toLowerCase();
     expect(canonicalIdentitySurfaces).not.toContain("local-task-");
     expect(canonicalIdentitySurfaces).not.toContain("synthetic");
+
+    const adminRuntimeBManifest = {
+      artifactDetails: {
+        csv: (await requestAdminJson<AdminArtifactDetailData>(
+          secondServer,
+          `/api/admin/campaigns/${campaignId}/artifacts/${csvArtifact.artifactId}`,
+          { headers: adminSessionA2.headers("trace-pg-admin-b-csv-detail") },
+        )).data,
+        json: (await requestAdminJson<AdminArtifactDetailData>(
+          secondServer,
+          `/api/admin/campaigns/${campaignId}/artifacts/${jsonArtifact.artifactId}`,
+          { headers: adminSessionA2.headers("trace-pg-admin-b-json-detail") },
+        )).data,
+      },
+      artifacts: (await requestAdminJson<AdminArtifactListData>(
+        secondServer,
+        `/api/admin/campaigns/${campaignId}/artifacts?limit=10`,
+        { headers: adminSessionA2.headers("trace-pg-admin-b-artifacts") },
+      )).data,
+      campaignFeed: (await requestAdminJson<AdminCampaignListData>(
+        secondServer,
+        "/api/admin/campaigns?limit=10",
+        { headers: adminSessionA2.headers("trace-pg-admin-b-campaigns") },
+      )).data,
+      decisionDetails: {
+        participantA: (await requestAdminJson<AdminReviewDetailData>(
+          secondServer,
+          `/api/admin/campaigns/${campaignId}/reviews/${participantAId}`,
+          { headers: adminSessionA2.headers("trace-pg-admin-b-a-detail") },
+        )).data,
+        participantB: (await requestAdminJson<AdminReviewDetailData>(
+          secondServer,
+          `/api/admin/campaigns/${campaignId}/reviews/${participantBId}`,
+          { headers: adminSessionA2.headers("trace-pg-admin-b-b-detail") },
+        )).data,
+      },
+      downloads: {
+        csv: toAdminDownloadManifest(await assertExactArtifactDownload(
+          secondServer,
+          adminSessionA2,
+          csvArtifact,
+          "trace-pg-admin-b-csv-download",
+        )),
+        json: toAdminDownloadManifest(await assertExactArtifactDownload(
+          secondServer,
+          adminSessionA2,
+          jsonArtifact,
+          "trace-pg-admin-b-json-download",
+        )),
+      },
+      durableRows: await readAdminDurableRowCounts(campaignId),
+      queue: (await requestAdminJson<AdminQueueData>(
+        secondServer,
+        `/api/admin/campaigns/${campaignId}/reviews`,
+        { headers: adminSessionA2.headers("trace-pg-admin-b-queue") },
+      )).data,
+      winners: (await requestAdminJson<AdminWinnerData>(
+        secondServer,
+        `/api/admin/campaigns/${campaignId}/winners`,
+        { headers: adminSessionA2.headers("trace-pg-admin-b-winners") },
+      )).data,
+    };
+    expect(adminRuntimeBManifest).toEqual(adminRestartManifest);
+
+    const participantFactsBeforeStaleMutation = await readCampaignSnapshotFromDatabase(campaignId);
+    const participantAStaleMutation = await requestJson<VerificationData>(
+      secondServer,
+      `/api/tasks/${adoptedTaskId}/verify`,
+      {
+        body: JSON.stringify({ campaignId }),
+        headers: participantSessionA2.headers("trace-pg-participant-a-stale-mutation"),
+        method: "POST",
+      },
+    );
+    expect(participantAStaleMutation.payload).toMatchObject({
+      campaignId,
+      pointsAwarded: adoptedTask.payload.points,
+      status: "completed",
+      taskId: adoptedTaskId,
+      walletAddress,
+    });
+    expect(participantAStaleMutation.campaignDbCompletion.completionId).not.toBe(
+      firstVerification.campaignDbCompletion.completionId,
+    );
+    expect(participantAStaleMutation.campaignDbEvidence.evidenceId).not.toBe(
+      firstVerification.campaignDbEvidence.evidenceId,
+    );
+    const participantFactsAfterStaleMutation = await readCampaignSnapshotFromDatabase(campaignId);
+    expect(participantFactsAfterStaleMutation).not.toEqual(participantFactsBeforeStaleMutation);
+
+    const staleAdminDetailA = (await requestAdminJson<AdminReviewDetailData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}`,
+      { headers: adminSessionA2.headers("trace-pg-admin-stale-a-detail") },
+    )).data;
+    const staleAdminQueue = (await requestAdminJson<AdminQueueData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/reviews`,
+      { headers: adminSessionA2.headers("trace-pg-admin-stale-queue") },
+    )).data;
+    const staleWinners = (await requestAdminJson<AdminWinnerData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/winners`,
+      { headers: adminSessionA2.headers("trace-pg-admin-stale-winners") },
+    )).data;
+    const staleArtifactList = (await requestAdminJson<AdminArtifactListData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/artifacts?limit=10`,
+      { headers: adminSessionA2.headers("trace-pg-admin-stale-artifacts") },
+    )).data;
+    expect(staleAdminDetailA).toMatchObject({
+      currentDecision: { decision: "approved", version: 1 },
+      reviewState: "stale",
+      snapshot: {
+        fingerprint: expect.not.stringMatching(adminDetailA.snapshot.fingerprint),
+        fingerprintVersion: "review-snapshot-v1",
+      },
+    });
+    expect(staleAdminDetailA.history).toHaveLength(1);
+    expect(staleAdminQueue.items.find(({ participantId }) => participantId === participantAId))
+      .toMatchObject({ reviewState: "stale" });
+    expect(staleAdminQueue.items.find(({ participantId }) => participantId === participantBId))
+      .toMatchObject({ reviewState: "rejected_current" });
+    expect(staleAdminQueue.summary).toEqual({
+      approvedCurrent: 0,
+      needsReviewCurrent: 0,
+      pendingReview: 0,
+      rejectedCurrent: 1,
+      stale: 1,
+      total: 2,
+    });
+    expect(staleWinners.rows).toEqual([]);
+    expect(staleWinners.sourceFingerprint).not.toBe(approvedWinners.sourceFingerprint);
+    expect(staleArtifactList).toEqual(adminRestartManifest.artifacts);
+    expect(await readAdminDurableRowCounts(campaignId)).toEqual({
+      artifactRows: 2,
+      decisionRows: 2,
+    });
+
+    const participantJourneyABeforeRereview = await requestJson<ParticipantJourneyData>(
+      secondServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: participantSessionA2.headers("trace-pg-participant-a-before-rereview") },
+    );
+    expect(participantJourneyABeforeRereview.payload).toMatchObject({
+      eligibility: { eligible: true, riskFlags: [] },
+      participant: {
+        participantId: participantAId,
+        totalPoints: task.payload.points + adoptedTask.payload.points,
+        walletAddress,
+      },
+      ranking: {
+        participantCount: 2,
+        rank: 1,
+        totalPoints: task.payload.points + adoptedTask.payload.points,
+        walletAddress,
+      },
+    });
+    const rereviewA = await requestAdminJson<AdminDecisionReceiptData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}/decisions`,
+      {
+        body: JSON.stringify({
+          decision: "approved",
+          note: "Updated canonical evidence verified.",
+          reasonCode: "evidence_verified",
+          snapshotFingerprint: staleAdminDetailA.snapshot.fingerprint,
+        }),
+        headers: adminSessionA2.headers("trace-pg-admin-a-rereview", {
+          "Idempotency-Key": `rereview-a-${randomUUID()}`,
+        }),
+        method: "POST",
+      },
+      [201],
+    );
+    expect(rereviewA.data).toMatchObject({
+      campaignId,
+      created: true,
+      participantId: participantAId,
+      snapshotFingerprint: staleAdminDetailA.snapshot.fingerprint,
+      version: 2,
+    });
+    expect(rereviewA.data.decisionId).not.toBe(createdApproveReceipt?.decisionId);
+
+    const restoredAdminDetailA = (await requestAdminJson<AdminReviewDetailData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantAId}`,
+      { headers: adminSessionA2.headers("trace-pg-admin-a-restored-detail") },
+    )).data;
+    const restoredAdminDetailB = (await requestAdminJson<AdminReviewDetailData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/reviews/${participantBId}`,
+      { headers: adminSessionA2.headers("trace-pg-admin-b-restored-detail") },
+    )).data;
+    const restoredWinners = (await requestAdminJson<AdminWinnerData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/winners`,
+      { headers: adminSessionA2.headers("trace-pg-admin-restored-winners") },
+    )).data;
+    expect(restoredAdminDetailA.reviewState).toBe("approved_current");
+    expect(restoredAdminDetailA.currentDecision).toMatchObject({
+      decision: "approved",
+      decisionId: rereviewA.data.decisionId,
+      snapshotFingerprint: staleAdminDetailA.snapshot.fingerprint,
+      version: 2,
+    });
+    expect(restoredAdminDetailA.history.map(({ version }) => version)).toEqual([2, 1]);
+    expect(restoredAdminDetailA.history[1]).toEqual(
+      adminRestartManifest.decisionDetails.participantA.history[0],
+    );
+    expect(restoredAdminDetailB).toEqual(adminRestartManifest.decisionDetails.participantB);
+    expect(restoredWinners).toMatchObject({
+      campaignId,
+      rows: [{
+        campaignId,
+        decisionId: rereviewA.data.decisionId,
+        decisionVersion: 2,
+        participantId: participantAId,
+        rank: 1,
+        snapshotFingerprint: staleAdminDetailA.snapshot.fingerprint,
+        totalPoints: task.payload.points + adoptedTask.payload.points,
+        walletAddress,
+      }],
+      sourceVersion: "artifact-source-v1",
+    });
+    expect(restoredWinners.sourceFingerprint).not.toBe(approvedWinners.sourceFingerprint);
+
+    const participantJourneyAAfterRereview = await requestJson<ParticipantJourneyData>(
+      secondServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: participantSessionA2.headers("trace-pg-participant-a-after-rereview") },
+    );
+    expect(participantJourneyAAfterRereview.payload).toEqual(participantJourneyABeforeRereview.payload);
+    expect(await readCampaignSnapshotFromDatabase(campaignId)).toEqual(participantFactsAfterStaleMutation);
+    expect(await readAdminDurableRowCounts(campaignId)).toEqual({
+      artifactRows: 2,
+      decisionRows: 3,
+    });
+
+    const immutableArtifactList = (await requestAdminJson<AdminArtifactListData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/artifacts?limit=10`,
+      { headers: adminSessionA2.headers("trace-pg-admin-immutable-artifacts") },
+    )).data;
+    const immutableCsvDetail = (await requestAdminJson<AdminArtifactDetailData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/artifacts/${csvArtifact.artifactId}`,
+      { headers: adminSessionA2.headers("trace-pg-admin-immutable-csv-detail") },
+    )).data;
+    const immutableJsonDetail = (await requestAdminJson<AdminArtifactDetailData>(
+      secondServer,
+      `/api/admin/campaigns/${campaignId}/artifacts/${jsonArtifact.artifactId}`,
+      { headers: adminSessionA2.headers("trace-pg-admin-immutable-json-detail") },
+    )).data;
+    const immutableCsvDownload = await assertExactArtifactDownload(
+      secondServer,
+      adminSessionA2,
+      csvArtifact,
+      "trace-pg-admin-immutable-csv-download",
+    );
+    const immutableJsonDownload = await assertExactArtifactDownload(
+      secondServer,
+      adminSessionA2,
+      jsonArtifact,
+      "trace-pg-admin-immutable-json-download",
+    );
+    expect(immutableArtifactList).toEqual(adminRestartManifest.artifacts);
+    expect(immutableCsvDetail).toEqual(adminRestartManifest.artifactDetails.csv);
+    expect(immutableJsonDetail).toEqual(adminRestartManifest.artifactDetails.json);
+    expect(toAdminDownloadManifest(immutableCsvDownload)).toEqual(adminRestartManifest.downloads.csv);
+    expect(toAdminDownloadManifest(immutableJsonDownload)).toEqual(adminRestartManifest.downloads.json);
 
     const otherWalletSession = await issueProjectOwnerSession(
       secondServer,
@@ -1983,7 +3110,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         await pool.end();
       }
     })();
-    expect(afterNegativeSnapshot).toEqual(beforeRestartSnapshot);
+    expect(afterNegativeSnapshot).toEqual(participantFactsAfterStaleMutation);
 
     const unavailableUrl = new URL(databaseUrl);
     unavailableUrl.port = "1";
@@ -2053,7 +3180,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         await pool.end();
       }
     })();
-    expect(afterUnavailableSnapshot).toEqual(beforeRestartSnapshot);
+    expect(afterUnavailableSnapshot).toEqual(participantFactsAfterStaleMutation);
 
     const concurrentSessions = await Promise.all(Array.from({ length: 20 }, (_, index) =>
       issueProjectOwnerSession(
@@ -2513,6 +3640,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
 
     const nfrTimings = {
+      adminDetail: [] as number[],
+      adminQueue: [] as number[],
       create: [] as number[],
       detail: [] as number[],
       eligibility: [] as number[],
@@ -2626,13 +3755,27 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         },
         nfrTimings.generatePreview,
       );
+      await requestAdminJson<AdminQueueData>(
+        secondServer,
+        "/api/admin/campaigns/000-nfr-campaign-001/reviews",
+        { headers: adminSessionA2.headers(`trace-pg-nfr-admin-queue-${index}`) },
+        [200],
+        nfrTimings.adminQueue,
+      );
+      await requestAdminJson<AdminReviewDetailData>(
+        secondServer,
+        "/api/admin/campaigns/000-nfr-campaign-001/reviews/000-nfr-participant-001",
+        { headers: adminSessionA2.headers(`trace-pg-nfr-admin-detail-${index}`) },
+        [200],
+        nfrTimings.adminDetail,
+      );
     }
 
     for (const [operation, samples] of Object.entries(nfrTimings)) {
       expect(samples, `${operation} sample count`).toHaveLength(20);
       expect(percentile95(samples), `${operation} p95`).toBeLessThanOrEqual(500);
     }
-    console.info(`WP05 PostgreSQL NFR timings ${JSON.stringify(Object.fromEntries(
+    console.info(`WP06 PostgreSQL NFR timings ${JSON.stringify(Object.fromEntries(
       Object.entries(nfrTimings).map(([operation, samples]) => [operation, summarizeTimings(samples)]),
     ))}`);
 

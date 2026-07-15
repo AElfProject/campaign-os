@@ -1,9 +1,13 @@
-import { createFailureEnvelope } from "./envelope";
+import {
+  createFailureEnvelope,
+  type ApiRuntimeFailureEnvelope,
+} from "./envelope";
 import {
   invalidRequest,
   malformedJson,
   methodNotAllowed,
   toApiRuntimeErrorBody,
+  type ApiRuntimeErrorBody,
 } from "./errors";
 import type {
   ApiServerRuntimeContract,
@@ -12,6 +16,19 @@ import type {
 } from "./serverRuntime";
 
 export type ServerGuardHeaders = Record<string, string | readonly string[] | undefined>;
+export interface AdminApiFailureEnvelope {
+  error: {
+    code: string;
+    details?: Record<string, string | boolean>;
+    message: string;
+  };
+  ok: false;
+  runtime?: never;
+  safety?: never;
+  timestamp?: never;
+  traceId: string;
+}
+
 export type ServerRequestGuardDecision =
   | ServerRequestAcceptedDecision
   | ServerRequestRejectedDecision
@@ -25,6 +42,12 @@ export interface ServerRequestGuardInput {
   path: string;
 }
 
+export interface ServerRequestContext {
+  corsHeaders: Record<string, string>;
+  origin: string | undefined;
+  traceId: string;
+}
+
 export interface ServerRequestAcceptedDecision {
   body?: string;
   headers: Record<string, string>;
@@ -33,7 +56,7 @@ export interface ServerRequestAcceptedDecision {
 }
 
 export interface ServerRequestRejectedDecision {
-  body: ReturnType<typeof createFailureEnvelope>;
+  body: AdminApiFailureEnvelope | ApiRuntimeFailureEnvelope;
   headers: Record<string, string>;
   kind: "rejected";
   status: number;
@@ -41,7 +64,7 @@ export interface ServerRequestRejectedDecision {
 }
 
 export interface ServerRequestPreflightDecision {
-  body?: ReturnType<typeof createFailureEnvelope>;
+  body?: AdminApiFailureEnvelope | ApiRuntimeFailureEnvelope;
   headers: Record<string, string>;
   kind: "preflight";
   status: number;
@@ -87,6 +110,43 @@ const normalizeContentType = (contentType: string | undefined) =>
 
 const sanitizeRequestPath = (path: string) => new URL(path || "/", "http://127.0.0.1").pathname;
 
+const ADMIN_ERROR_STRING_DETAIL_KEYS = new Set([
+  "diagnosticCode",
+  "field",
+  "operation",
+  "routeId",
+]);
+const ADMIN_ERROR_BOOLEAN_DETAIL_KEYS = new Set([
+  "reconnectRequired",
+  "retryable",
+]);
+
+export const isAdminRequestTarget = (requestTarget: string): boolean => {
+  const pathname = requestTarget.trim().split(/[?#]/u, 1)[0] ?? "";
+
+  return pathname === "/api/admin" || pathname.startsWith("/api/admin/");
+};
+
+export const createAdminFailureEnvelope = (
+  error: ApiRuntimeErrorBody,
+  traceId: string,
+): AdminApiFailureEnvelope => {
+  const details = Object.fromEntries(Object.entries(error.details ?? {}).filter(([key, value]) =>
+    (ADMIN_ERROR_STRING_DETAIL_KEYS.has(key) && typeof value === "string")
+    || (ADMIN_ERROR_BOOLEAN_DETAIL_KEYS.has(key) && typeof value === "boolean")
+  )) as Record<string, string | boolean>;
+
+  return {
+    error: {
+      code: error.code,
+      ...(Object.keys(details).length === 0 ? {} : { details }),
+      message: error.message["en-US"],
+    },
+    ok: false,
+    traceId,
+  };
+};
+
 const createBaseHeaders = (traceId: string): Record<string, string> => ({
   "content-type": "application/json; charset=utf-8",
   "x-campaign-os-trace-id": traceId,
@@ -95,23 +155,27 @@ const createBaseHeaders = (traceId: string): Record<string, string> => ({
 const createFailureDecision = ({
   error,
   routeCount,
+  requestTarget,
   runtimeVersion,
   traceId,
 }: {
   error: unknown;
   routeCount: number;
+  requestTarget: string;
   runtimeVersion: string;
   traceId: string;
 }): ServerRequestRejectedDecision => {
   const runtimeError = toApiRuntimeErrorBody(error);
 
   return {
-    body: createFailureEnvelope({
-      error: runtimeError,
-      routeCount,
-      traceId,
-      version: runtimeVersion,
-    }),
+    body: isAdminRequestTarget(requestTarget)
+      ? createAdminFailureEnvelope(runtimeError, traceId)
+      : createFailureEnvelope({
+        error: runtimeError,
+        routeCount,
+        traceId,
+        version: runtimeVersion,
+      }),
     headers: createBaseHeaders(traceId),
     kind: "rejected",
     status: runtimeError.status,
@@ -143,6 +207,7 @@ const createCorsHeaders = (
     "access-control-allow-headers": corsPolicy.allowedHeaders.join(", "),
     "access-control-allow-methods": corsPolicy.allowedMethods.join(", "),
     "access-control-allow-origin": allowOrigin,
+    "access-control-expose-headers": corsPolicy.exposedHeaders.join(", "),
     "access-control-max-age": String(corsPolicy.maxAgeSeconds),
     vary: "origin",
   };
@@ -157,10 +222,24 @@ const withCorsHeaders = (
   ...createCorsHeaders(corsPolicy, origin),
 });
 
-const createRejectedPreflight = ({
+export const createServerRequestContext = (
+  headers: ServerGuardHeaders | undefined,
+  contract: Pick<ApiServerRuntimeContract, "corsPolicy" | "requestGuard">,
+): ServerRequestContext => {
+  const origin = getHeader(headers, "origin");
+
+  return {
+    corsHeaders: createCorsHeaders(contract.corsPolicy, origin),
+    origin,
+    traceId: createServerTraceId(headers, contract.requestGuard.traceHeaderName),
+  };
+};
+
+const createRejectedRequest = ({
   corsPolicy,
   error,
   origin,
+  requestTarget,
   routeCount,
   runtimeVersion,
   traceId,
@@ -168,12 +247,47 @@ const createRejectedPreflight = ({
   corsPolicy: ServerCorsPolicy;
   error: unknown;
   origin: string | undefined;
+  requestTarget: string;
+  routeCount: number;
+  runtimeVersion: string;
+  traceId: string;
+}): ServerRequestRejectedDecision => {
+  const rejected = createFailureDecision({
+    error,
+    requestTarget,
+    routeCount,
+    runtimeVersion,
+    traceId,
+  });
+
+  return {
+    ...rejected,
+    headers: isAdminRequestTarget(requestTarget)
+      ? withCorsHeaders(rejected.headers, corsPolicy, origin)
+      : rejected.headers,
+  };
+};
+
+const createRejectedPreflight = ({
+  corsPolicy,
+  error,
+  origin,
+  requestTarget,
+  routeCount,
+  runtimeVersion,
+  traceId,
+}: {
+  corsPolicy: ServerCorsPolicy;
+  error: unknown;
+  origin: string | undefined;
+  requestTarget: string;
   routeCount: number;
   runtimeVersion: string;
   traceId: string;
 }): ServerRequestPreflightDecision => {
   const rejected = createFailureDecision({
     error,
+    requestTarget,
     routeCount,
     runtimeVersion,
     traceId,
@@ -192,9 +306,9 @@ export const evaluateServerRequestGuard = (
   input: ServerRequestGuardInput,
   contract: Pick<ApiServerRuntimeContract, "corsPolicy" | "requestGuard" | "runtimeVersion">,
   routeCount = 0,
+  requestContext = createServerRequestContext(input.headers, contract),
 ): ServerRequestGuardDecision => {
-  const traceId = createServerTraceId(input.headers, contract.requestGuard.traceHeaderName);
-  const origin = getHeader(input.headers, "origin");
+  const { origin, traceId } = requestContext;
   const method = normalizeMethod(input.method);
   const safePath = sanitizeRequestPath(input.path);
 
@@ -208,6 +322,7 @@ export const evaluateServerRequestGuard = (
         corsPolicy: contract.corsPolicy,
         error: invalidRequest("origin", "CORS origin is not allowed."),
         origin,
+        requestTarget: safePath,
         routeCount,
         runtimeVersion: contract.runtimeVersion,
         traceId,
@@ -219,6 +334,7 @@ export const evaluateServerRequestGuard = (
         corsPolicy: contract.corsPolicy,
         error: methodNotAllowed(requestedMethod || "OPTIONS", input.path, contract.corsPolicy.allowedMethods),
         origin,
+        requestTarget: safePath,
         routeCount,
         runtimeVersion: contract.runtimeVersion,
         traceId,
@@ -238,8 +354,11 @@ export const evaluateServerRequestGuard = (
   }
 
   if (!contract.requestGuard.allowedMethods.includes(method)) {
-    return createFailureDecision({
+    return createRejectedRequest({
+      corsPolicy: contract.corsPolicy,
       error: methodNotAllowed(method, safePath, contract.requestGuard.allowedMethods),
+      origin,
+      requestTarget: safePath,
       routeCount,
       runtimeVersion: contract.runtimeVersion,
       traceId,
@@ -250,8 +369,11 @@ export const evaluateServerRequestGuard = (
     const contentType = normalizeContentType(getHeader(input.headers, "content-type"));
 
     if (contentType && !contract.requestGuard.jsonContentTypes.includes(contentType)) {
-      return createFailureDecision({
+      return createRejectedRequest({
+        corsPolicy: contract.corsPolicy,
         error: invalidRequest("content-type", "POST requests must use application/json."),
+        origin,
+        requestTarget: safePath,
         routeCount,
         runtimeVersion: contract.runtimeVersion,
         traceId,
@@ -261,8 +383,11 @@ export const evaluateServerRequestGuard = (
     const bodyBytes = input.bodyBytes ?? Buffer.byteLength(input.body ?? "", "utf8");
 
     if (bodyBytes > contract.requestGuard.maxBodyBytes) {
-      return createFailureDecision({
+      return createRejectedRequest({
+        corsPolicy: contract.corsPolicy,
         error: invalidRequest("body", "Request body exceeds the Campaign OS API server limit."),
+        origin,
+        requestTarget: safePath,
         routeCount,
         runtimeVersion: contract.runtimeVersion,
         traceId,
@@ -273,8 +398,11 @@ export const evaluateServerRequestGuard = (
       try {
         JSON.parse(input.body);
       } catch {
-        return createFailureDecision({
+        return createRejectedRequest({
+          corsPolicy: contract.corsPolicy,
           error: malformedJson(),
+          origin,
+          requestTarget: safePath,
           routeCount,
           runtimeVersion: contract.runtimeVersion,
           traceId,

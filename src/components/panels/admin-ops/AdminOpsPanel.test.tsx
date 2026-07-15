@@ -1,16 +1,36 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createAdminDurableReviewApiBridge,
+  type AdminCampaignListData,
+  type AdminDurableReviewResult,
+} from "../../../api/adminDurableReviewApiBridge";
 import { App } from "../../../app/App";
 import {
   campaignDetail,
   createWalletProviderEvidenceAllApprovedSampleSnapshot,
   EXPORT_CSV_COLUMNS,
+  walletSessions,
 } from "../../../domain";
 import { AdminOpsPanel } from "./AdminOpsPanel";
 
 const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
 const walletProviderEvidenceRecoveryStorageKey = "campaign-os.wallet-provider-evidence.recovery";
+const adminStageSession = {
+  ...walletSessions[0],
+  issuer: {
+    artifactType: "local_session_reference" as const,
+    cookieIssued: false as const,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque" as const,
+    jwtIssued: false as const,
+    liveSigningExecuted: false as const,
+    referenceId: "issuer-admin-stage",
+    ttlSeconds: 900,
+    valid: true,
+  },
+};
 
 const expectVisibleText = (text: string | RegExp) => {
   expect(screen.getAllByText(text).length).toBeGreaterThan(0);
@@ -31,11 +51,55 @@ describe("Admin/Ops shell", () => {
     window.localStorage.clear();
   });
 
-  it("renders review gates, contract boundaries, and export preview", () => {
+  it("renders only the accessible durable workspace in stage review mode", () => {
+    render(<AdminOpsPanel locale="en-US" stageReviewMode />);
+
+    expect(
+      screen.getByRole("region", { name: "Durable Evidence Review" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Durable Evidence Review" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Legacy Admin preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review queue" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a configured durable failure isolated from the legacy preview", async () => {
+    const configuredFailure: AdminDurableReviewResult<AdminCampaignListData> = {
+      bridgeCode: "BRIDGE_REQUEST_FAILED",
+      code: "BRIDGE_REQUEST_FAILED",
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      traceId: "trace-admin-stage-failed",
+    };
+    const durableReviewBridge = {
+      ...createAdminDurableReviewApiBridge({
+        config: { baseUrl: "https://campaign-os.example.test" },
+      }),
+      listCampaigns: vi.fn(async () => configuredFailure),
+    };
+
+    render(
+      <AdminOpsPanel
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={adminStageSession}
+        stageReviewMode
+      />,
+    );
+
+    expect(await screen.findByText("Read-only degraded")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("trace-admin-stage-failed");
+    expect(screen.queryByLabelText("Legacy Admin preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review queue" })).not.toBeInTheDocument();
+  });
+
+  it("defaults stage review mode off and renders the legacy review preview", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
 
+    expect(screen.getByLabelText("Legacy Admin preview")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Review queue" })).toBeInTheDocument();
     expectVisibleText("Chinese copy needs human review");
     expectVisibleText("Off-chain MVP: no contract migration required");

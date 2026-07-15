@@ -11,11 +11,16 @@ import {
   type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
 } from "./apiRuntime";
-import { createFailureEnvelope } from "./envelope";
+import { createFailureEnvelope, type ApiRuntimeEnvelope } from "./envelope";
 import { internalRuntimeError, persistenceUnavailable } from "./errors";
 import { createBackendServiceReadinessReport } from "./backendService";
 import { apiRuntimeContractRoutes } from "./routes";
-import { evaluateServerRequestGuard } from "./serverRequestGuard";
+import {
+  createAdminFailureEnvelope,
+  createServerRequestContext,
+  evaluateServerRequestGuard,
+  isAdminRequestTarget,
+} from "./serverRequestGuard";
 import {
   createServerRuntimeReadiness,
   withServerRuntimeReadiness,
@@ -149,11 +154,34 @@ const writeJsonResponse = (
   response.end(payload);
 };
 
+const writeRuntimeResponse = (
+  response: ServerResponse,
+  status: number,
+  headers: Record<string, string>,
+  body: unknown,
+  rawBody: string | undefined,
+) => {
+  if (rawBody !== undefined && status >= 200 && status < 300) {
+    response.writeHead(status, headers);
+    response.end(Buffer.from(rawBody, "utf8"));
+    return;
+  }
+
+  writeJsonResponse(response, status, headers, body);
+};
+
 const isRuntimeMetadataPath = (path: string | undefined) => {
   const pathname = new URL(path || "/", "http://127.0.0.1").pathname;
 
   return pathname === "/api/health" || pathname === "/api/contracts";
 };
+
+const isLegacyRuntimeEnvelope = (body: unknown): body is ApiRuntimeEnvelope =>
+  typeof body === "object"
+  && body !== null
+  && "runtime" in body
+  && "safety" in body
+  && "timestamp" in body;
 
 const wait = (delayMs: number) =>
   new Promise<void>((resolve) => {
@@ -241,8 +269,14 @@ export const startCampaignOsApiServer = async ({
   const getServiceReadiness = () => getServiceContract().readiness;
 
   const server = createServer((request, response) => {
+    const requestTarget = request.url ?? "/";
+    const adminRequest = isAdminRequestTarget(requestTarget);
+    const guardHeaders = toGuardHeaders(request, runtimeContract.requestGuard.traceHeaderName);
+    const requestContext = createServerRequestContext(guardHeaders, runtimeContract);
+
     if (shutdownState.state !== "running") {
-      const traceId = randomUUID();
+      const traceId = adminRequest ? requestContext.traceId : randomUUID();
+      const runtimeError = persistenceUnavailable("server.shutdown").body;
 
       request.resume();
       try {
@@ -250,16 +284,19 @@ export const startCampaignOsApiServer = async ({
           response,
           503,
           {
+            ...(adminRequest ? requestContext.corsHeaders : {}),
             connection: "close",
             "content-type": "application/json",
             "x-campaign-os-trace-id": traceId,
           },
-          createFailureEnvelope({
-            error: persistenceUnavailable("server.shutdown").body,
-            routeCount: apiRuntimeContractRoutes.length,
-            traceId,
-            version: runtimeContract.runtimeVersion,
-          }),
+          adminRequest
+            ? createAdminFailureEnvelope(runtimeError, traceId)
+            : createFailureEnvelope({
+              error: runtimeError,
+              routeCount: apiRuntimeContractRoutes.length,
+              traceId,
+              version: runtimeContract.runtimeVersion,
+            }),
         );
       } catch {
         response.destroy();
@@ -276,10 +313,10 @@ export const startCampaignOsApiServer = async ({
         const guardDecision = evaluateServerRequestGuard({
           body: requestBody.body,
           bodyBytes: requestBody.bodyBytes,
-          headers: toGuardHeaders(request, runtimeContract.requestGuard.traceHeaderName),
+          headers: guardHeaders,
           method: request.method ?? "GET",
-          path: request.url ?? "/",
-        }, runtimeContract, apiRuntimeContractRoutes.length);
+          path: requestTarget,
+        }, runtimeContract, apiRuntimeContractRoutes.length, requestContext);
 
         if (guardDecision.kind === "preflight") {
           writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
@@ -298,13 +335,14 @@ export const startCampaignOsApiServer = async ({
           path: request.url ?? "/",
         });
         const responseBody = isRuntimeMetadataPath(request.url)
+          && isLegacyRuntimeEnvelope(runtimeResponse.body)
           ? withServerRuntimeReadiness(
             runtimeResponse.body,
             getReadiness(),
           )
           : runtimeResponse.body;
 
-        writeJsonResponse(
+        writeRuntimeResponse(
           response,
           runtimeResponse.status,
           {
@@ -312,9 +350,11 @@ export const startCampaignOsApiServer = async ({
             ...runtimeResponse.headers,
           },
           responseBody,
+          runtimeResponse.rawBody,
         );
       } catch {
-        const traceId = randomUUID();
+        const traceId = adminRequest ? requestContext.traceId : randomUUID();
+        const runtimeError = internalRuntimeError().body;
 
         if (logger) {
           logger.error(
@@ -328,15 +368,18 @@ export const startCampaignOsApiServer = async ({
               response,
               500,
               {
+                ...(adminRequest ? requestContext.corsHeaders : {}),
                 "content-type": "application/json",
                 "x-campaign-os-trace-id": traceId,
               },
-              createFailureEnvelope({
-                error: internalRuntimeError().body,
-                routeCount: apiRuntimeContractRoutes.length,
-                traceId,
-                version: runtimeContract.runtimeVersion,
-              }),
+              adminRequest
+                ? createAdminFailureEnvelope(runtimeError, traceId)
+                : createFailureEnvelope({
+                  error: runtimeError,
+                  routeCount: apiRuntimeContractRoutes.length,
+                  traceId,
+                  version: runtimeContract.runtimeVersion,
+                }),
             );
           } catch {
             response.destroy();

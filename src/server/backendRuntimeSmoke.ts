@@ -9,6 +9,7 @@ import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./serv
 
 type SmokePayload = {
   data?: unknown;
+  error?: unknown;
   ok?: boolean;
   traceId?: string;
 };
@@ -117,6 +118,19 @@ export interface BackendRuntimeSmokeAuthSessionFoundationSummary {
   productionReady: boolean;
   status?: string;
   valid: boolean;
+}
+
+export interface BackendRuntimeSmokeAdminReviewRuntimeSummary {
+  coverage: "default_disabled_route";
+  enabled: false;
+  endpoint: "/api/admin/campaigns";
+  errorCode: "ROUTE_NOT_FOUND";
+  httpStatus: 404;
+  responseDataPresent: false;
+  routeExposed: false;
+  safeEnvelope: true;
+  status: "disabled";
+  traceId: string;
 }
 
 export interface BackendRuntimeSmokeObjectStorageExportRuntimeSummary {
@@ -604,6 +618,7 @@ export interface BackendRuntimeSmokeDatabasePackageBindingSummary {
 
 export interface BackendRuntimeSmokeSummary {
   activationId?: string;
+  adminReviewRuntime: BackendRuntimeSmokeAdminReviewRuntimeSummary;
   authSessionFoundation: BackendRuntimeSmokeAuthSessionFoundationSummary;
   campaignDatabase: BackendRuntimeSmokeCampaignDatabaseSummary;
   checks: {
@@ -648,6 +663,21 @@ export interface BackendRuntimeSmokeSummary {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const hasExactObjectKeys = (
+  record: Record<string, unknown> | undefined,
+  expectedKeys: readonly string[],
+) => {
+  if (!record) {
+    return false;
+  }
+
+  const actualKeys = Object.keys(record).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+
+  return actualKeys.length === sortedExpectedKeys.length
+    && actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
+};
 
 const readJson = async (response: Response): Promise<SmokePayload> => {
   const parsed = await response.json();
@@ -2243,6 +2273,58 @@ const createProductionDatabaseHandoffReadinessSmokeSample = async ({
   };
 };
 
+const disabledAdminReviewSmokeTraceId = "campaign-os-smoke-admin-review-disabled";
+const disabledAdminReviewUnsafePattern =
+  /postgres(?:ql)?:\/\/|bearer\s+\S+|password|private[-_\s]?key|seed phrase|token=|\/Users\/|\/private\/|campaign-os-kitty|kitty-specs|\.kittify|stack trace/i;
+
+const createDisabledAdminReviewRuntimeSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+}): Promise<BackendRuntimeSmokeAdminReviewRuntimeSummary | undefined> => {
+  const endpoint = "/api/admin/campaigns" as const;
+  const response = await fetchImpl(`${baseUrl}${endpoint}`, {
+    headers: { "x-campaign-os-trace-id": disabledAdminReviewSmokeTraceId },
+  });
+  const payload = await readJson(response);
+  const error = isRecord(payload.error) ? payload.error : undefined;
+  const message = getString(error, "message");
+  const responseDataPresent = Object.prototype.hasOwnProperty.call(payload, "data");
+  const safeEnvelope = hasExactObjectKeys(payload, ["error", "ok", "traceId"])
+    && hasExactObjectKeys(error, ["code", "message"])
+    && message !== undefined
+    && message.length <= 256
+    && !disabledAdminReviewUnsafePattern.test(JSON.stringify(payload));
+
+  if (
+    response.status !== 404
+    || payload.ok !== false
+    || payload.traceId !== disabledAdminReviewSmokeTraceId
+    || response.headers.get("x-campaign-os-trace-id") !== disabledAdminReviewSmokeTraceId
+    || !response.headers.get("content-type")?.startsWith("application/json")
+    || getString(error, "code") !== "ROUTE_NOT_FOUND"
+    || responseDataPresent
+    || !safeEnvelope
+  ) {
+    return undefined;
+  }
+
+  return {
+    coverage: "default_disabled_route",
+    enabled: false,
+    endpoint,
+    errorCode: "ROUTE_NOT_FOUND",
+    httpStatus: 404,
+    responseDataPresent: false,
+    routeExposed: false,
+    safeEnvelope: true,
+    status: "disabled",
+    traceId: disabledAdminReviewSmokeTraceId,
+  };
+};
+
 const getBoolean = (
   record: Record<string, unknown> | undefined,
   key: string,
@@ -3389,6 +3471,10 @@ export const runBackendRuntimeSmoke = async ({
       fetchImpl,
       traceId: "campaign-os-smoke-production-database-handoff-readiness",
     });
+    const adminReviewRuntime = await createDisabledAdminReviewRuntimeSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+    });
 
     if (
       health.check.status !== 200
@@ -3431,6 +3517,7 @@ export const runBackendRuntimeSmoke = async ({
       || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridge)
       || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridgeSample)
       || !isProductionDatabaseHandoffReadinessSmokeReady(productionDatabaseHandoffReadinessSample)
+      || !adminReviewRuntime
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -3454,6 +3541,7 @@ export const runBackendRuntimeSmoke = async ({
 
     summaryDraft = {
       activationId: typeof activation?.id === "string" ? activation.id : undefined,
+      adminReviewRuntime,
       authSessionFoundation,
       campaignDatabase,
       checks: {

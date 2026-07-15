@@ -6,6 +6,7 @@ import type {
 } from "../domain/types";
 import { sessionIssuerProductionDependencyIds } from "./sessionIssuer";
 import { walletProofProductionDependencyIds } from "./walletProofVerifier";
+import type { WalletSessionRecord } from "./walletSessionRepository";
 
 export type AuthSessionAccountType = AccountType;
 export type AuthSessionWalletSource = WalletSource;
@@ -108,6 +109,150 @@ export interface NormalizedWalletSessionContract {
   walletName: string;
   walletSource: AuthSessionWalletSource;
 }
+
+export interface AdminOperatorSessionCompatibilityClaims {
+  accountType?: AuthSessionAccountType;
+  chainId?: string;
+  credentialBoundary?: AuthSessionCredentialBoundary;
+  network?: WalletNetwork;
+  proofStatus?: SessionProofStatus;
+  sessionId?: string;
+  subjectAddress?: string;
+  walletSource?: AuthSessionWalletSource;
+}
+
+export interface TrustedAdminOperatorSessionContext {
+  accountType: AuthSessionAccountType;
+  chainId: string;
+  credentialBoundary: "ordinary_user_wallet";
+  issuerMode: NonNullable<WalletSessionRecord["issuer"]>["issuerMode"];
+  network: WalletNetwork;
+  proofStatus: "local_seeded" | "verified";
+  sessionId: string;
+  subjectAddress: string;
+  walletSource: AuthSessionWalletSource;
+}
+
+export type TrustedAdminOperatorSessionFailureReason =
+  | "record-invalid"
+  | "issuer-invalid"
+  | "session-mismatch"
+  | "subject-mismatch"
+  | "account-type-mismatch"
+  | "wallet-source-mismatch"
+  | "credential-boundary-mismatch"
+  | "proof-status-mismatch"
+  | "chain-mismatch"
+  | "network-mismatch"
+  | "proof-invalid"
+  | "internal-credential";
+
+export type ResolveTrustedAdminOperatorSessionResult =
+  | Readonly<{
+      context: Readonly<TrustedAdminOperatorSessionContext>;
+      ok: true;
+    }>
+  | Readonly<{
+      ok: false;
+      reason: TrustedAdminOperatorSessionFailureReason;
+    }>;
+
+const trustedAdminSessionFailure = (
+  reason: TrustedAdminOperatorSessionFailureReason,
+): ResolveTrustedAdminOperatorSessionResult => Object.freeze({ ok: false, reason });
+
+const adminCredentialBoundaryFromIssuedRecord = (
+  issuedRecord: WalletSessionRecord,
+): AuthSessionCredentialBoundary =>
+  issuedRecord.walletSource === "AGENT_SKILL"
+  || issuedRecord.capabilities.includes("INTERNAL_AUTOMATION")
+  || issuedRecord.proof?.proofType === "agent_context"
+  || issuedRecord.proof?.trustLevel === "internal_only"
+    ? "internal_agent_credential"
+    : "ordinary_user_wallet";
+
+const adminProofStatusFromIssuedRecord = (
+  issuedRecord: WalletSessionRecord,
+): SessionProofStatus => {
+  if (issuedRecord.proof) {
+    return issuedRecord.proof.status as SessionProofStatus;
+  }
+
+  return issuedRecord.verificationStatus === "verified" ? "verified" : "signature_unverified";
+};
+
+export const resolveTrustedAdminOperatorSession = (
+  issuedRecord: WalletSessionRecord,
+  claims: AdminOperatorSessionCompatibilityClaims = {},
+): ResolveTrustedAdminOperatorSessionResult => {
+  const sessionId = issuedRecord.sessionId?.trim();
+  const subjectAddress = issuedRecord.walletAddress?.trim();
+
+  if (!sessionId || !subjectAddress) {
+    return trustedAdminSessionFailure("record-invalid");
+  }
+
+  const credentialBoundary = adminCredentialBoundaryFromIssuedRecord(issuedRecord);
+
+  if (credentialBoundary === "internal_agent_credential") {
+    return trustedAdminSessionFailure("internal-credential");
+  }
+
+  if (
+    !issuedRecord.issuer?.valid
+    || issuedRecord.issuer.issuerMode !== "local_opaque"
+  ) {
+    return trustedAdminSessionFailure("issuer-invalid");
+  }
+
+  const proofStatus = adminProofStatusFromIssuedRecord(issuedRecord);
+
+  if (
+    !issuedRecord.proof
+    || issuedRecord.proof.proofType !== "wallet_signature"
+    || issuedRecord.proof.trustLevel !== "verified_local"
+    || issuedRecord.proof.status !== "verified"
+    || issuedRecord.signatureStatus !== "signed"
+    || issuedRecord.verificationStatus !== "verified"
+    || !issuedRecord.walletTypeVerified
+    || !issuedRecord.capabilities.includes("SIGN_MESSAGE")
+    || (proofStatus !== "local_seeded" && proofStatus !== "verified")
+  ) {
+    return trustedAdminSessionFailure("proof-invalid");
+  }
+
+  const comparisons = [
+    ["session-mismatch", claims.sessionId?.trim(), sessionId],
+    ["subject-mismatch", claims.subjectAddress?.trim(), subjectAddress],
+    ["account-type-mismatch", claims.accountType, issuedRecord.accountType],
+    ["wallet-source-mismatch", claims.walletSource, issuedRecord.walletSource],
+    ["credential-boundary-mismatch", claims.credentialBoundary, credentialBoundary],
+    ["proof-status-mismatch", claims.proofStatus, proofStatus],
+    ["chain-mismatch", claims.chainId?.trim(), issuedRecord.chainId],
+    ["network-mismatch", claims.network, issuedRecord.network],
+  ] as const;
+  const mismatch = comparisons.find(([, claimed, issued]) =>
+    claimed !== undefined && claimed !== issued
+  );
+
+  if (mismatch) {
+    return trustedAdminSessionFailure(mismatch[0]);
+  }
+
+  const context = Object.freeze({
+    accountType: issuedRecord.accountType,
+    chainId: issuedRecord.chainId,
+    credentialBoundary: "ordinary_user_wallet" as const,
+    issuerMode: issuedRecord.issuer.issuerMode,
+    network: issuedRecord.network,
+    proofStatus,
+    sessionId,
+    subjectAddress,
+    walletSource: issuedRecord.walletSource,
+  });
+
+  return Object.freeze({ context, ok: true });
+};
 
 export interface AuthSessionDiagnostic {
   code: AuthSessionDiagnosticCode;

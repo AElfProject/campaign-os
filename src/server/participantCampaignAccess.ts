@@ -13,6 +13,8 @@ export const participantCampaignPublicStatuses = [
   "archived",
 ] as const;
 
+export const participantCampaignPreviewAllDraftsSentinel = "*" as const;
+
 export type ParticipantCampaignAccessAudience = "anonymous" | "issued_participant";
 export type ParticipantCampaignAccessOutcome = "allowed" | "hidden" | "invalid";
 export type ParticipantCampaignVisibility = "public" | "participant_preview";
@@ -81,6 +83,17 @@ const invalidCampaignDecision = (
   outcome: Extract<ParticipantCampaignAccessOutcome, "hidden" | "invalid">,
 ) => accessDecision({ code: "INVALID_CAMPAIGN", outcome });
 
+const isParticipantCampaignPreviewConfigured = (
+  campaignId: string,
+  previewCampaignIds: readonly string[],
+) => {
+  if (previewCampaignIds.includes(participantCampaignPreviewAllDraftsSentinel)) {
+    return previewCampaignIds.length === 1;
+  }
+
+  return previewCampaignIds.includes(campaignId);
+};
+
 export const evaluateParticipantCampaignAccess = ({
   audience,
   campaign,
@@ -103,7 +116,7 @@ export const evaluateParticipantCampaignAccess = ({
   if (
     draftStatusSet.has(campaign.status)
     && audience === "issued_participant"
-    && previewCampaignIds.includes(campaign.campaignId)
+    && isParticipantCampaignPreviewConfigured(campaign.campaignId, previewCampaignIds)
   ) {
     return accessDecision({
       campaignId: campaign.campaignId,

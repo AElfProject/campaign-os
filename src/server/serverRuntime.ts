@@ -51,6 +51,7 @@ export interface ServerCorsPolicy {
   allowedMethods: string[];
   allowedOrigins: string[];
   enabled: boolean;
+  exposedHeaders: string[];
   maxAgeSeconds: number;
   preflightHandledBeforeRuntime: true;
 }
@@ -128,6 +129,7 @@ const DEFAULT_ALLOWED_METHODS = ["GET", "POST", "OPTIONS"] as const;
 const DEFAULT_ALLOWED_HEADERS = [
   "authorization",
   "content-type",
+  "idempotency-key",
   "x-campaign-os-account-type",
   "x-campaign-os-credential-boundary",
   "x-campaign-os-proof-status",
@@ -136,6 +138,11 @@ const DEFAULT_ALLOWED_HEADERS = [
   "x-campaign-os-trace-id",
   "x-campaign-os-wallet-address",
   "x-campaign-os-wallet-source",
+] as const;
+const DEFAULT_EXPOSED_HEADERS = [
+  "content-disposition",
+  "x-campaign-os-content-sha256",
+  "x-campaign-os-trace-id",
 ] as const;
 const DEFAULT_JSON_CONTENT_TYPES = ["application/json"] as const;
 
@@ -371,6 +378,7 @@ export const resolveApiServerRuntimeContract = ({
         ?? splitCsv(env.CAMPAIGN_OS_API_CORS_ORIGINS)
         ?? [...DEFAULT_CORS_ORIGINS],
       enabled: env.CAMPAIGN_OS_API_CORS_ENABLED?.toLowerCase() !== "false",
+      exposedHeaders: [...DEFAULT_EXPOSED_HEADERS],
       maxAgeSeconds: DEFAULT_CORS_MAX_AGE_SECONDS,
       preflightHandledBeforeRuntime: true,
     },

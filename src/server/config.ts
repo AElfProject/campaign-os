@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   DEFAULT_BACKEND_RUNTIME_PROFILE_ID,
   deferredProductionBackendCapabilities,
@@ -17,6 +18,7 @@ import { schedulerRuntimeProductionPreconditions } from "./schedulerRuntime";
 import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
+import { participantCampaignPreviewAllDraftsSentinel } from "./participantCampaignAccess";
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 
@@ -73,6 +75,366 @@ export class CampaignOsCampaignDbConfigError extends Error {
   }
 }
 
+export const CAMPAIGN_OS_ADMIN_REVIEW_ENABLED_ENV = "CAMPAIGN_OS_ADMIN_REVIEW_ENABLED";
+export const CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV =
+  "CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON";
+export const CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS = 100;
+export const CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP = 4;
+export const CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP = 100;
+export const CAMPAIGN_OS_ADMIN_OPERATOR_SUBJECT_MAX_LENGTH = 160;
+export const CAMPAIGN_OS_ADMIN_OPERATOR_ROLE_MAX_LENGTH = 32;
+export const CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_MAX_BYTES = 65_536;
+export const CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES = 32_768;
+
+export type CampaignOsAdminOperatorRoleId = "internal_operator" | "review_operator";
+
+export interface CampaignOsAdminOperatorMembershipConfig {
+  active: boolean;
+  campaignIds: readonly string[] | null;
+  roleIds: readonly CampaignOsAdminOperatorRoleId[];
+  subjectAddress: string;
+}
+
+export interface CampaignOsAdminReviewConfig {
+  enabled: boolean;
+  memberships: readonly CampaignOsAdminOperatorMembershipConfig[];
+  sourceRevision: string;
+}
+
+export interface CampaignOsAdminReviewConfigOptions {
+  enabled?: boolean | string;
+  env?: Readonly<Record<string, string | undefined>>;
+  jsonParser?: (source: string) => unknown;
+  membershipsJson?: string;
+}
+
+export type CampaignOsAdminReviewConfigErrorCode =
+  | "ADMIN_REVIEW_FLAG_INVALID"
+  | "ADMIN_MEMBERSHIP_JSON_INVALID"
+  | "ADMIN_MEMBERSHIP_SHAPE_INVALID"
+  | "ADMIN_MEMBERSHIP_UNKNOWN_FIELD"
+  | "ADMIN_MEMBERSHIP_FIELD_INVALID"
+  | "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED"
+  | "ADMIN_MEMBERSHIP_CONFLICT";
+
+export class CampaignOsAdminReviewConfigError extends Error {
+  readonly code: CampaignOsAdminReviewConfigErrorCode;
+  readonly field: string;
+  readonly limit?: number;
+
+  constructor(
+    code: CampaignOsAdminReviewConfigErrorCode,
+    field: string,
+    limit?: number,
+  ) {
+    super("Admin review runtime configuration is invalid.");
+    this.name = "CampaignOsAdminReviewConfigError";
+    this.code = code;
+    this.field = field;
+    this.limit = limit;
+  }
+}
+
+const adminConfigError = (
+  code: CampaignOsAdminReviewConfigErrorCode,
+  field: string,
+  limit?: number,
+) => new CampaignOsAdminReviewConfigError(code, field, limit);
+
+const adminMembershipFields = new Set([
+  "active",
+  "campaignIds",
+  "roleIds",
+  "subjectAddress",
+]);
+const adminOperatorRoleIds = new Set<CampaignOsAdminOperatorRoleId>([
+  "internal_operator",
+  "review_operator",
+]);
+
+const utf8ByteLength = (value: string) => new TextEncoder().encode(value).byteLength;
+
+const resolveAdminReviewEnabled = (value: boolean | string | undefined): boolean => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = value?.trim();
+
+  if (!normalized || normalized === "0" || normalized === "false") {
+    return false;
+  }
+
+  if (normalized === "1" || normalized === "true") {
+    return true;
+  }
+
+  throw adminConfigError("ADMIN_REVIEW_FLAG_INVALID", CAMPAIGN_OS_ADMIN_REVIEW_ENABLED_ENV);
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null
+  && typeof value === "object"
+  && !Array.isArray(value)
+  && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+
+const requireOwnField = (
+  entry: Record<string, unknown>,
+  field: keyof CampaignOsAdminOperatorMembershipConfig,
+) => {
+  if (!Object.prototype.hasOwnProperty.call(entry, field)) {
+    throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", `memberships[].${field}`);
+  }
+};
+
+const normalizeAdminSubject = (value: unknown): string => {
+  if (typeof value !== "string") {
+    throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].subjectAddress");
+  }
+
+  const subjectAddress = value.trim();
+
+  if (
+    subjectAddress.length === 0
+    || subjectAddress.length > CAMPAIGN_OS_ADMIN_OPERATOR_SUBJECT_MAX_LENGTH
+    || /[\u0000-\u001f\u007f]/.test(subjectAddress)
+  ) {
+    throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].subjectAddress");
+  }
+
+  return subjectAddress;
+};
+
+const normalizeAdminRoles = (value: unknown): readonly CampaignOsAdminOperatorRoleId[] => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].roleIds");
+  }
+
+  if (value.length > CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP) {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      "memberships[].roleIds",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MAX_ROLES_PER_MEMBERSHIP,
+    );
+  }
+
+  const roles = new Set<CampaignOsAdminOperatorRoleId>();
+
+  for (const rawRole of value) {
+    if (typeof rawRole !== "string") {
+      throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].roleIds");
+    }
+
+    const role = rawRole.trim();
+
+    if (
+      role.length === 0
+      || role.length > CAMPAIGN_OS_ADMIN_OPERATOR_ROLE_MAX_LENGTH
+      || /[\u0000-\u001f\u007f]/.test(role)
+      || !adminOperatorRoleIds.has(role as CampaignOsAdminOperatorRoleId)
+    ) {
+      throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].roleIds");
+    }
+
+    roles.add(role as CampaignOsAdminOperatorRoleId);
+  }
+
+  return Object.freeze([...roles].sort());
+};
+
+const normalizeAdminCampaignIds = (value: unknown): readonly string[] | null => {
+  if (value === null) {
+    return null;
+  }
+
+  if (!Array.isArray(value)) {
+    throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].campaignIds");
+  }
+
+  if (value.length > CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP) {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      "memberships[].campaignIds",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MAX_CAMPAIGN_IDS_PER_MEMBERSHIP,
+    );
+  }
+
+  const campaignIds = new Set<string>();
+
+  for (const rawCampaignId of value) {
+    if (typeof rawCampaignId !== "string") {
+      throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].campaignIds");
+    }
+
+    const campaignId = rawCampaignId.trim();
+
+    if (!isCanonicalCampaignId(campaignId)) {
+      throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].campaignIds");
+    }
+
+    campaignIds.add(campaignId);
+  }
+
+  return Object.freeze([...campaignIds].sort());
+};
+
+const normalizeAdminMembership = (
+  value: unknown,
+): CampaignOsAdminOperatorMembershipConfig => {
+  if (!isPlainRecord(value)) {
+    throw adminConfigError("ADMIN_MEMBERSHIP_SHAPE_INVALID", "memberships[]");
+  }
+
+  const unknownField = Object.keys(value).find((field) => !adminMembershipFields.has(field));
+
+  if (unknownField) {
+    throw adminConfigError("ADMIN_MEMBERSHIP_UNKNOWN_FIELD", "memberships[].unknownField");
+  }
+
+  requireOwnField(value, "active");
+  requireOwnField(value, "campaignIds");
+  requireOwnField(value, "roleIds");
+  requireOwnField(value, "subjectAddress");
+
+  if (typeof value.active !== "boolean") {
+    throw adminConfigError("ADMIN_MEMBERSHIP_FIELD_INVALID", "memberships[].active");
+  }
+
+  return Object.freeze({
+    active: value.active,
+    campaignIds: normalizeAdminCampaignIds(value.campaignIds),
+    roleIds: normalizeAdminRoles(value.roleIds),
+    subjectAddress: normalizeAdminSubject(value.subjectAddress),
+  });
+};
+
+const canonicalAdminMembership = (membership: CampaignOsAdminOperatorMembershipConfig) =>
+  JSON.stringify(membership);
+
+const normalizeAdminMemberships = (
+  value: unknown,
+): readonly CampaignOsAdminOperatorMembershipConfig[] => {
+  if (!Array.isArray(value)) {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_SHAPE_INVALID",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV,
+    );
+  }
+
+  if (value.length > CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS) {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV,
+      CAMPAIGN_OS_ADMIN_OPERATOR_MAX_MEMBERSHIPS,
+    );
+  }
+
+  const bySubject = new Map<string, {
+    canonical: string;
+    membership: CampaignOsAdminOperatorMembershipConfig;
+  }>();
+
+  for (const rawMembership of value) {
+    const normalized = normalizeAdminMembership(rawMembership);
+    const canonical = canonicalAdminMembership(normalized);
+    const existing = bySubject.get(normalized.subjectAddress);
+
+    if (existing && existing.canonical !== canonical) {
+      throw adminConfigError("ADMIN_MEMBERSHIP_CONFLICT", "memberships[].subjectAddress");
+    }
+
+    if (!existing) {
+      bySubject.set(normalized.subjectAddress, { canonical, membership: normalized });
+    }
+  }
+
+  const memberships = [...bySubject.values()]
+    .map(({ membership }) => membership)
+    .sort((left, right) => left.subjectAddress < right.subjectAddress ? -1 : left.subjectAddress > right.subjectAddress ? 1 : 0);
+  const normalizedBytes = utf8ByteLength(JSON.stringify(memberships));
+
+  if (normalizedBytes > CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES) {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      "memberships.normalized",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_NORMALIZED_MAX_BYTES,
+    );
+  }
+
+  return Object.freeze(memberships);
+};
+
+const parseAdminMembershipJson = (
+  source: string | undefined,
+  jsonParser: (source: string) => unknown,
+): readonly CampaignOsAdminOperatorMembershipConfig[] => {
+  if (!source?.trim()) {
+    return Object.freeze([]);
+  }
+
+  if (utf8ByteLength(source) > CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_MAX_BYTES) {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_LIMIT_EXCEEDED",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV,
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_MAX_BYTES,
+    );
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = jsonParser(source);
+  } catch {
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_JSON_INVALID",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV,
+    );
+  }
+
+  try {
+    return normalizeAdminMemberships(parsed);
+  } catch (error) {
+    if (error instanceof CampaignOsAdminReviewConfigError) {
+      throw error;
+    }
+
+    throw adminConfigError(
+      "ADMIN_MEMBERSHIP_SHAPE_INVALID",
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV,
+    );
+  }
+};
+
+const adminMembershipSourceRevision = (
+  enabled: boolean,
+  memberships: readonly CampaignOsAdminOperatorMembershipConfig[],
+) => `admin-membership-sha256:${createHash("sha256")
+  .update(JSON.stringify({ enabled, memberships }))
+  .digest("hex")}`;
+
+export const resolveCampaignOsAdminReviewConfig = ({
+  enabled,
+  env = typeof process === "undefined" ? {} : process.env,
+  jsonParser = JSON.parse,
+  membershipsJson,
+}: CampaignOsAdminReviewConfigOptions = {}): CampaignOsAdminReviewConfig => {
+  const resolvedEnabled = resolveAdminReviewEnabled(
+    enabled ?? env[CAMPAIGN_OS_ADMIN_REVIEW_ENABLED_ENV],
+  );
+  const memberships = resolvedEnabled
+    ? parseAdminMembershipJson(
+      membershipsJson ?? env[CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON_ENV],
+      jsonParser,
+    )
+    : Object.freeze([]) as readonly CampaignOsAdminOperatorMembershipConfig[];
+
+  return Object.freeze({
+    enabled: resolvedEnabled,
+    memberships,
+    sourceRevision: adminMembershipSourceRevision(resolvedEnabled, memberships),
+  });
+};
+
 export const CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS_ENV =
   "CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS";
 export const CAMPAIGN_OS_PARTICIPANT_PREVIEW_MAX_CAMPAIGNS = 100;
@@ -115,7 +477,7 @@ const participantPreviewConfigError = (
   CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS_ENV,
 );
 
-const isCanonicalCampaignId = (campaignId: string) =>
+export const isCanonicalCampaignId = (campaignId: string) =>
   campaignId.length <= CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH
   && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(campaignId);
 
@@ -132,11 +494,19 @@ const splitParticipantPreviewCampaignIds = (
 const parseParticipantPreviewCampaignIds = (
   source: string | readonly string[] | undefined,
 ): readonly string[] => {
+  const campaignIds = splitParticipantPreviewCampaignIds(source).map((segment) => segment.trim());
+
+  if (campaignIds.includes(participantCampaignPreviewAllDraftsSentinel)) {
+    if (campaignIds.some((campaignId) => campaignId !== participantCampaignPreviewAllDraftsSentinel)) {
+      throw participantPreviewConfigError("CAMPAIGN_PREVIEW_CONFIG_ID_INVALID");
+    }
+
+    return Object.freeze([participantCampaignPreviewAllDraftsSentinel]);
+  }
+
   const uniqueCampaignIds = new Set<string>();
 
-  for (const segment of splitParticipantPreviewCampaignIds(source)) {
-    const campaignId = segment.trim();
-
+  for (const campaignId of campaignIds) {
     if (!isCanonicalCampaignId(campaignId)) {
       throw participantPreviewConfigError("CAMPAIGN_PREVIEW_CONFIG_ID_INVALID");
     }

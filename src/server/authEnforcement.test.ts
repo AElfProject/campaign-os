@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  adminOperatorRoutePolicies,
   evaluateAuthEnforcement,
+  evaluateAdminOperatorEnforcement,
   evaluateIssuedAuthEnforcement,
+  getAdminOperatorRoutePolicy,
   parseLocalAuthSessionHeaders,
   projectOwnershipReadinessPolicy,
   rbacOwnershipRoutePolicyMatrix,
@@ -9,6 +12,11 @@ import {
   type AuthRuntimeHeaders,
   type ParticipantCompatibilitySubject,
 } from "./authEnforcement";
+import { createAdminOperatorMembershipRegistry } from "./adminOperatorMembership";
+import {
+  CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH,
+  type CampaignOsAdminOperatorMembershipConfig,
+} from "./config";
 import type { WalletSessionRecord } from "./walletSessionRepository";
 
 const sensitiveFragments = [
@@ -38,6 +46,17 @@ const participantHeaders = (overrides: AuthRuntimeHeaders = {}): AuthRuntimeHead
   "x-campaign-os-roles": "participant",
   "x-campaign-os-session-id": "sess-participant-local",
   "x-campaign-os-wallet-address": "2YVwParticipantCaseSensitive",
+  "x-campaign-os-wallet-source": "PORTKEY_AA",
+  ...overrides,
+});
+
+const adminOperatorHeaders = (overrides: AuthRuntimeHeaders = {}): AuthRuntimeHeaders => ({
+  "x-campaign-os-account-type": "AA",
+  "x-campaign-os-credential-boundary": "ordinary_user_wallet",
+  "x-campaign-os-proof-status": "verified",
+  "x-campaign-os-roles": "review_operator",
+  "x-campaign-os-session-id": "sess-admin-operator",
+  "x-campaign-os-wallet-address": "2YVwAdminOperatorCaseSensitive",
   "x-campaign-os-wallet-source": "PORTKEY_AA",
   ...overrides,
 });
@@ -108,6 +127,34 @@ const issuedParticipantSession = (
   ...overrides,
 });
 
+const issuedAdminSession = (
+  overrides: Partial<WalletSessionRecord> = {},
+): WalletSessionRecord => issuedWalletSession({
+  displayAddress: "2YVwAdminOperatorCaseSensitive",
+  recordId: "wallet-session:sess-admin-operator",
+  sessionId: "sess-admin-operator",
+  walletAddress: "2YVwAdminOperatorCaseSensitive",
+  ...overrides,
+});
+
+const adminMembership = (
+  overrides: Partial<CampaignOsAdminOperatorMembershipConfig> = {},
+): CampaignOsAdminOperatorMembershipConfig => ({
+  active: true,
+  campaignIds: ["campaign-admin-a"],
+  roleIds: ["review_operator"],
+  subjectAddress: "2YVwAdminOperatorCaseSensitive",
+  ...overrides,
+});
+
+const adminRegistry = (
+  memberships: readonly CampaignOsAdminOperatorMembershipConfig[] = [adminMembership()],
+) => createAdminOperatorMembershipRegistry({
+  enabled: true,
+  memberships,
+  sourceRevision: "admin-membership-sha256:test-revision",
+});
+
 const enforceThenMutate = async (
   options: Parameters<typeof evaluateIssuedAuthEnforcement>[0],
 ) => {
@@ -119,6 +166,22 @@ const enforceThenMutate = async (
   }
 
   return { decision, mutationCount };
+};
+
+const runGuardedAdminResourceHandler = async (
+  options: Parameters<typeof evaluateAdminOperatorEnforcement>[0],
+  resourceId: string,
+  readResource: (resourceId: string) => void,
+  writeResource: (resourceId: string) => void,
+) => {
+  const authDecision = await evaluateAdminOperatorEnforcement(options);
+
+  if (authDecision.allowed) {
+    readResource(resourceId);
+    writeResource(resourceId);
+  }
+
+  return authDecision;
 };
 
 const compatibilitySubstitutionCases = [
@@ -959,5 +1022,735 @@ describe("auth enforcement", () => {
       },
     });
     expectNoSensitiveFragments(sanitized);
+  });
+
+  it("publishes nine unique locally enforced Admin operator route policies", () => {
+    const routeIds = [
+      "admin.campaigns.list",
+      "admin.reviews.list",
+      "admin.reviews.detail",
+      "admin.reviews.decide",
+      "admin.winners.list",
+      "admin.artifacts.generate",
+      "admin.artifacts.list",
+      "admin.artifacts.detail",
+      "admin.artifacts.download",
+    ];
+
+    expect(adminOperatorRoutePolicies.map((policy) => policy.routeId)).toEqual(routeIds);
+    expect(new Set(adminOperatorRoutePolicies.map((policy) => policy.routeId)).size).toBe(9);
+
+    for (const routeId of routeIds) {
+      expect(getAdminOperatorRoutePolicy(routeId)).toMatchObject({
+        allowedRoles: ["internal_operator", "review_operator"],
+        credentialBoundary: "ordinary_user_wallet",
+        enforcementStatus: "local_enforced",
+        membershipRequired: true,
+        routeId,
+        sessionRequired: true,
+      });
+    }
+
+    expect(getAdminOperatorRoutePolicy("admin.campaigns.list")).toMatchObject({
+      campaignScope: "membership_feed",
+    });
+    for (const routeId of routeIds.slice(1)) {
+      expect(getAdminOperatorRoutePolicy(routeId)).toMatchObject({
+        campaignScope: "campaign_path",
+      });
+    }
+  });
+
+  it("enforces missing and invalid issued sessions before membership or resources", async () => {
+    const cases = [
+      { expected: "AUTH_SESSION_REQUIRED", headers: undefined, record: issuedAdminSession() },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders({ "x-campaign-os-session-id": "sess-unknown" }),
+        record: issuedAdminSession(),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        record: issuedAdminSession({
+          proof: { ...issuedAdminSession().proof!, status: "stale" },
+        }),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        record: issuedAdminSession({ proof: undefined }),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        record: issuedAdminSession({
+          proof: { ...issuedAdminSession().proof!, proofType: "address_only" },
+        }),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        record: issuedAdminSession({ issuer: undefined }),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        record: issuedAdminSession({
+          issuer: {
+            ...issuedAdminSession().issuer!,
+            issuerMode: "production_blocked",
+            valid: true,
+          },
+        }),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders({
+          "x-campaign-os-wallet-address": "2YVwSubstitutedOperator",
+        }),
+        record: issuedAdminSession(),
+      },
+      {
+        expected: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders({ "x-campaign-os-session-id": "../malformed" }),
+        record: issuedAdminSession(),
+      },
+    ] as const;
+
+    for (const [index, testCase] of cases.entries()) {
+      let issuedLookupCount = 0;
+      let membershipLookupCount = 0;
+      let resourceCallCount = 0;
+      const baseRegistry = adminRegistry();
+      const membershipRegistry = {
+        health: baseRegistry.health,
+        lookup: (...args: Parameters<typeof baseRegistry.lookup>) => {
+          membershipLookupCount += 1;
+          return baseRegistry.lookup(...args);
+        },
+      };
+      const result = await evaluateAdminOperatorEnforcement({
+        campaignId: "campaign-admin-a",
+        headers: testCase.headers,
+        issuedSessionLookup: async (sessionId) => {
+          issuedLookupCount += 1;
+          return testCase.record.sessionId === sessionId ? testCase.record : undefined;
+        },
+        membershipRegistry,
+        routeId: "admin.reviews.detail",
+        traceId: `trace-admin-session-${index}`,
+      });
+
+      if (result.allowed) {
+        resourceCallCount += 1;
+      }
+
+      expect(result).toMatchObject({
+        diagnostic: { code: testCase.expected },
+        httpStatus: 401,
+        safeDetails: { traceId: `trace-admin-session-${index}` },
+        status: "unauthenticated",
+      });
+      expect(membershipLookupCount).toBe(0);
+      expect(resourceCallCount).toBe(0);
+      expect(issuedLookupCount).toBe(testCase.headers && testCase.headers["x-campaign-os-session-id"] !== "../malformed" ? 1 : 0);
+    }
+  });
+
+  it.each([
+    ["non-member", [], adminOperatorHeaders(), "campaign-admin-a"],
+    ["revoked", [adminMembership({ active: false })], adminOperatorHeaders(), "campaign-admin-a"],
+    ["role mismatch", [adminMembership({ roleIds: ["internal_operator"] })], adminOperatorHeaders(), "campaign-admin-a"],
+    ["role spoof", [], adminOperatorHeaders({ "x-campaign-os-roles": "internal_operator" }), "campaign-admin-a"],
+    ["out of scope", [adminMembership()], adminOperatorHeaders(), "campaign-admin-b"],
+  ] as const)("forbids %s before resource access", async (_case, memberships, headers, campaignId) => {
+    let membershipLookupCount = 0;
+    let resourceCallCount = 0;
+    const baseRegistry = adminRegistry(memberships);
+    const result = await evaluateAdminOperatorEnforcement({
+      campaignId,
+      headers,
+      issuedSessionLookup: issuedLookup(issuedAdminSession()),
+      membershipRegistry: {
+        health: baseRegistry.health,
+        lookup: (...args) => {
+          membershipLookupCount += 1;
+          return baseRegistry.lookup(...args);
+        },
+      },
+      routeId: "admin.reviews.detail",
+      traceId: "trace-admin-forbidden",
+    });
+
+    if (result.allowed) {
+      resourceCallCount += 1;
+    }
+
+    expect(result).toMatchObject({
+      diagnostic: { code: "AUTH_FORBIDDEN" },
+      httpStatus: 403,
+      safeDetails: { traceId: "trace-admin-forbidden" },
+      status: "forbidden",
+    });
+    expect(membershipLookupCount).toBe(1);
+    expect(resourceCallCount).toBe(0);
+    expect(JSON.stringify(result)).not.toContain("2YVwAdminOperatorCaseSensitive");
+  });
+
+  it.each([
+    ["wallet source", { walletSource: "AGENT_SKILL" }],
+    ["capability", { capabilities: ["SIGN_MESSAGE", "INTERNAL_AUTOMATION"] }],
+    [
+      "proof type",
+      {
+        proof: {
+          ...issuedAdminSession().proof!,
+          proofType: "agent_context",
+        },
+      },
+    ],
+    [
+      "proof trust",
+      {
+        proof: {
+          ...issuedAdminSession().proof!,
+          trustLevel: "internal_only",
+        },
+      },
+    ],
+  ] satisfies readonly [string, Partial<WalletSessionRecord>][]) (
+    "forbids the internal %s marker before membership or resource access",
+    async (_case, overrides) => {
+      let membershipLookupCount = 0;
+      let resourceReadCount = 0;
+      let resourceWriteCount = 0;
+      const baseRegistry = adminRegistry();
+      const result = await runGuardedAdminResourceHandler({
+        campaignId: "campaign-admin-a",
+        headers: {
+          "x-campaign-os-roles": "review_operator",
+          "x-campaign-os-session-id": "sess-admin-operator",
+        },
+        issuedSessionLookup: issuedLookup(issuedAdminSession(overrides)),
+        membershipRegistry: {
+          health: baseRegistry.health,
+          lookup: (...args) => {
+            membershipLookupCount += 1;
+            return baseRegistry.lookup(...args);
+          },
+        },
+        routeId: "admin.reviews.list",
+        traceId: "trace-admin-internal",
+      }, "resource-internal", () => {
+        resourceReadCount += 1;
+      }, () => {
+        resourceWriteCount += 1;
+      });
+
+      expect(result).toMatchObject({
+        diagnostic: { code: "AUTH_FORBIDDEN" },
+        httpStatus: 403,
+        status: "forbidden",
+      });
+      expect(membershipLookupCount).toBe(0);
+      expect(resourceReadCount).toBe(0);
+      expect(resourceWriteCount).toBe(0);
+    },
+  );
+
+  it("authorizes a server-derived operator context without retaining raw proof or config", async () => {
+    const result = await evaluateAdminOperatorEnforcement({
+      campaignId: "campaign-admin-a",
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: issuedLookup(issuedAdminSession()),
+      membershipRegistry: adminRegistry(),
+      routeId: "admin.artifacts.generate",
+      traceId: "trace-admin-allowed",
+    });
+
+    expect(result).toMatchObject({
+      adminOperator: {
+        accountType: "AA",
+        campaignIds: ["campaign-admin-a"],
+        credentialBoundary: "ordinary_user_wallet",
+        issuerMode: "local_opaque",
+        proofStatus: "verified",
+        requestedRole: "review_operator",
+        sessionId: "sess-admin-operator",
+        sourceRevision: "admin-membership-sha256:test-revision",
+        subjectAddress: "2YVwAdminOperatorCaseSensitive",
+        walletSource: "PORTKEY_AA",
+      },
+      allowed: true,
+      routeId: "admin.artifacts.generate",
+      status: "allowed",
+    });
+    expect(JSON.stringify(result)).not.toContain("issuer:sess-admin-operator");
+    expect(JSON.stringify(result)).not.toContain("wallet_signature");
+  });
+
+  it("enforces the canonical Campaign ID boundary across every campaign-scoped policy", async () => {
+    const atLimit = "c".repeat(CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH);
+    const overLimit = `${atLimit}x`;
+    const scopes: readonly (readonly string[] | null)[] = [[atLimit], null];
+    const campaignPolicies = adminOperatorRoutePolicies.filter(
+      (policy) => policy.campaignScope === "campaign_path",
+    );
+
+    expect(campaignPolicies).toHaveLength(8);
+
+    for (const campaignIds of scopes) {
+      for (const policy of campaignPolicies) {
+        const exact = await evaluateAdminOperatorEnforcement({
+          campaignId: atLimit,
+          headers: adminOperatorHeaders(),
+          issuedSessionLookup: issuedLookup(issuedAdminSession()),
+          membershipRegistry: adminRegistry([adminMembership({ campaignIds })]),
+          routeId: policy.routeId,
+          traceId: "trace-admin-campaign-boundary",
+        });
+        let issuedLookupCount = 0;
+        let membershipLookupCount = 0;
+        const baseRegistry = adminRegistry([adminMembership({ campaignIds })]);
+        const oversized = await evaluateAdminOperatorEnforcement({
+          campaignId: overLimit,
+          headers: adminOperatorHeaders(),
+          issuedSessionLookup: async () => {
+            issuedLookupCount += 1;
+            return issuedAdminSession();
+          },
+          membershipRegistry: {
+            health: baseRegistry.health,
+            lookup: (...args) => {
+              membershipLookupCount += 1;
+              return baseRegistry.lookup(...args);
+            },
+          },
+          routeId: policy.routeId,
+          traceId: "trace-admin-campaign-boundary",
+        });
+
+        expect(exact).toMatchObject({ allowed: true, status: "allowed" });
+        expect(oversized).toMatchObject({
+          allowed: false,
+          diagnostic: { code: "AUTH_FORBIDDEN" },
+          httpStatus: 403,
+          status: "forbidden",
+        });
+        expect(issuedLookupCount).toBe(0);
+        expect(membershipLookupCount).toBe(0);
+      }
+    }
+  });
+
+  it("keeps Campaign, Participant, and Artifact denial envelopes equivalent with no reads or writes", async () => {
+    interface DenialCase {
+      code: "AUTH_SESSION_REQUIRED" | "AUTH_SESSION_INVALID" | "AUTH_FORBIDDEN";
+      headers?: AuthRuntimeHeaders;
+      issuedCalls: number;
+      membershipCalls: number;
+      memberships: readonly CampaignOsAdminOperatorMembershipConfig[];
+      name: string;
+      record?: WalletSessionRecord;
+      status: "unauthenticated" | "forbidden";
+    }
+
+    const ordinaryRecord = issuedAdminSession();
+    const denialCases: readonly DenialCase[] = [
+      {
+        code: "AUTH_SESSION_REQUIRED",
+        headers: undefined,
+        issuedCalls: 0,
+        membershipCalls: 0,
+        memberships: [adminMembership()],
+        name: "missing",
+        record: ordinaryRecord,
+        status: "unauthenticated",
+      },
+      {
+        code: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        issuedCalls: 1,
+        membershipCalls: 0,
+        memberships: [adminMembership()],
+        name: "unknown",
+        record: undefined,
+        status: "unauthenticated",
+      },
+      {
+        code: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders(),
+        issuedCalls: 1,
+        membershipCalls: 0,
+        memberships: [adminMembership()],
+        name: "stale",
+        record: issuedAdminSession({
+          proof: { ...ordinaryRecord.proof!, status: "stale" },
+        }),
+        status: "unauthenticated",
+      },
+      {
+        code: "AUTH_SESSION_INVALID",
+        headers: adminOperatorHeaders({
+          "x-campaign-os-wallet-address": "2YVwMismatchedOperator",
+        }),
+        issuedCalls: 1,
+        membershipCalls: 0,
+        memberships: [adminMembership()],
+        name: "mismatch",
+        record: ordinaryRecord,
+        status: "unauthenticated",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: adminOperatorHeaders(),
+        issuedCalls: 1,
+        membershipCalls: 1,
+        memberships: [],
+        name: "non-member",
+        record: ordinaryRecord,
+        status: "forbidden",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: adminOperatorHeaders(),
+        issuedCalls: 1,
+        membershipCalls: 1,
+        memberships: [adminMembership({ active: false })],
+        name: "revoked",
+        record: ordinaryRecord,
+        status: "forbidden",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: adminOperatorHeaders({ "x-campaign-os-roles": "internal_operator" }),
+        issuedCalls: 1,
+        membershipCalls: 1,
+        memberships: [adminMembership()],
+        name: "spoof",
+        record: ordinaryRecord,
+        status: "forbidden",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: adminOperatorHeaders(),
+        issuedCalls: 1,
+        membershipCalls: 0,
+        memberships: [adminMembership()],
+        name: "internal",
+        record: issuedAdminSession({
+          proof: { ...ordinaryRecord.proof!, proofType: "agent_context" },
+        }),
+        status: "forbidden",
+      },
+      {
+        code: "AUTH_FORBIDDEN",
+        headers: adminOperatorHeaders(),
+        issuedCalls: 1,
+        membershipCalls: 1,
+        memberships: [adminMembership({ campaignIds: ["campaign-other"] })],
+        name: "out-of-scope",
+        record: ordinaryRecord,
+        status: "forbidden",
+      },
+    ];
+    const resourceKinds = [
+      {
+        campaignId: (resourceId: string) => resourceId,
+        ids: ["campaign-admin-a", "campaign-admin-unknown"],
+        kind: "Campaign",
+        routeId: "admin.reviews.list",
+      },
+      {
+        campaignId: () => "campaign-admin-a",
+        ids: ["participant-known", "participant-unknown"],
+        kind: "Participant",
+        routeId: "admin.reviews.detail",
+      },
+      {
+        campaignId: () => "campaign-admin-a",
+        ids: ["artifact-known", "artifact-unknown"],
+        kind: "Artifact",
+        routeId: "admin.artifacts.detail",
+      },
+    ] as const;
+
+    for (const resourceKind of resourceKinds) {
+      for (const denialCase of denialCases) {
+        const projections: unknown[] = [];
+
+        for (const resourceId of resourceKind.ids) {
+          let issuedLookupCount = 0;
+          let membershipLookupCount = 0;
+          let resourceReadCount = 0;
+          let resourceWriteCount = 0;
+          const baseRegistry = adminRegistry(denialCase.memberships);
+          const result = await runGuardedAdminResourceHandler({
+            campaignId: resourceKind.campaignId(resourceId),
+            headers: denialCase.headers,
+            issuedSessionLookup: async (sessionId) => {
+              issuedLookupCount += 1;
+              return denialCase.record?.sessionId === sessionId ? denialCase.record : undefined;
+            },
+            membershipRegistry: {
+              health: baseRegistry.health,
+              lookup: (...args) => {
+                membershipLookupCount += 1;
+                return baseRegistry.lookup(...args);
+              },
+            },
+            routeId: resourceKind.routeId,
+            traceId: `trace-admin-denial-${denialCase.name}`,
+          }, resourceId, () => {
+            resourceReadCount += 1;
+          }, () => {
+            resourceWriteCount += 1;
+          });
+          const projection = {
+            code: result.diagnostic?.code,
+            httpStatus: result.httpStatus,
+            safeDetails: result.safeDetails,
+            status: result.status,
+          };
+
+          expect(result).toMatchObject({
+            allowed: false,
+            diagnostic: { code: denialCase.code },
+            status: denialCase.status,
+          });
+          expect(issuedLookupCount).toBe(denialCase.issuedCalls);
+          expect(membershipLookupCount).toBe(denialCase.membershipCalls);
+          expect(resourceReadCount).toBe(0);
+          expect(resourceWriteCount).toBe(0);
+          expect(Object.keys(result.safeDetails).sort()).toEqual(["reason", "routeId", "traceId"]);
+          expect(JSON.stringify(projection).length).toBeLessThan(512);
+          projections.push(projection);
+        }
+
+        expect(projections[0]).toEqual(projections[1]);
+        const serialized = JSON.stringify(projections);
+        expect(serialized).not.toContain(resourceKind.ids[0]);
+        expect(serialized).not.toContain(resourceKind.ids[1]);
+      }
+    }
+  });
+
+  it.each([
+    ["missing role", adminOperatorHeaders({ "x-campaign-os-roles": undefined })],
+    ["ordinary role", adminOperatorHeaders({ "x-campaign-os-roles": "project_owner" })],
+    ["conflicting roles", adminOperatorHeaders({ "x-campaign-os-roles": "internal_operator,review_operator" })],
+    ["oversize role", adminOperatorHeaders({ "x-campaign-os-roles": "r".repeat(65) })],
+    ["multiple values", adminOperatorHeaders({ "x-campaign-os-roles": ["review_operator", "internal_operator"] })],
+    ["duplicate header keys", {
+      ...adminOperatorHeaders(),
+      "X-Campaign-OS-Roles": "internal_operator",
+    }],
+  ] as const)("rejects %s without treating client roles as authority", async (_case, headers) => {
+    let issuedLookupCount = 0;
+    const result = await evaluateAdminOperatorEnforcement({
+      campaignId: "campaign-admin-a",
+      headers,
+      issuedSessionLookup: async () => {
+        issuedLookupCount += 1;
+        return issuedAdminSession();
+      },
+      membershipRegistry: adminRegistry(),
+      routeId: "admin.reviews.list",
+    });
+
+    expect(result).toMatchObject({
+      diagnostic: { code: "AUTH_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+    expect(result.safeDetails.traceId).toMatch(/^trace-[a-f0-9-]{36}$/);
+    expect(issuedLookupCount).toBe(0);
+  });
+
+  it("fails closed for unknown Admin-family routes through every evaluator", async () => {
+    let issuedLookupCount = 0;
+    let membershipLookupCount = 0;
+    let resourceReadCount = 0;
+    let resourceWriteCount = 0;
+    const baseRegistry = adminRegistry();
+    const generic = evaluateAuthEnforcement({
+      headers: adminOperatorHeaders(),
+      routeId: "admin.route-typo",
+    });
+    const issued = await evaluateIssuedAuthEnforcement({
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: async () => {
+        issuedLookupCount += 1;
+        return issuedAdminSession();
+      },
+      routeId: "admin.route-typo",
+      traceId: "trace-admin-route-typo",
+    });
+    const admin = await runGuardedAdminResourceHandler({
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: async () => {
+        issuedLookupCount += 1;
+        return issuedAdminSession();
+      },
+      membershipRegistry: {
+        health: baseRegistry.health,
+        lookup: (...args) => {
+          membershipLookupCount += 1;
+          return baseRegistry.lookup(...args);
+        },
+      },
+      routeId: "admin.route-typo",
+      traceId: "trace-admin-route-typo",
+    }, "resource-route-typo", () => {
+      resourceReadCount += 1;
+    }, () => {
+      resourceWriteCount += 1;
+    });
+
+    for (const result of [generic, issued, admin]) {
+      expect(result).toMatchObject({
+        allowed: false,
+        diagnostic: { code: "AUTH_FORBIDDEN" },
+        httpStatus: 403,
+        status: "forbidden",
+      });
+    }
+    expect(issuedLookupCount).toBe(0);
+    expect(membershipLookupCount).toBe(0);
+    expect(resourceReadCount).toBe(0);
+    expect(resourceWriteCount).toBe(0);
+
+    expect(evaluateAuthEnforcement({ routeId: "public.route-typo" })).toMatchObject({
+      allowed: true,
+      status: "not_required",
+    });
+  });
+
+  it("replaces unsafe Trace IDs with unique generated values and preserves a safe caller ID", async () => {
+    const unsafeTraceIds = [
+      "token",
+      "header.payload.signature",
+      "x".repeat(129),
+      "../../Users/private/session",
+    ];
+    const generatedTraceIds: string[] = [];
+
+    for (const unsafeTraceId of unsafeTraceIds) {
+      for (let index = 0; index < 2; index += 1) {
+        const result = await evaluateAdminOperatorEnforcement({
+          campaignId: "campaign-admin-a",
+          headers: adminOperatorHeaders(),
+          issuedSessionLookup: issuedLookup(issuedAdminSession()),
+          membershipRegistry: adminRegistry([]),
+          routeId: "admin.reviews.list",
+          traceId: unsafeTraceId,
+        });
+        const generatedTraceId = result.safeDetails.traceId;
+
+        expect(generatedTraceId).toMatch(/^trace-[a-f0-9-]{36}$/);
+        expect(generatedTraceId).not.toBe("[redacted-sensitive]");
+        expect(JSON.stringify(result)).not.toContain(unsafeTraceId);
+        generatedTraceIds.push(String(generatedTraceId));
+      }
+    }
+
+    expect(new Set(generatedTraceIds).size).toBe(generatedTraceIds.length);
+
+    const safeTraceId = "trace-admin-caller-valid-01";
+    const safeResult = await evaluateAdminOperatorEnforcement({
+      campaignId: "campaign-admin-a",
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: issuedLookup(issuedAdminSession()),
+      membershipRegistry: adminRegistry([]),
+      routeId: "admin.reviews.list",
+      traceId: safeTraceId,
+    });
+
+    expect(safeResult.safeDetails.traceId).toBe(safeTraceId);
+  });
+
+  it("sanitizes issued-session and membership lookup failures", async () => {
+    const sensitive = "postgres://runtime:password@db.internal/campaign?token=raw-token";
+    const issuedFailure = await evaluateAdminOperatorEnforcement({
+      campaignId: "campaign-admin-a",
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: async () => {
+        throw new Error(sensitive);
+      },
+      membershipRegistry: adminRegistry(),
+      routeId: "admin.reviews.list",
+      traceId: "trace-admin-issued-failure",
+    });
+    const baseRegistry = adminRegistry();
+    const membershipFailure = await evaluateAdminOperatorEnforcement({
+      campaignId: "campaign-admin-a",
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: issuedLookup(issuedAdminSession()),
+      membershipRegistry: {
+        health: baseRegistry.health,
+        lookup: () => {
+          throw new Error(sensitive);
+        },
+      },
+      routeId: "admin.reviews.list",
+      traceId: "trace-admin-membership-failure",
+    });
+
+    expect(issuedFailure).toMatchObject({
+      diagnostic: { code: "AUTH_SESSION_INVALID" },
+      httpStatus: 401,
+      safeDetails: { traceId: "trace-admin-issued-failure" },
+    });
+    expect(membershipFailure).toMatchObject({
+      diagnostic: { code: "AUTH_FORBIDDEN" },
+      httpStatus: 403,
+      safeDetails: { traceId: "trace-admin-membership-failure" },
+    });
+    expect(JSON.stringify([issuedFailure, membershipFailure])).not.toContain(sensitive);
+    expect(JSON.stringify([issuedFailure, membershipFailure])).not.toContain("raw-token");
+  });
+
+  it("supports explicit internal membership and Campaign feed scope without client expansion", async () => {
+    const internal = await evaluateAdminOperatorEnforcement({
+      campaignId: "campaign-admin-a",
+      headers: adminOperatorHeaders({ "x-campaign-os-roles": "internal_operator" }),
+      issuedSessionLookup: issuedLookup(issuedAdminSession()),
+      membershipRegistry: adminRegistry([adminMembership({ roleIds: ["internal_operator"] })]),
+      routeId: "admin.reviews.decide",
+      traceId: "trace-admin-internal-role",
+    });
+    const feed = await evaluateAdminOperatorEnforcement({
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: issuedLookup(issuedAdminSession()),
+      membershipRegistry: adminRegistry([adminMembership({ campaignIds: [] })]),
+      routeId: "admin.campaigns.list",
+      traceId: "trace-admin-feed",
+    });
+    let issuedLookupCount = 0;
+    const missingScope = await evaluateAdminOperatorEnforcement({
+      headers: adminOperatorHeaders(),
+      issuedSessionLookup: async () => {
+        issuedLookupCount += 1;
+        return issuedAdminSession();
+      },
+      membershipRegistry: adminRegistry(),
+      routeId: "admin.reviews.list",
+      traceId: "trace-admin-missing-scope",
+    });
+
+    expect(internal).toMatchObject({
+      adminOperator: { requestedRole: "internal_operator" },
+      allowed: true,
+    });
+    expect(feed).toMatchObject({
+      adminOperator: { campaignIds: [] },
+      allowed: true,
+    });
+    expect(missingScope).toMatchObject({
+      diagnostic: { code: "AUTH_FORBIDDEN" },
+      httpStatus: 403,
+    });
+    expect(issuedLookupCount).toBe(0);
   });
 });

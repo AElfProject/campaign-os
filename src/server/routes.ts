@@ -1,7 +1,9 @@
 import { requiredApiSkillIds } from "../domain/apiSkillContracts";
 import type { ApiSkillId, LocalizedText } from "../domain/types";
 import type { ApiRuntimeContractCoverage, ApiRuntimeRouteContract } from "./contracts";
+import type { AdminOperatorRouteId } from "./authEnforcement";
 import { apiRuntimeServiceGroupById } from "./capabilities";
+import type { CampaignOsAdminOperatorRoleId } from "./config";
 import { runtimeBoundary } from "./envelope";
 
 const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
@@ -608,12 +610,632 @@ export const apiRuntimeContractRoutes = [
   ...participantCampaignRouteContracts,
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
+export const ADMIN_API_PATH_PARAMETER_MAX_LENGTH = 160;
+
+export interface AdminApiRouteAuthContract {
+  allowedRoles: readonly CampaignOsAdminOperatorRoleId[];
+  anonymous: false;
+  enforcementStatus: "local_enforced";
+  membershipRequired: true;
+  policyId: string;
+  requestedRoleHeader: "x-campaign-os-roles";
+  requestedRoleRequired: true;
+  sessionRequired: true;
+}
+
+export interface AdminApiRequestFieldContract {
+  allowedValues?: readonly string[];
+  maxLength?: number;
+  minLength?: number;
+  name: string;
+  pattern?: string;
+  required: boolean;
+}
+
+export interface AdminApiRequestBodyContract {
+  allowedFields: readonly string[];
+  contentType: "application/json";
+  fields: readonly AdminApiRequestFieldContract[];
+  required: true;
+  requiredFields: readonly string[];
+}
+
+export interface AdminApiRouteRequestContract {
+  body?: AdminApiRequestBodyContract;
+  headers: readonly AdminApiRequestFieldContract[];
+  query: readonly string[];
+  range: "forbidden" | "not_applicable";
+}
+
+export interface AdminApiRuntimeRouteDefinition {
+  apiGroup: ApiRuntimeRouteContract["apiGroup"];
+  auth: AdminApiRouteAuthContract;
+  boundary: LocalizedText;
+  id: string;
+  method: string;
+  operationId: string;
+  path: string;
+  productionDependencies: ApiRuntimeRouteContract["productionDependencies"];
+  readiness: ApiRuntimeRouteContract["readiness"];
+  request: AdminApiRouteRequestContract;
+  riskLevel: ApiRuntimeRouteContract["riskLevel"];
+  serviceGroup: ApiRuntimeRouteContract["serviceGroup"];
+  serviceOwner: "campaign-service" | "export-service";
+  summary: LocalizedText;
+  supportMode: ApiRuntimeRouteContract["supportMode"];
+}
+
+export interface AdminApiRuntimeRouteContract
+  extends Omit<AdminApiRuntimeRouteDefinition, "id" | "method">,
+    ApiRuntimeRouteContract {
+  auth: AdminApiRouteAuthContract & { policyId: AdminOperatorRouteId };
+  id: AdminOperatorRouteId;
+  method: ApiRuntimeRouteContract["method"];
+}
+
+type AdminApiRouteInput = Pick<
+  AdminApiRuntimeRouteContract,
+  "id" | "method" | "operationId" | "path" | "request" | "serviceGroup" | "summary"
+> & { serviceGroup: "campaign" | "export" };
+
+const adminOperatorRoles = Object.freeze([
+  "internal_operator",
+  "review_operator",
+] as const satisfies readonly CampaignOsAdminOperatorRoleId[]);
+const adminRuntimeBoundary = text(
+  "Authenticated Admin transport backed only by configured durable PostgreSQL review state. No live API, provider call, wallet signature, contract write, object storage write, reward custody, or reward distribution is performed.",
+  "仅限认证 Admin transport，并且只使用已配置的 durable PostgreSQL review state。不会执行实时 API、provider 调用、钱包签名、合约写入、对象存储写入、奖励托管或发奖。",
+);
+const noRequestFields = Object.freeze([] as const);
+const noQueryParameters = Object.freeze([] as const);
+
+const adminAuth = (policyId: AdminOperatorRouteId): AdminApiRuntimeRouteContract["auth"] =>
+  Object.freeze({
+    allowedRoles: adminOperatorRoles,
+    anonymous: false,
+    enforcementStatus: "local_enforced",
+    membershipRequired: true,
+    policyId,
+    requestedRoleHeader: "x-campaign-os-roles",
+    requestedRoleRequired: true,
+    sessionRequired: true,
+  });
+
+const adminRoute = <TRoute extends AdminApiRouteInput>(
+  contract: TRoute,
+): AdminApiRuntimeRouteContract & TRoute => ({
+  apiGroup: contract.serviceGroup === "export" ? "export" : "campaign_discovery",
+  auth: adminAuth(contract.id),
+  boundary: adminRuntimeBoundary,
+  productionDependencies: dependenciesFor(contract.serviceGroup),
+  readiness: "review_required",
+  riskLevel: "high",
+  serviceOwner: contract.serviceGroup === "export" ? "export-service" : "campaign-service",
+  supportMode: "local_seeded",
+  ...contract,
+});
+
+const adminRequest = ({
+  body,
+  headers = noRequestFields,
+  query = noQueryParameters,
+  range = "not_applicable",
+}: Partial<AdminApiRouteRequestContract> = {}): AdminApiRouteRequestContract => Object.freeze({
+  ...(body ? { body } : {}),
+  headers,
+  query,
+  range,
+});
+
+const sha256RequestField = (name: string, required: boolean): AdminApiRequestFieldContract =>
+  Object.freeze({
+    maxLength: 64,
+    minLength: 64,
+    name,
+    pattern: "^[a-f0-9]{64}$",
+    required,
+  });
+
+const decisionBody = Object.freeze({
+  allowedFields: Object.freeze(["decision", "note", "reasonCode", "snapshotFingerprint"] as const),
+  contentType: "application/json" as const,
+  fields: Object.freeze([
+    Object.freeze({
+      allowedValues: Object.freeze(["approved", "rejected", "needs_review"] as const),
+      name: "decision",
+      required: true,
+    }),
+    Object.freeze({ maxLength: 1_000, name: "note", required: false }),
+    Object.freeze({
+      maxLength: 64,
+      minLength: 1,
+      name: "reasonCode",
+      pattern: "^[a-z0-9_:-]+$",
+      required: true,
+    }),
+    sha256RequestField("snapshotFingerprint", true),
+  ]),
+  required: true as const,
+  requiredFields: Object.freeze(["decision", "reasonCode", "snapshotFingerprint"] as const),
+}) satisfies AdminApiRequestBodyContract;
+
+const artifactGenerateBody = Object.freeze({
+  allowedFields: Object.freeze(["format", "expectedSourceFingerprint"] as const),
+  contentType: "application/json" as const,
+  fields: Object.freeze([
+    Object.freeze({
+      allowedValues: Object.freeze(["csv", "json"] as const),
+      name: "format",
+      required: true,
+    }),
+    sha256RequestField("expectedSourceFingerprint", false),
+  ]),
+  required: true as const,
+  requiredFields: Object.freeze(["format"] as const),
+}) satisfies AdminApiRequestBodyContract;
+
+const idempotencyKeyHeader = Object.freeze({
+  maxLength: 128,
+  minLength: 8,
+  name: "Idempotency-Key",
+  pattern: "^[A-Za-z0-9._:-]+$",
+  required: true,
+}) satisfies AdminApiRequestFieldContract;
+
+export const adminApiRuntimeRoutes = [
+  adminRoute({
+    id: "admin.campaigns.list",
+    method: "GET",
+    operationId: "listAdminCampaigns",
+    path: "/api/admin/campaigns",
+    request: adminRequest({ query: Object.freeze(["limit"] as const) }),
+    serviceGroup: "campaign",
+    summary: text("List Campaigns visible to the authenticated Admin operator.", "列出认证 Admin operator 可见的 Campaign。"),
+  }),
+  adminRoute({
+    id: "admin.reviews.list",
+    method: "GET",
+    operationId: "listParticipantReviews",
+    path: "/api/admin/campaigns/:campaignId/reviews",
+    request: adminRequest({ query: Object.freeze(["limit", "state"] as const) }),
+    serviceGroup: "campaign",
+    summary: text("List the durable Participant review queue.", "列出 durable Participant review queue。"),
+  }),
+  adminRoute({
+    id: "admin.reviews.detail",
+    method: "GET",
+    operationId: "getParticipantReview",
+    path: "/api/admin/campaigns/:campaignId/reviews/:participantId",
+    request: adminRequest(),
+    serviceGroup: "campaign",
+    summary: text("Get a durable Participant review snapshot and history.", "获取 durable Participant review snapshot 与历史。"),
+  }),
+  adminRoute({
+    id: "admin.reviews.decide",
+    method: "POST",
+    operationId: "submitParticipantReviewDecision",
+    path: "/api/admin/campaigns/:campaignId/reviews/:participantId/decisions",
+    request: adminRequest({
+      body: decisionBody,
+      headers: Object.freeze([idempotencyKeyHeader] as const),
+    }),
+    serviceGroup: "campaign",
+    summary: text("Append an idempotent Participant review decision.", "追加幂等 Participant review decision。"),
+  }),
+  adminRoute({
+    id: "admin.winners.list",
+    method: "GET",
+    operationId: "listCurrentWinners",
+    path: "/api/admin/campaigns/:campaignId/winners",
+    request: adminRequest({ query: Object.freeze(["limit"] as const) }),
+    serviceGroup: "campaign",
+    summary: text("List the current approved winner projection.", "列出 current approved winner projection。"),
+  }),
+  adminRoute({
+    id: "admin.artifacts.generate",
+    method: "POST",
+    operationId: "generateAdminArtifact",
+    path: "/api/admin/campaigns/:campaignId/artifacts",
+    request: adminRequest({ body: artifactGenerateBody }),
+    serviceGroup: "export",
+    summary: text("Generate or replay an immutable durable export artifact.", "生成或重放 immutable durable export artifact。"),
+  }),
+  adminRoute({
+    id: "admin.artifacts.list",
+    method: "GET",
+    operationId: "listAdminArtifacts",
+    path: "/api/admin/campaigns/:campaignId/artifacts",
+    request: adminRequest({ query: Object.freeze(["limit", "format"] as const) }),
+    serviceGroup: "export",
+    summary: text("List durable export artifact audit records.", "列出 durable export artifact 审计记录。"),
+  }),
+  adminRoute({
+    id: "admin.artifacts.detail",
+    method: "GET",
+    operationId: "getAdminArtifact",
+    path: "/api/admin/campaigns/:campaignId/artifacts/:artifactId",
+    request: adminRequest(),
+    serviceGroup: "export",
+    summary: text("Get durable export artifact metadata.", "获取 durable export artifact metadata。"),
+  }),
+  adminRoute({
+    id: "admin.artifacts.download",
+    method: "GET",
+    operationId: "downloadAdminArtifact",
+    path: "/api/admin/campaigns/:campaignId/artifacts/:artifactId/download",
+    request: adminRequest({ range: "forbidden" }),
+    serviceGroup: "export",
+    summary: text("Download exact stored durable artifact content.", "下载 exact stored durable artifact content。"),
+  }),
+] as const satisfies readonly AdminApiRuntimeRouteContract[];
+
+export type AdminApiRuntimeRouteId = (typeof adminApiRuntimeRoutes)[number]["id"];
+
+export const adminApiRuntimeRouteById = Object.freeze(Object.fromEntries(
+  adminApiRuntimeRoutes.map((runtimeRoute) => [runtimeRoute.id, runtimeRoute]),
+)) as Readonly<Record<AdminApiRuntimeRouteId, (typeof adminApiRuntimeRoutes)[number]>>;
+
+export const apiRuntimeRouteCatalog = [
+  ...apiRuntimeContractRoutes,
+  ...adminApiRuntimeRoutes,
+] as const satisfies readonly ApiRuntimeRouteContract[];
+
+export const createAdminApiRuntimeRouteInventory = (
+  routes: readonly AdminApiRuntimeRouteDefinition[] = adminApiRuntimeRoutes,
+) => {
+  const readiness: Record<string, number> = {};
+
+  for (const runtimeRoute of routes) {
+    readiness[runtimeRoute.readiness] = (readiness[runtimeRoute.readiness] ?? 0) + 1;
+  }
+
+  return {
+    operationIds: routes.map((runtimeRoute) => runtimeRoute.operationId),
+    readiness,
+    routeCount: routes.length,
+    routeIds: routes.map((runtimeRoute) => runtimeRoute.id),
+  };
+};
+
+export type AdminApiRouteCatalogIssueCode =
+  | "AMBIGUOUS_ROUTE_MATCHER"
+  | "DUPLICATE_METHOD_PATH"
+  | "DUPLICATE_OPERATION_ID"
+  | "DUPLICATE_QUERY_PARAMETER"
+  | "DUPLICATE_ROUTE_ID"
+  | "INVALID_ADMIN_AUTH_METADATA"
+  | "INVALID_SERVICE_OWNERSHIP"
+  | "MALFORMED_ROUTE_PATH"
+  | "UNKNOWN_ROUTE_METHOD";
+
+export interface AdminApiRouteCatalogIssue {
+  code: AdminApiRouteCatalogIssueCode;
+  routeId: string;
+}
+
+export interface AdminApiRouteCatalogValidation {
+  issues: AdminApiRouteCatalogIssue[];
+  valid: boolean;
+}
+
+const routeTemplateSegments = (path: string) => path.split("/").slice(1);
+const isRouteParameter = (segment: string) => segment.startsWith(":");
+const routeSpecificity = (route: AdminApiRuntimeRouteDefinition) =>
+  routeTemplateSegments(route.path).filter((segment) => !isRouteParameter(segment)).length;
+
+const malformedRoutePath = (path: string) => {
+  if (
+    !path.startsWith("/api/admin/")
+    || path.endsWith("/")
+    || path.includes("//")
+    || path.includes("?")
+    || path.includes("#")
+    || path.includes("\\")
+    || path.includes("%")
+  ) {
+    return true;
+  }
+
+  const parameterNames = new Set<string>();
+
+  for (const segment of routeTemplateSegments(path)) {
+    if (segment === "." || segment === "..") {
+      return true;
+    }
+
+    if (!isRouteParameter(segment)) {
+      if (!/^[A-Za-z0-9._~-]+$/.test(segment)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (!/^:[A-Za-z][A-Za-z0-9_]*$/.test(segment)) {
+      return true;
+    }
+
+    const parameterName = segment.slice(1);
+    if (parameterNames.has(parameterName)) {
+      return true;
+    }
+    parameterNames.add(parameterName);
+  }
+
+  return false;
+};
+
+const routeTemplatesOverlap = (
+  left: AdminApiRuntimeRouteDefinition,
+  right: AdminApiRuntimeRouteDefinition,
+) => {
+  const leftSegments = routeTemplateSegments(left.path);
+  const rightSegments = routeTemplateSegments(right.path);
+
+  return leftSegments.length === rightSegments.length
+    && leftSegments.every((segment, index) =>
+      segment === rightSegments[index]
+      || isRouteParameter(segment)
+      || isRouteParameter(rightSegments[index]),
+    );
+};
+
+export const validateAdminApiRouteCatalog = (
+  routes: readonly AdminApiRuntimeRouteDefinition[] = adminApiRuntimeRoutes,
+): AdminApiRouteCatalogValidation => {
+  const issues: AdminApiRouteCatalogIssue[] = [];
+  const routeIds = new Set<string>();
+  const operationIds = new Set<string>();
+
+  for (const runtimeRoute of routes) {
+    if (routeIds.has(runtimeRoute.id)) {
+      issues.push({ code: "DUPLICATE_ROUTE_ID", routeId: runtimeRoute.id });
+    }
+    routeIds.add(runtimeRoute.id);
+
+    if (operationIds.has(runtimeRoute.operationId)) {
+      issues.push({ code: "DUPLICATE_OPERATION_ID", routeId: runtimeRoute.id });
+    }
+    operationIds.add(runtimeRoute.operationId);
+
+    if (runtimeRoute.method !== "GET" && runtimeRoute.method !== "POST") {
+      issues.push({ code: "UNKNOWN_ROUTE_METHOD", routeId: runtimeRoute.id });
+    }
+    if (malformedRoutePath(runtimeRoute.path)) {
+      issues.push({ code: "MALFORMED_ROUTE_PATH", routeId: runtimeRoute.id });
+    }
+    if (
+      runtimeRoute.auth.policyId !== runtimeRoute.id
+      || runtimeRoute.auth.anonymous
+      || runtimeRoute.auth.enforcementStatus !== "local_enforced"
+      || !runtimeRoute.auth.membershipRequired
+      || !runtimeRoute.auth.requestedRoleRequired
+      || !runtimeRoute.auth.sessionRequired
+      || runtimeRoute.auth.allowedRoles.length === 0
+    ) {
+      issues.push({ code: "INVALID_ADMIN_AUTH_METADATA", routeId: runtimeRoute.id });
+    }
+    if (
+      (runtimeRoute.serviceGroup === "campaign" && runtimeRoute.serviceOwner !== "campaign-service")
+      || (runtimeRoute.serviceGroup === "export" && runtimeRoute.serviceOwner !== "export-service")
+      || (runtimeRoute.serviceGroup !== "campaign" && runtimeRoute.serviceGroup !== "export")
+    ) {
+      issues.push({ code: "INVALID_SERVICE_OWNERSHIP", routeId: runtimeRoute.id });
+    }
+    if (new Set(runtimeRoute.request.query).size !== runtimeRoute.request.query.length) {
+      issues.push({ code: "DUPLICATE_QUERY_PARAMETER", routeId: runtimeRoute.id });
+    }
+  }
+
+  for (let leftIndex = 0; leftIndex < routes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < routes.length; rightIndex += 1) {
+      const left = routes[leftIndex];
+      const right = routes[rightIndex];
+
+      if (left.method !== right.method) {
+        continue;
+      }
+      if (left.path === right.path) {
+        issues.push({ code: "DUPLICATE_METHOD_PATH", routeId: right.id });
+        continue;
+      }
+      if (
+        routeSpecificity(left) === routeSpecificity(right)
+        && routeTemplatesOverlap(left, right)
+      ) {
+        issues.push({ code: "AMBIGUOUS_ROUTE_MATCHER", routeId: right.id });
+      }
+    }
+  }
+
+  return { issues, valid: issues.length === 0 };
+};
+
+interface ParsedAdminRequestTarget {
+  decodedSegments: string[];
+  query: string;
+  rawSegments: string[];
+}
+
+const malformedPercentEncoding = /%(?![0-9A-Fa-f]{2})/;
+const unsafeDecodedPathCharacter = /[\u0000-\u001f\u007f-\u009f]/;
+
+const parseAdminRequestTarget = (requestTarget: string): ParsedAdminRequestTarget | undefined => {
+  if (
+    !requestTarget.startsWith("/")
+    || requestTarget.includes("#")
+    || requestTarget.includes("\\")
+    || malformedPercentEncoding.test(requestTarget)
+  ) {
+    return undefined;
+  }
+
+  const queryIndex = requestTarget.indexOf("?");
+  const rawPathname = queryIndex === -1 ? requestTarget : requestTarget.slice(0, queryIndex);
+  const query = queryIndex === -1 ? "" : requestTarget.slice(queryIndex + 1);
+  const pathname = rawPathname.length > 1 && rawPathname.endsWith("/")
+    ? rawPathname.slice(0, -1)
+    : rawPathname;
+
+  if (!pathname || pathname.includes("//") || pathname.endsWith("/")) {
+    return undefined;
+  }
+
+  const rawSegments = pathname.split("/").slice(1);
+  const decodedSegments: string[] = [];
+
+  try {
+    for (const rawSegment of rawSegments) {
+      const decodedSegment = decodeURIComponent(rawSegment);
+
+      if (
+        decodedSegment.length === 0
+        || decodedSegment.length > ADMIN_API_PATH_PARAMETER_MAX_LENGTH
+        || decodedSegment === "."
+        || decodedSegment === ".."
+        || decodedSegment.includes("/")
+        || decodedSegment.includes("\\")
+        || unsafeDecodedPathCharacter.test(decodedSegment)
+      ) {
+        return undefined;
+      }
+      decodedSegments.push(decodedSegment);
+    }
+  } catch {
+    return undefined;
+  }
+
+  return { decodedSegments, query, rawSegments };
+};
+
+const matchAdminRoutePath = (
+  route: AdminApiRuntimeRouteDefinition,
+  target: ParsedAdminRequestTarget,
+): Record<string, string> | undefined => {
+  const templateSegments = routeTemplateSegments(route.path);
+
+  if (templateSegments.length !== target.rawSegments.length) {
+    return undefined;
+  }
+
+  const params: Record<string, string> = {};
+
+  for (let index = 0; index < templateSegments.length; index += 1) {
+    const templateSegment = templateSegments[index];
+
+    if (isRouteParameter(templateSegment)) {
+      params[templateSegment.slice(1)] = target.decodedSegments[index];
+      continue;
+    }
+    if (templateSegment !== target.rawSegments[index]) {
+      return undefined;
+    }
+  }
+
+  return params;
+};
+
+export type AdminApiRouteResolution =
+  | Readonly<{
+      matched: true;
+      params: Record<string, string>;
+      query: Record<string, string>;
+      route: AdminApiRuntimeRouteDefinition;
+    }>
+  | Readonly<{
+      matched: false;
+      reason: "malformed_path" | "route_not_found";
+    }>
+  | Readonly<{
+      allowedMethods: string[];
+      matched: false;
+      reason: "method_not_allowed";
+    }>
+  | Readonly<{
+      matched: false;
+      queryParameter: string;
+      reason: "duplicate_query_parameter" | "query_not_allowed";
+    }>;
+
+export const resolveAdminApiRoute = (
+  method: string,
+  requestTarget: string,
+  routes: readonly AdminApiRuntimeRouteDefinition[] = adminApiRuntimeRoutes,
+): AdminApiRouteResolution => {
+  const target = parseAdminRequestTarget(requestTarget);
+
+  if (!target) {
+    return { matched: false, reason: "malformed_path" };
+  }
+
+  const pathMatches = routes
+    .map((runtimeRoute, index) => ({
+      index,
+      params: matchAdminRoutePath(runtimeRoute, target),
+      route: runtimeRoute,
+      specificity: routeSpecificity(runtimeRoute),
+    }))
+    .filter((candidate): candidate is typeof candidate & { params: Record<string, string> } =>
+      candidate.params !== undefined,
+    );
+
+  if (pathMatches.length === 0) {
+    return { matched: false, reason: "route_not_found" };
+  }
+
+  const highestSpecificity = Math.max(...pathMatches.map((candidate) => candidate.specificity));
+  const precedenceMatches = pathMatches
+    .filter((candidate) => candidate.specificity === highestSpecificity)
+    .sort((left, right) => left.index - right.index);
+  const normalizedMethod = method.trim().toUpperCase();
+  const methodMatch = precedenceMatches.find((candidate) => candidate.route.method === normalizedMethod);
+
+  if (!methodMatch) {
+    return {
+      allowedMethods: [...new Set(precedenceMatches.map((candidate) => candidate.route.method))],
+      matched: false,
+      reason: "method_not_allowed",
+    };
+  }
+
+  const query: Record<string, string> = {};
+  const allowedQuery = new Set(methodMatch.route.request.query);
+
+  for (const [name, value] of new URLSearchParams(target.query)) {
+    if (Object.prototype.hasOwnProperty.call(query, name)) {
+      return { matched: false, queryParameter: name, reason: "duplicate_query_parameter" };
+    }
+    if (!allowedQuery.has(name)) {
+      return { matched: false, queryParameter: name, reason: "query_not_allowed" };
+    }
+    query[name] = value;
+  }
+
+  return {
+    matched: true,
+    params: methodMatch.params,
+    query,
+    route: methodMatch.route,
+  };
+};
+
+export const matchAdminApiRoute = (
+  method: string,
+  requestTarget: string,
+  routes: readonly AdminApiRuntimeRouteDefinition[] = adminApiRuntimeRoutes,
+) => {
+  const resolution = resolveAdminApiRoute(method, requestTarget, routes);
+  return resolution.matched ? resolution : undefined;
+};
+
 export type ApiRuntimeRouteId = (typeof apiRuntimeRoutes)[number]["id"];
 export type ParticipantCampaignRouteId = (typeof participantCampaignRouteContracts)[number]["id"];
-export type ApiRuntimeContractRouteId = ApiRuntimeRouteId | ParticipantCampaignRouteId;
+export type ApiRuntimeContractRouteId =
+  | ApiRuntimeRouteId
+  | ParticipantCampaignRouteId
+  | AdminApiRuntimeRouteId;
 
 export const apiRuntimeRouteById = Object.fromEntries(
-  apiRuntimeContractRoutes.map((runtimeRoute) => [runtimeRoute.id, runtimeRoute]),
+  apiRuntimeRouteCatalog.map((runtimeRoute) => [runtimeRoute.id, runtimeRoute]),
 ) as Record<ApiRuntimeContractRouteId, ApiRuntimeRouteContract>;
 
 export const createApiRuntimeContractCoverage = (): ApiRuntimeContractCoverage => {
