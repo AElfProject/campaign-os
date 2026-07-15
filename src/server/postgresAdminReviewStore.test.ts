@@ -6,8 +6,10 @@ import {
   ADMIN_REVIEW_MIGRATION_ID,
   ADMIN_REVIEW_SNAPSHOT_VERSION,
   AdminReviewStoreError,
+  deriveAdminReviewDecisionPayloadHash,
   type AdminExportArtifactInput,
   type AdminReviewDecisionInput,
+  type AdminReviewDecisionPayload,
   type AdminReviewSnapshotProjection,
 } from "./adminReviewStore";
 import {
@@ -48,6 +50,16 @@ const expectedMigration = {
   checksum: "a".repeat(64),
   id: ADMIN_REVIEW_MIGRATION_ID,
 } as const;
+const defaultDecisionPayload = {
+  campaignId: "campaign-admin-0001",
+  decision: "approved",
+  expectedSnapshotFingerprint: "1".repeat(64),
+  note: "Evidence reviewed.",
+  operatorRole: "review_operator",
+  operatorSubject: "2F4ReviewOperator",
+  participantId: "participant-admin-0001",
+  reasonCode: "evidence_verified",
+} satisfies AdminReviewDecisionPayload;
 
 class TranscriptPool implements PostgresAdminReviewStorePool {
   readonly calls: QueryCall[] = [];
@@ -188,7 +200,7 @@ const decisionRow = (overrides: Record<string, unknown> = {}): Record<string, un
   operator_role: "review_operator",
   operator_subject: "2F4ReviewOperator",
   participant_id: "participant-admin-0001",
-  payload_hash: "3".repeat(64),
+  payload_hash: deriveAdminReviewDecisionPayloadHash(defaultDecisionPayload),
   reason_code: "evidence_verified",
   snapshot_fingerprint: "1".repeat(64),
   snapshot_manifest: snapshotProjection().manifest,
@@ -377,16 +389,8 @@ class StatefulDecisionPool implements PostgresAdminReviewStorePool {
 const decisionInput = (
   overrides: Partial<AdminReviewDecisionInput> = {},
 ): AdminReviewDecisionInput => ({
-  campaignId: "campaign-admin-0001",
-  decision: "approved",
-  expectedSnapshotFingerprint: "1".repeat(64),
+  ...defaultDecisionPayload,
   idempotencyKeyHash: "2".repeat(64),
-  note: "Evidence reviewed.",
-  operatorRole: "review_operator",
-  operatorSubject: "2F4ReviewOperator",
-  participantId: "participant-admin-0001",
-  payloadHash: "3".repeat(64),
-  reasonCode: "evidence_verified",
   ...overrides,
 });
 
@@ -597,6 +601,28 @@ const createStore = (
   expectedMigration,
   ownsPool,
   pool,
+});
+
+describe("Admin review decision canonical payload", () => {
+  it("derives a golden hash without caller-controlled request metadata", () => {
+    const input = decisionInput();
+
+    expect(input).not.toHaveProperty("payloadHash");
+    expect(deriveAdminReviewDecisionPayloadHash(input)).toBe(
+      "c166e99171cb24b13b77a66e6f0802ec42b422862d4bbd3965006d26fe523b8f",
+    );
+    const alternateKeyInput: AdminReviewDecisionInput = {
+      ...input,
+      idempotencyKeyHash: "9".repeat(64),
+    };
+    expect(deriveAdminReviewDecisionPayloadHash(alternateKeyInput)).toBe(
+      deriveAdminReviewDecisionPayloadHash(input),
+    );
+    const untrustedClaim = { ...input, payloadHash: "9".repeat(64) };
+    expect(deriveAdminReviewDecisionPayloadHash(untrustedClaim)).toBe(
+      deriveAdminReviewDecisionPayloadHash(input),
+    );
+  });
 });
 
 describe("PostgreSQL Admin review store contract", () => {
@@ -980,7 +1006,7 @@ describe("PostgreSQL Admin review decisions", () => {
         operatorRole: "review_operator",
         operatorSubject: "2F4ReviewOperator",
         participantId: "participant-admin-0001",
-        payloadHash: "3".repeat(64),
+        payloadHash: deriveAdminReviewDecisionPayloadHash(decisionInput()),
         reasonCode: "evidence_verified",
         snapshotFingerprint: "1".repeat(64),
         snapshotManifest: snapshotProjection().manifest,
@@ -1077,17 +1103,20 @@ describe("PostgreSQL Admin review decisions", () => {
     expect(replay.pool.calls.some(({ text }) => text.startsWith("INSERT"))).toBe(false);
     expect(replay.pool.calls[replay.pool.calls.length - 1]?.text).toBe("COMMIT");
 
-    const conflict = await run({
+    const corruptPayloadHash = await run({
       existing: decisionRow({ payload_hash: "9".repeat(64) }),
       participant: participantRow(),
-      traceId: "trace-decision-conflict",
+      traceId: "trace-decision-payload-corrupt",
     });
-    expect(conflict.result).toEqual({
-      error: expect.objectContaining({ code: "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT" }),
+    expect(corruptPayloadHash.result).toEqual({
+      error: expect.objectContaining({
+        code: "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
+        field: "payload_hash",
+      }),
       ok: false,
     });
-    expect(conflict.pool.calls.some(({ text }) => text.startsWith("INSERT"))).toBe(false);
-    expect(conflict.pool.calls[conflict.pool.calls.length - 1]?.text).toBe("ROLLBACK");
+    expect(corruptPayloadHash.pool.calls.some(({ text }) => text.startsWith("INSERT"))).toBe(false);
+    expect(corruptPayloadHash.pool.calls[corruptPayloadHash.pool.calls.length - 1]?.text).toBe("ROLLBACK");
 
     const stale = await run({
       participant: participantRow(),
@@ -1172,6 +1201,27 @@ describe("PostgreSQL Admin review decisions", () => {
     expect(pool.calls[1]?.text).toContain("AS ownership_valid");
   });
 
+  it("fails closed when a persisted decision payload hash is not canonical", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.schema_migrations")) {
+        return { rows: [readinessRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_review_decisions")) {
+        return { rows: [decisionRow({ payload_hash: "9".repeat(64) })] };
+      }
+
+      return { rows: [] };
+    });
+
+    await expect(createStore(pool).getCurrentDecision(
+      { campaignId: "campaign-admin-0001", participantId: "participant-admin-0001" },
+      { traceId: "trace-decision-payload-corrupt-read" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
+      field: "payload_hash",
+    });
+  });
+
   it("recovers a PostgreSQL unique serialization race in a fresh transaction", async () => {
     let idempotencyReads = 0;
     const pool = new TranscriptPool((call) => {
@@ -1233,7 +1283,7 @@ describe("PostgreSQL Admin review decisions", () => {
 
     const conflicting = await Promise.allSettled(Array.from({ length: 20 }, (_, index) =>
       store.appendDecision(
-        decisionInput({ payloadHash: sha256(`conflicting-payload-${index}`) }),
+        decisionInput({ note: `Conflicting note ${index}` }),
         project,
         { traceId: `trace-decision-conflict-${index}` },
       )));
@@ -1271,7 +1321,6 @@ describe("PostgreSQL Admin review decisions", () => {
       store.appendDecision(
         decisionInput({
           idempotencyKeyHash: sha256(`decision-key-${index}`),
-          payloadHash: sha256(`decision-payload-${index}`),
         }),
         project,
         { traceId: `trace-decision-version-${index}` },
@@ -1281,6 +1330,9 @@ describe("PostgreSQL Admin review decisions", () => {
     expect(differentKeys.map(({ record }) => record.version).sort((left, right) => left - right)).toEqual(
       Array.from({ length: 20 }, (_, index) => index + 2),
     );
+    expect(new Set(differentKeys.map(({ record }) => record.payloadHash))).toEqual(new Set([
+      deriveAdminReviewDecisionPayloadHash(decisionInput()),
+    ]));
     expect(pool.maxActiveLockHolders).toBe(1);
     expect(pool.release).toHaveBeenCalledTimes(80);
   });
@@ -2094,10 +2146,51 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       [campaignA.campaignId, campaignA.participantId],
     );
     expect(Number(afterSameKey.rows[0]?.count)).toBe(1);
+    const persistedDecision = sameKey[0]!.record;
+    expect(persistedDecision.payloadHash).toBe(
+      deriveAdminReviewDecisionPayloadHash(decisionInput()),
+    );
+
+    await databasePool.query(
+      "ALTER TABLE campaign_os.campaign_review_decisions DISABLE TRIGGER campaign_review_decisions_append_only",
+    );
+    try {
+      await databasePool.query(
+        "UPDATE campaign_os.campaign_review_decisions SET payload_hash = $1 WHERE id = $2",
+        ["9".repeat(64), persistedDecision.id],
+      );
+    } finally {
+      await databasePool.query(
+        "ALTER TABLE campaign_os.campaign_review_decisions ENABLE TRIGGER campaign_review_decisions_append_only",
+      );
+    }
+    try {
+      await expect(store.getCurrentDecision(
+        { campaignId: campaignA.campaignId, participantId: campaignA.participantId },
+        { traceId: "trace-real-decision-payload-corrupt" },
+      )).rejects.toMatchObject({
+        code: "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
+        field: "payload_hash",
+      });
+    } finally {
+      await databasePool.query(
+        "ALTER TABLE campaign_os.campaign_review_decisions DISABLE TRIGGER campaign_review_decisions_append_only",
+      );
+      try {
+        await databasePool.query(
+          "UPDATE campaign_os.campaign_review_decisions SET payload_hash = $1 WHERE id = $2",
+          [persistedDecision.payloadHash, persistedDecision.id],
+        );
+      } finally {
+        await databasePool.query(
+          "ALTER TABLE campaign_os.campaign_review_decisions ENABLE TRIGGER campaign_review_decisions_append_only",
+        );
+      }
+    }
 
     const conflicts = await Promise.allSettled(Array.from({ length: 20 }, (_, index) =>
       store.appendDecision(
-        decisionInput({ payloadHash: sha256(`real-conflict-${index}`) }),
+        decisionInput({ note: `Real conflicting note ${index}` }),
         async () => snapshotProjection(),
         { traceId: `trace-real-decision-conflict-${index}` },
       )));
@@ -2110,7 +2203,6 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       store.appendDecision(
         decisionInput({
           idempotencyKeyHash: sha256(`real-key-${index}`),
-          payloadHash: sha256(`real-payload-${index}`),
         }),
         async () => snapshotProjection(),
         { traceId: `trace-real-decision-version-${index}` },
@@ -2124,7 +2216,6 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     await expect(store.appendDecision(
       decisionInput({
         idempotencyKeyHash: sha256("real-projector-fault"),
-        payloadHash: sha256("real-projector-fault-payload"),
       }),
       async () => {
         throw new Error("private projector failure");
@@ -2164,7 +2255,6 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       campaignId: campaignB.campaignId,
       idempotencyKeyHash: sha256("real-lock-and-drift-key"),
       participantId: campaignB.participantId,
-      payloadHash: sha256("real-lock-and-drift-payload"),
     });
     const projection = snapshotProjection({
       manifest: {
@@ -2269,7 +2359,6 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       campaignId: campaignB.campaignId,
       idempotencyKeyHash: sha256("real-external-race-key"),
       participantId: campaignB.participantId,
-      payloadHash: sha256("real-external-race-payload"),
     });
     const projection = snapshotProjection({
       manifest: {
@@ -2312,7 +2401,7 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
           input.operatorSubject,
           input.operatorRole,
           input.idempotencyKeyHash,
-          input.payloadHash,
+          deriveAdminReviewDecisionPayloadHash(input),
           "trace-real-external-winner",
         ],
       );
@@ -2523,7 +2612,6 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
 
     const commitInput = decisionInput({
       idempotencyKeyHash: sha256("real-commit-fault-key"),
-      payloadHash: sha256("real-commit-fault-payload"),
     });
     const commitFault = createFaultStore("commit");
     await expect(commitFault.store.appendDecision(
@@ -2539,7 +2627,6 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
 
     const rollbackInput = decisionInput({
       idempotencyKeyHash: sha256("real-rollback-fault-key"),
-      payloadHash: sha256("real-rollback-fault-payload"),
     });
     const rollbackFault = createFaultStore("rollback");
     await expect(rollbackFault.store.appendDecision(

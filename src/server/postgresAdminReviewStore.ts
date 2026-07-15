@@ -6,6 +6,7 @@ import {
   ADMIN_REVIEW_MAX_LIST_LIMIT,
   ADMIN_REVIEW_MIGRATION_ID,
   AdminReviewStoreError,
+  deriveAdminReviewDecisionPayloadHash,
   type AdminExportArtifactContent,
   type AdminExportArtifactDetail,
   type AdminExportArtifactInput,
@@ -625,7 +626,7 @@ const mapDecisionRow = (value: unknown): AdminReviewDecisionRecord => {
     return rowError("snapshot_version");
   }
 
-  return {
+  const record: AdminReviewDecisionRecord = {
     campaignId: decodeString(row, "campaign_id", IDENTIFIER_MAX_LENGTH),
     decidedAt: decodeTimestamp(row, "decided_at"),
     decision: decodeEnum(row, "decision", ["approved", "rejected", "needs_review"] as const),
@@ -644,6 +645,21 @@ const mapDecisionRow = (value: unknown): AdminReviewDecisionRecord => {
     version: decodeInteger(row, "version", 1),
     walletAddress: decodeString(row, "wallet_address", SUBJECT_MAX_LENGTH),
   };
+
+  if (record.payloadHash !== deriveAdminReviewDecisionPayloadHash({
+    campaignId: record.campaignId,
+    decision: record.decision,
+    expectedSnapshotFingerprint: record.snapshotFingerprint,
+    note: record.note,
+    operatorRole: record.operatorRole,
+    operatorSubject: record.operatorSubject,
+    participantId: record.participantId,
+    reasonCode: record.reasonCode,
+  })) {
+    return rowError("payload_hash");
+  }
+
+  return record;
 };
 
 const validateArtifactMetadataIntegrity = (artifact: AdminExportArtifactMetadata) => {
@@ -915,7 +931,6 @@ const validateDecisionInput = (
     traceId,
   );
   validateSha256(input.idempotencyKeyHash, "idempotencyKeyHash", operation, traceId);
-  validateSha256(input.payloadHash, "payloadHash", operation, traceId);
   validateBoundedString(
     input.operatorSubject,
     "operatorSubject",
@@ -1644,7 +1659,6 @@ export const createPostgresAdminReviewStore = (
       record.campaignId !== input.campaignId
       || record.participantId !== input.participantId
       || record.idempotencyKeyHash !== input.idempotencyKeyHash
-      || record.payloadHash !== input.payloadHash
       || record.decision !== input.decision
       || record.snapshotFingerprint !== input.expectedSnapshotFingerprint
       || record.reasonCode !== input.reasonCode
@@ -1698,6 +1712,7 @@ export const createPostgresAdminReviewStore = (
     const operation = "appendDecision" as const;
     const traceId = prepare(operation, context);
     validateDecisionInput(input, operation, traceId);
+    const payloadHash = deriveAdminReviewDecisionPayloadHash(input);
     if (typeof projectSnapshot !== "function") {
       throw storeError(
         "ADMIN_REVIEW_STORE_ARGUMENT_INVALID",
@@ -1955,7 +1970,7 @@ export const createPostgresAdminReviewStore = (
           input.operatorSubject,
           input.operatorRole,
           input.idempotencyKeyHash,
-          input.payloadHash,
+          payloadHash,
           traceId,
         ],
       );
@@ -2000,7 +2015,7 @@ export const createPostgresAdminReviewStore = (
         || record.version !== currentVersion + 1
         || record.snapshotFingerprint !== projection.fingerprint
         || record.idempotencyKeyHash !== input.idempotencyKeyHash
-        || record.payloadHash !== input.payloadHash
+        || record.payloadHash !== payloadHash
         || record.traceId !== traceId
         || record.decision !== input.decision
         || record.reasonCode !== input.reasonCode

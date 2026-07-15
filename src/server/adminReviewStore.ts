@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+
 export const ADMIN_REVIEW_MIGRATION_ID = "0002_admin_review_export";
 export const ADMIN_REVIEW_SNAPSHOT_VERSION = "review-snapshot-v1";
+export const ADMIN_REVIEW_DECISION_PAYLOAD_VERSION = "review-decision-payload-v1";
 export const ADMIN_ARTIFACT_SOURCE_VERSION = "artifact-source-v1";
 export const ADMIN_REVIEW_MAX_ARTIFACT_ROWS = 5_000;
 export const ADMIN_REVIEW_MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
@@ -124,18 +127,40 @@ export type AdminReviewSnapshotProjector = (
   rows: AdminReviewSnapshotRows,
 ) => AdminReviewSnapshotProjection | Promise<AdminReviewSnapshotProjection>;
 
-export interface AdminReviewDecisionInput {
+export interface AdminReviewDecisionPayload {
   campaignId: string;
   decision: AdminReviewDecisionValue;
   expectedSnapshotFingerprint: string;
-  idempotencyKeyHash: string;
   note?: string;
   operatorRole: AdminOperatorRole;
   operatorSubject: string;
   participantId: string;
-  payloadHash: string;
   reasonCode: string;
 }
+
+export interface AdminReviewDecisionInput extends AdminReviewDecisionPayload {
+  idempotencyKeyHash: string;
+}
+
+export const encodeAdminReviewDecisionPayload = (
+  payload: AdminReviewDecisionPayload,
+): string => JSON.stringify({
+  campaignId: payload.campaignId,
+  decision: payload.decision,
+  expectedSnapshotFingerprint: payload.expectedSnapshotFingerprint,
+  note: payload.note ?? null,
+  operatorRole: payload.operatorRole,
+  operatorSubject: payload.operatorSubject,
+  participantId: payload.participantId,
+  reasonCode: payload.reasonCode,
+  version: ADMIN_REVIEW_DECISION_PAYLOAD_VERSION,
+});
+
+export const deriveAdminReviewDecisionPayloadHash = (
+  payload: AdminReviewDecisionPayload,
+): string => createHash("sha256")
+  .update(encodeAdminReviewDecisionPayload(payload), "utf8")
+  .digest("hex");
 
 export interface AdminReviewDecisionRecord {
   campaignId: string;
