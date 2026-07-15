@@ -1,3 +1,17 @@
+import {
+  TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT,
+  TASK_VERIFICATION_MAX_OWNERSHIP_ATTEMPTS,
+  TASK_VERIFICATION_MAX_REVISION,
+  type TaskVerificationEvidenceSource,
+} from "./taskVerification";
+import { validateProviderHttpVerificationBindingCompatibility } from "./providerHttpRuntimeRegistry";
+import type {
+  ProviderHttpBindingCompatibilityInput,
+  ProviderHttpProviderFamily,
+} from "./providerHttpRuntimeTypes";
+
+export { TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT };
+
 export const TASK_VERIFICATION_ENABLEMENT_ENV =
   "CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT";
 export const TASK_VERIFICATION_BINDINGS_JSON_ENV =
@@ -17,16 +31,23 @@ export const TASK_VERIFICATION_MAX_BINDINGS = 32;
 export const TASK_VERIFICATION_CONFIG_JSON_MAX_BYTES = 65_536;
 export const TASK_VERIFICATION_BINDING_ID_MAX_LENGTH = 64;
 export const TASK_VERIFICATION_ENV_KEY_MAX_LENGTH = 128;
+export const TASK_VERIFICATION_PROVIDER_REFERENCE_MAX_LENGTH = 160;
 export const TASK_VERIFICATION_TIMEOUT_MS_MIN = 100;
-export const TASK_VERIFICATION_TIMEOUT_MS_MAX = 30_000;
+export const TASK_VERIFICATION_TIMEOUT_MS_MAX = 10_000;
+export const TASK_VERIFICATION_DEFAULT_TIMEOUT_MS = 2_500;
 export const TASK_VERIFICATION_MAX_ATTEMPTS_MIN = 1;
-export const TASK_VERIFICATION_MAX_ATTEMPTS_MAX = 5;
+export const TASK_VERIFICATION_MAX_ATTEMPTS_MAX =
+  TASK_VERIFICATION_MAX_OWNERSHIP_ATTEMPTS;
+export const TASK_VERIFICATION_DEFAULT_MAX_ATTEMPTS =
+  TASK_VERIFICATION_MAX_OWNERSHIP_ATTEMPTS;
 export const TASK_VERIFICATION_RESPONSE_MAX_BYTES_MIN = 1_024;
-export const TASK_VERIFICATION_RESPONSE_MAX_BYTES_MAX = 1_048_576;
+export const TASK_VERIFICATION_RESPONSE_MAX_BYTES_MAX = 256 * 1024;
+export const TASK_VERIFICATION_DEFAULT_RESPONSE_MAX_BYTES = 256 * 1024;
 
 export type TaskVerificationEnvironment = "local" | "stage" | "production";
 export type TaskVerificationType = "ON_CHAIN" | "DAPP_API";
 export type TaskVerificationConfigStatus = "disabled" | "invalid" | "ready";
+export type TaskVerificationDegradationPolicy = "blocked" | "manual_review" | "pending";
 
 export type TaskVerificationConfigDiagnosticCode =
   | "TASK_VERIFICATION_ENABLEMENT_INVALID"
@@ -45,19 +66,45 @@ export type TaskVerificationConfigDiagnosticCode =
   | "TASK_VERIFICATION_MAX_ATTEMPTS_INVALID"
   | "TASK_VERIFICATION_RESPONSE_LIMIT_INVALID"
   | "TASK_VERIFICATION_MATERIAL_MISSING"
-  | "TASK_VERIFICATION_ENDPOINT_POLICY_INVALID";
+  | "TASK_VERIFICATION_ENDPOINT_POLICY_INVALID"
+  | "TASK_VERIFICATION_BINDING_ENABLEMENT_INVALID"
+  | "TASK_VERIFICATION_BINDING_REVISION_INVALID"
+  | "TASK_VERIFICATION_DEGRADATION_POLICY_INVALID"
+  | "TASK_VERIFICATION_EVIDENCE_SOURCE_INVALID"
+  | "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"
+  | "TASK_VERIFICATION_REGISTRY_INCOMPATIBLE"
+  | "TASK_VERIFICATION_STRATEGY_CONFLICT";
 
 export interface TaskVerificationBinding {
-  readonly bodyEnvKey: string;
-  readonly credentialEnvKey: string;
+  readonly bodyEnvKey?: string;
+  readonly credentialEnvKey?: string;
+  readonly degradationPolicy: TaskVerificationDegradationPolicy;
+  readonly enabled: boolean;
   readonly endpointEnvKey: string;
-  readonly headerEnvKey: string;
+  readonly endpointId: string;
+  readonly evidenceSource: TaskVerificationEvidenceSource;
+  readonly headerEnvKey?: string;
   readonly id: string;
   readonly maxAttempts: number;
   readonly maxResponseBytes: number;
+  readonly providerFamily: ProviderHttpProviderFamily;
+  readonly providerGroupId: string;
+  readonly requestMappingId: string;
+  readonly responseMappingId: string;
+  readonly revision: number;
   readonly timeoutMs: number;
   readonly verificationType: TaskVerificationType;
 }
+
+export type TaskVerificationBindingResolution =
+  | Readonly<{ binding: TaskVerificationBinding; status: "resolved" }>
+  | Readonly<{
+    diagnosticCode:
+      | "TASK_VERIFICATION_BINDING_DISABLED"
+      | "TASK_VERIFICATION_BINDING_NOT_FOUND"
+      | "TASK_VERIFICATION_BINDING_TYPE_MISMATCH";
+    status: "disabled" | "not_found" | "type_mismatch";
+  }>;
 
 export interface TaskVerificationConfigDiagnostic {
   readonly code: TaskVerificationConfigDiagnosticCode;
@@ -70,14 +117,31 @@ export interface TaskVerificationConfig {
   readonly bindings: readonly TaskVerificationBinding[];
   readonly diagnostics: readonly TaskVerificationConfigDiagnostic[];
   readonly enabled: boolean;
+  readonly environment: TaskVerificationEnvironment;
+  readonly externalDispatchLimit: typeof TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT;
   readonly getBinding: (id: string) => TaskVerificationBinding | undefined;
+  readonly hasLiveBindings: boolean;
+  readonly resolveBinding: (
+    id: string,
+    verificationType: TaskVerificationType,
+  ) => TaskVerificationBindingResolution;
   readonly status: TaskVerificationConfigStatus;
   readonly valid: boolean;
 }
 
+export interface TaskVerificationConfigSummary {
+  readonly bindingCount: number;
+  readonly bindingIds: readonly string[];
+  readonly diagnosticCodes: readonly TaskVerificationConfigDiagnosticCode[];
+  readonly enabledBindingCount: number;
+  readonly environment: TaskVerificationEnvironment;
+  readonly externalDispatchLimit: typeof TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT;
+  readonly status: TaskVerificationConfigStatus;
+}
+
 export interface TaskVerificationConfigInput {
   readonly bindingsJson?: string;
-  readonly enablement?: string;
+  readonly enablement?: string | number | boolean;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly environment: TaskVerificationEnvironment;
   readonly jsonParser?: (source: string) => unknown;
@@ -86,22 +150,70 @@ export interface TaskVerificationConfigInput {
 const bindingFields = Object.freeze([
   "bodyEnvKey",
   "credentialEnvKey",
+  "degradationPolicy",
+  "enabled",
   "endpointEnvKey",
+  "endpointId",
+  "evidenceSource",
   "headerEnvKey",
   "id",
   "maxAttempts",
   "maxResponseBytes",
+  "providerFamily",
+  "providerGroupId",
+  "requestMappingId",
+  "responseMappingId",
+  "revision",
   "timeoutMs",
   "verificationType",
 ] as const satisfies readonly (keyof TaskVerificationBinding)[]);
 const bindingFieldSet = new Set<string>(bindingFields);
+const requiredBindingFields = Object.freeze([
+  "endpointEnvKey",
+  "endpointId",
+  "evidenceSource",
+  "id",
+  "providerFamily",
+  "providerGroupId",
+  "requestMappingId",
+  "responseMappingId",
+  "verificationType",
+] as const satisfies readonly (keyof TaskVerificationBinding)[]);
+const providerFamilies = Object.freeze([
+  "aefinder",
+  "aelfscan",
+  "ai-provider",
+  "awaken",
+  "daipp",
+  "ebridge",
+  "forecast",
+  "forest-schrodinger",
+  "pay",
+  "portfolio",
+  "social-api",
+  "tmrwdao",
+] as const satisfies readonly ProviderHttpProviderFamily[]);
+const providerFamilySet = new Set<ProviderHttpProviderFamily>(providerFamilies);
+const evidenceSourceSet = new Set<TaskVerificationEvidenceSource>([
+  "AEFINDER",
+  "AELFSCAN",
+  "DAPP_API",
+]);
 
 const diagnosticMessages: Readonly<Record<TaskVerificationConfigDiagnosticCode, string>> =
   Object.freeze({
     TASK_VERIFICATION_ENABLEMENT_INVALID:
       "Task verification enablement is invalid.",
+    TASK_VERIFICATION_BINDING_ENABLEMENT_INVALID:
+      "Task verification binding enablement is invalid.",
+    TASK_VERIFICATION_BINDING_REVISION_INVALID:
+      "Task verification binding revision is invalid.",
+    TASK_VERIFICATION_DEGRADATION_POLICY_INVALID:
+      "Task verification degradation policy is invalid.",
     TASK_VERIFICATION_ENDPOINT_POLICY_INVALID:
       "Task verification endpoint policy is invalid.",
+    TASK_VERIFICATION_EVIDENCE_SOURCE_INVALID:
+      "Task verification evidence source is invalid.",
     TASK_VERIFICATION_ENTRY_LIMIT_EXCEEDED:
       "Task verification binding count exceeds the allowed limit.",
     TASK_VERIFICATION_ENVIRONMENT_INVALID:
@@ -124,10 +236,16 @@ const diagnosticMessages: Readonly<Record<TaskVerificationConfigDiagnosticCode, 
       "Task verification attempt policy is invalid.",
     TASK_VERIFICATION_RESPONSE_LIMIT_INVALID:
       "Task verification response limit is invalid.",
+    TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID:
+      "Task verification provider reference is invalid.",
+    TASK_VERIFICATION_REGISTRY_INCOMPATIBLE:
+      "Task verification binding is incompatible with the provider registry.",
     TASK_VERIFICATION_SCHEMA_INVALID:
       "Task verification binding schema is invalid.",
     TASK_VERIFICATION_TIMEOUT_INVALID:
       "Task verification timeout policy is invalid.",
+    TASK_VERIFICATION_STRATEGY_CONFLICT:
+      "Task verification strategy tuple must be unique.",
     TASK_VERIFICATION_TYPE_UNSUPPORTED:
       "Task verification type is unsupported.",
     TASK_VERIFICATION_UNKNOWN_FIELD:
@@ -165,6 +283,7 @@ const createDiagnostic = (
 
 const createConfig = (
   status: TaskVerificationConfigStatus,
+  environment: TaskVerificationEnvironment,
   bindings: readonly TaskVerificationBinding[] = [],
   diagnostics: readonly TaskVerificationConfigDiagnostic[] = [],
 ): TaskVerificationConfig => {
@@ -174,23 +293,58 @@ const createConfig = (
     frozenBindings.map((entry) => [entry.id, entry] as const),
   );
   const getBinding = Object.freeze((id: string) => bindingById.get(id));
+  const resolveBinding = Object.freeze((
+    id: string,
+    verificationType: TaskVerificationType,
+  ): TaskVerificationBindingResolution => {
+    const binding = bindingById.get(id);
+
+    if (!binding) {
+      return Object.freeze({
+        diagnosticCode: "TASK_VERIFICATION_BINDING_NOT_FOUND" as const,
+        status: "not_found" as const,
+      });
+    }
+
+    if (!binding.enabled) {
+      return Object.freeze({
+        diagnosticCode: "TASK_VERIFICATION_BINDING_DISABLED" as const,
+        status: "disabled" as const,
+      });
+    }
+
+    if (binding.verificationType !== verificationType) {
+      return Object.freeze({
+        diagnosticCode: "TASK_VERIFICATION_BINDING_TYPE_MISMATCH" as const,
+        status: "type_mismatch" as const,
+      });
+    }
+
+    return Object.freeze({ binding, status: "resolved" as const });
+  });
 
   return Object.freeze({
     bindings: frozenBindings,
     diagnostics: frozenDiagnostics,
     enabled: status === "ready",
+    environment,
+    externalDispatchLimit: TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT,
     getBinding,
+    hasLiveBindings: status === "ready" && frozenBindings.some(({ enabled }) => enabled),
+    resolveBinding,
     status,
     valid: status !== "invalid",
   });
 };
 
-const disabledConfig = () => createConfig("disabled");
+const disabledConfig = (environment: TaskVerificationEnvironment) =>
+  createConfig("disabled", environment);
 
 const invalidConfig = (
   code: TaskVerificationConfigDiagnosticCode,
   field: string,
-) => createConfig("invalid", [], [createDiagnostic(code, field)]);
+  environment: TaskVerificationEnvironment,
+) => createConfig("invalid", environment, [], [createDiagnostic(code, field)]);
 
 const utf8ByteLength = (value: string): number =>
   new TextEncoder().encode(value).byteLength;
@@ -215,6 +369,23 @@ const ownDataValue = (
   }
 
   return descriptor.value;
+};
+
+const optionalDataValue = (
+  record: Record<string, unknown>,
+  field: keyof TaskVerificationBinding,
+): { readonly present: false } | { readonly present: true; readonly value: unknown } => {
+  const descriptor = Object.getOwnPropertyDescriptor(record, field);
+
+  if (!descriptor) {
+    return { present: false };
+  }
+
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    return fail("TASK_VERIFICATION_SCHEMA_INVALID", `bindings[].${field}`);
+  }
+
+  return { present: true, value: descriptor.value };
 };
 
 const normalizeId = (value: unknown): string => {
@@ -254,6 +425,106 @@ const normalizeVerificationType = (value: unknown): TaskVerificationType => {
   return value;
 };
 
+const normalizeEnvironment = (value: unknown): TaskVerificationEnvironment => {
+  if (value !== "local" && value !== "stage" && value !== "production") {
+    return fail("TASK_VERIFICATION_ENVIRONMENT_INVALID", "environment");
+  }
+
+  return value;
+};
+
+const normalizeBindingEnablement = (value: unknown): boolean => {
+  if (typeof value !== "boolean") {
+    return fail(
+      "TASK_VERIFICATION_BINDING_ENABLEMENT_INVALID",
+      "bindings[].enabled",
+    );
+  }
+
+  return value;
+};
+
+const normalizeBindingRevision = (value: unknown): number => {
+  if (
+    typeof value !== "number"
+    || !Number.isSafeInteger(value)
+    || value < 1
+    || value > TASK_VERIFICATION_MAX_REVISION
+  ) {
+    return fail(
+      "TASK_VERIFICATION_BINDING_REVISION_INVALID",
+      "bindings[].revision",
+    );
+  }
+
+  return value;
+};
+
+const normalizeDegradationPolicy = (
+  value: unknown,
+): TaskVerificationDegradationPolicy => {
+  if (value !== "blocked" && value !== "manual_review" && value !== "pending") {
+    return fail(
+      "TASK_VERIFICATION_DEGRADATION_POLICY_INVALID",
+      "bindings[].degradationPolicy",
+    );
+  }
+
+  return value;
+};
+
+const normalizeProviderFamily = (value: unknown): ProviderHttpProviderFamily => {
+  if (
+    typeof value !== "string"
+    || !providerFamilySet.has(value as ProviderHttpProviderFamily)
+  ) {
+    return fail(
+      "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID",
+      "bindings[].providerFamily",
+    );
+  }
+
+  return value as ProviderHttpProviderFamily;
+};
+
+const normalizeProviderReference = (
+  value: unknown,
+  field: "endpointId" | "providerGroupId" | "requestMappingId" | "responseMappingId",
+): string => {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > TASK_VERIFICATION_PROVIDER_REFERENCE_MAX_LENGTH
+    || !/^[a-z0-9][a-z0-9._:-]*$/.test(value)
+  ) {
+    return fail(
+      "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID",
+      `bindings[].${field}`,
+    );
+  }
+
+  return value;
+};
+
+const normalizeEvidenceSource = (
+  value: unknown,
+  verificationType: TaskVerificationType,
+): TaskVerificationEvidenceSource => {
+  if (
+    typeof value !== "string"
+    || !evidenceSourceSet.has(value as TaskVerificationEvidenceSource)
+    || (verificationType === "ON_CHAIN" && value === "DAPP_API")
+    || (verificationType === "DAPP_API" && value !== "DAPP_API")
+  ) {
+    return fail(
+      "TASK_VERIFICATION_EVIDENCE_SOURCE_INVALID",
+      "bindings[].evidenceSource",
+    );
+  }
+
+  return value as TaskVerificationEvidenceSource;
+};
+
 const normalizeBoundedInteger = (
   value: unknown,
   minimum: number,
@@ -273,6 +544,28 @@ const normalizeBoundedInteger = (
   return value;
 };
 
+const normalizeOptionalEnvKey = (
+  record: Record<string, unknown>,
+  field: "bodyEnvKey" | "credentialEnvKey" | "headerEnvKey",
+): string | undefined => {
+  const candidate = optionalDataValue(record, field);
+
+  return candidate.present
+    ? normalizeEnvKey(candidate.value, field)
+    : undefined;
+};
+
+const normalizeOptionalValue = <T>(
+  record: Record<string, unknown>,
+  field: keyof TaskVerificationBinding,
+  fallback: T,
+  normalize: (value: unknown) => T,
+): T => {
+  const candidate = optionalDataValue(record, field);
+
+  return candidate.present ? normalize(candidate.value) : fallback;
+};
+
 const normalizeBinding = (value: unknown): TaskVerificationBinding => {
   if (!isPlainRecord(value)) {
     return fail("TASK_VERIFICATION_SCHEMA_INVALID", "bindings[]");
@@ -284,51 +577,115 @@ const normalizeBinding = (value: unknown): TaskVerificationBinding => {
     return fail("TASK_VERIFICATION_UNKNOWN_FIELD", "bindings[].unknownField");
   }
 
-  if (fields.length !== bindingFields.length) {
-    return fail("TASK_VERIFICATION_SCHEMA_INVALID", "bindings[]");
+  for (const field of requiredBindingFields) {
+    ownDataValue(value, field);
   }
 
+  const verificationType = normalizeVerificationType(
+    ownDataValue(value, "verificationType"),
+  );
+  const bodyEnvKey = normalizeOptionalEnvKey(value, "bodyEnvKey");
+  const credentialEnvKey = normalizeOptionalEnvKey(value, "credentialEnvKey");
+  const headerEnvKey = normalizeOptionalEnvKey(value, "headerEnvKey");
+
   return Object.freeze({
-    bodyEnvKey: normalizeEnvKey(ownDataValue(value, "bodyEnvKey"), "bodyEnvKey"),
-    credentialEnvKey: normalizeEnvKey(
-      ownDataValue(value, "credentialEnvKey"),
-      "credentialEnvKey",
+    ...(bodyEnvKey === undefined ? {} : { bodyEnvKey }),
+    ...(credentialEnvKey === undefined ? {} : { credentialEnvKey }),
+    degradationPolicy: normalizeOptionalValue(
+      value,
+      "degradationPolicy",
+      "manual_review" as const,
+      normalizeDegradationPolicy,
+    ),
+    enabled: normalizeOptionalValue(
+      value,
+      "enabled",
+      false,
+      normalizeBindingEnablement,
     ),
     endpointEnvKey: normalizeEnvKey(
       ownDataValue(value, "endpointEnvKey"),
       "endpointEnvKey",
     ),
-    headerEnvKey: normalizeEnvKey(
-      ownDataValue(value, "headerEnvKey"),
-      "headerEnvKey",
+    endpointId: normalizeProviderReference(
+      ownDataValue(value, "endpointId"),
+      "endpointId",
     ),
+    evidenceSource: normalizeEvidenceSource(
+      ownDataValue(value, "evidenceSource"),
+      verificationType,
+    ),
+    ...(headerEnvKey === undefined ? {} : { headerEnvKey }),
     id: normalizeId(ownDataValue(value, "id")),
-    maxAttempts: normalizeBoundedInteger(
-      ownDataValue(value, "maxAttempts"),
-      TASK_VERIFICATION_MAX_ATTEMPTS_MIN,
-      TASK_VERIFICATION_MAX_ATTEMPTS_MAX,
-      "TASK_VERIFICATION_MAX_ATTEMPTS_INVALID",
+    maxAttempts: normalizeOptionalValue(
+      value,
       "maxAttempts",
+      TASK_VERIFICATION_DEFAULT_MAX_ATTEMPTS,
+      (candidate) => normalizeBoundedInteger(
+        candidate,
+        TASK_VERIFICATION_MAX_ATTEMPTS_MIN,
+        TASK_VERIFICATION_MAX_ATTEMPTS_MAX,
+        "TASK_VERIFICATION_MAX_ATTEMPTS_INVALID",
+        "maxAttempts",
+      ),
     ),
-    maxResponseBytes: normalizeBoundedInteger(
-      ownDataValue(value, "maxResponseBytes"),
-      TASK_VERIFICATION_RESPONSE_MAX_BYTES_MIN,
-      TASK_VERIFICATION_RESPONSE_MAX_BYTES_MAX,
-      "TASK_VERIFICATION_RESPONSE_LIMIT_INVALID",
+    maxResponseBytes: normalizeOptionalValue(
+      value,
       "maxResponseBytes",
+      TASK_VERIFICATION_DEFAULT_RESPONSE_MAX_BYTES,
+      (candidate) => normalizeBoundedInteger(
+        candidate,
+        TASK_VERIFICATION_RESPONSE_MAX_BYTES_MIN,
+        TASK_VERIFICATION_RESPONSE_MAX_BYTES_MAX,
+        "TASK_VERIFICATION_RESPONSE_LIMIT_INVALID",
+        "maxResponseBytes",
+      ),
     ),
-    timeoutMs: normalizeBoundedInteger(
-      ownDataValue(value, "timeoutMs"),
-      TASK_VERIFICATION_TIMEOUT_MS_MIN,
-      TASK_VERIFICATION_TIMEOUT_MS_MAX,
-      "TASK_VERIFICATION_TIMEOUT_INVALID",
+    providerFamily: normalizeProviderFamily(
+      ownDataValue(value, "providerFamily"),
+    ),
+    providerGroupId: normalizeProviderReference(
+      ownDataValue(value, "providerGroupId"),
+      "providerGroupId",
+    ),
+    requestMappingId: normalizeProviderReference(
+      ownDataValue(value, "requestMappingId"),
+      "requestMappingId",
+    ),
+    responseMappingId: normalizeProviderReference(
+      ownDataValue(value, "responseMappingId"),
+      "responseMappingId",
+    ),
+    revision: normalizeOptionalValue(
+      value,
+      "revision",
+      1,
+      normalizeBindingRevision,
+    ),
+    timeoutMs: normalizeOptionalValue(
+      value,
       "timeoutMs",
+      TASK_VERIFICATION_DEFAULT_TIMEOUT_MS,
+      (candidate) => normalizeBoundedInteger(
+        candidate,
+        TASK_VERIFICATION_TIMEOUT_MS_MIN,
+        TASK_VERIFICATION_TIMEOUT_MS_MAX,
+        "TASK_VERIFICATION_TIMEOUT_INVALID",
+        "timeoutMs",
+      ),
     ),
-    verificationType: normalizeVerificationType(
-      ownDataValue(value, "verificationType"),
-    ),
+    verificationType,
   });
 };
+
+const createStrategyTuple = (binding: TaskVerificationBinding): string => [
+  binding.verificationType,
+  binding.providerFamily,
+  binding.providerGroupId,
+  binding.endpointId,
+  binding.requestMappingId,
+  binding.responseMappingId,
+].join("\u0000");
 
 const normalizeBindings = (value: unknown): readonly TaskVerificationBinding[] => {
   if (!Array.isArray(value) || value.length === 0) {
@@ -344,6 +701,7 @@ const normalizeBindings = (value: unknown): readonly TaskVerificationBinding[] =
 
   const bindings: TaskVerificationBinding[] = [];
   const bindingIds = new Set<string>();
+  const strategyTuples = new Set<string>();
 
   for (const rawBinding of value) {
     const normalized = normalizeBinding(rawBinding);
@@ -353,6 +711,13 @@ const normalizeBindings = (value: unknown): readonly TaskVerificationBinding[] =
     }
 
     bindingIds.add(normalized.id);
+    const strategyTuple = createStrategyTuple(normalized);
+
+    if (strategyTuples.has(strategyTuple)) {
+      return fail("TASK_VERIFICATION_STRATEGY_CONFLICT", "bindings[].strategy");
+    }
+
+    strategyTuples.add(strategyTuple);
     bindings.push(normalized);
   }
 
@@ -380,6 +745,41 @@ const parseBindings = (
   }
 
   return normalizeBindings(parsed);
+};
+
+export const toProviderHttpBindingCompatibilityInput = (
+  binding: TaskVerificationBinding,
+): ProviderHttpBindingCompatibilityInput => Object.freeze({
+  binding: Object.freeze({
+    id: binding.id,
+    verificationType: binding.verificationType,
+  }),
+  enabled: binding.enabled,
+  endpoint: Object.freeze({
+    endpointId: binding.endpointId,
+    providerFamily: binding.providerFamily,
+    providerGroupId: binding.providerGroupId,
+    requestMappingId: binding.requestMappingId,
+    responseMappingId: binding.responseMappingId,
+  }),
+});
+
+const validateRegistryCompatibility = (
+  bindings: readonly TaskVerificationBinding[],
+): void => {
+  for (const binding of bindings) {
+    if (!binding.enabled) {
+      continue;
+    }
+
+    const compatibility = validateProviderHttpVerificationBindingCompatibility(
+      toProviderHttpBindingCompatibilityInput(binding),
+    );
+
+    if (compatibility.status !== "compatible") {
+      fail("TASK_VERIFICATION_REGISTRY_INCOMPATIBLE", "bindings[].registry");
+    }
+  }
 };
 
 const isLoopbackHostname = (hostname: string): boolean => {
@@ -444,11 +844,21 @@ const validateMaterialPosture = (
   environment: TaskVerificationEnvironment,
 ): void => {
   for (const binding of bindings) {
+    if (!binding.enabled) {
+      continue;
+    }
+
     const endpoint = readRequiredMaterial(env, binding.endpointEnvKey);
 
-    readRequiredMaterial(env, binding.headerEnvKey);
-    readRequiredMaterial(env, binding.bodyEnvKey);
-    readRequiredMaterial(env, binding.credentialEnvKey);
+    for (const key of [
+      binding.headerEnvKey,
+      binding.bodyEnvKey,
+      binding.credentialEnvKey,
+    ]) {
+      if (key !== undefined) {
+        readRequiredMaterial(env, key);
+      }
+    }
 
     if (!hasSafeEndpointPolicy(endpoint, environment)) {
       fail("TASK_VERIFICATION_ENDPOINT_POLICY_INVALID", "bindings[].endpointEnvKey");
@@ -458,50 +868,71 @@ const validateMaterialPosture = (
 
 const resolveEnabledConfig = (
   input: TaskVerificationConfigInput,
+  environment: TaskVerificationEnvironment,
 ): TaskVerificationConfig => {
-  if (
-    input.environment !== "local"
-    && input.environment !== "stage"
-    && input.environment !== "production"
-  ) {
-    return fail("TASK_VERIFICATION_ENVIRONMENT_INVALID", "environment");
-  }
-
   const source = input.bindingsJson !== undefined
     ? input.bindingsJson
     : input.env[TASK_VERIFICATION_BINDINGS_JSON_ENV];
   const bindings = parseBindings(source, input.jsonParser ?? JSON.parse);
 
-  validateMaterialPosture(bindings, input.env, input.environment);
+  validateRegistryCompatibility(bindings);
+  validateMaterialPosture(bindings, input.env, environment);
 
-  return createConfig("ready", bindings);
+  return createConfig("ready", environment, bindings);
 };
+
+export const createTaskVerificationConfigSummary = (
+  config: TaskVerificationConfig,
+): TaskVerificationConfigSummary => Object.freeze({
+  bindingCount: config.bindings.length,
+  bindingIds: Object.freeze(config.bindings.map(({ id }) => id).sort()),
+  diagnosticCodes: Object.freeze(config.diagnostics.map(({ code }) => code)),
+  enabledBindingCount: config.bindings.filter(({ enabled }) => enabled).length,
+  environment: config.environment,
+  externalDispatchLimit: config.externalDispatchLimit,
+  status: config.status,
+});
 
 export const resolveTaskVerificationConfig = (
   input: TaskVerificationConfigInput,
 ): TaskVerificationConfig => {
+  let environment: TaskVerificationEnvironment = "local";
+
   try {
+    environment = normalizeEnvironment(input.environment);
     const enablement = input.enablement !== undefined
       ? input.enablement
       : input.env[TASK_VERIFICATION_ENABLEMENT_ENV];
 
-    if (enablement === undefined || enablement === "" || enablement === "disabled") {
-      return disabledConfig();
+    if (
+      enablement === undefined
+      || enablement === ""
+      || enablement === "0"
+      || enablement === 0
+      || enablement === false
+      || enablement === "disabled"
+    ) {
+      return disabledConfig(environment);
     }
 
     if (enablement !== TASK_VERIFICATION_APPROVED_ENABLEMENT) {
       return invalidConfig(
         "TASK_VERIFICATION_ENABLEMENT_INVALID",
         TASK_VERIFICATION_ENABLEMENT_ENV,
+        environment,
       );
     }
 
-    return resolveEnabledConfig(input);
+    return resolveEnabledConfig(input, environment);
   } catch (error) {
     if (error instanceof TaskVerificationConfigFailure) {
-      return invalidConfig(error.code, error.field);
+      return invalidConfig(error.code, error.field, environment);
     }
 
-    return invalidConfig("TASK_VERIFICATION_SCHEMA_INVALID", "taskVerificationConfig");
+    return invalidConfig(
+      "TASK_VERIFICATION_SCHEMA_INVALID",
+      "taskVerificationConfig",
+      environment,
+    );
   }
 };

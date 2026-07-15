@@ -5,23 +5,32 @@ import {
   TASK_VERIFICATION_BINDINGS_JSON_ENV,
   TASK_VERIFICATION_CONFIG_JSON_MAX_BYTES,
   TASK_VERIFICATION_CREDENTIAL_ENV_KEY,
+  TASK_VERIFICATION_DEFAULT_MAX_ATTEMPTS,
+  TASK_VERIFICATION_DEFAULT_RESPONSE_MAX_BYTES,
+  TASK_VERIFICATION_DEFAULT_TIMEOUT_MS,
   TASK_VERIFICATION_ENABLEMENT_ENV,
   TASK_VERIFICATION_ENDPOINT_ENV_KEY,
   TASK_VERIFICATION_ENV_KEY_MAX_LENGTH,
+  TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT,
   TASK_VERIFICATION_HEADER_ENV_KEY,
   TASK_VERIFICATION_MAX_ATTEMPTS_MAX,
   TASK_VERIFICATION_MAX_ATTEMPTS_MIN,
   TASK_VERIFICATION_MAX_BINDINGS,
+  TASK_VERIFICATION_PROVIDER_REFERENCE_MAX_LENGTH,
   TASK_VERIFICATION_REQUEST_BODY_ENV_KEY,
   TASK_VERIFICATION_RESPONSE_MAX_BYTES_MAX,
   TASK_VERIFICATION_RESPONSE_MAX_BYTES_MIN,
   TASK_VERIFICATION_TIMEOUT_MS_MAX,
   TASK_VERIFICATION_TIMEOUT_MS_MIN,
+  createTaskVerificationConfigSummary,
   resolveTaskVerificationConfig,
+  toProviderHttpBindingCompatibilityInput,
   type TaskVerificationBinding,
   type TaskVerificationConfigInput,
   type TaskVerificationEnvironment,
 } from "./taskVerificationConfig";
+import { validateProviderHttpVerificationBindingCompatibility } from "./providerHttpRuntimeRegistry";
+import { TASK_VERIFICATION_MAX_REVISION } from "./taskVerification";
 
 const materialEnv = {
   [TASK_VERIFICATION_ENDPOINT_ENV_KEY]: "http://127.0.0.1:4179/verify",
@@ -32,18 +41,50 @@ const materialEnv = {
 
 const binding = (
   overrides: Partial<Record<keyof TaskVerificationBinding, unknown>> = {},
-): Record<string, unknown> => ({
-  bodyEnvKey: TASK_VERIFICATION_REQUEST_BODY_ENV_KEY,
-  credentialEnvKey: TASK_VERIFICATION_CREDENTIAL_ENV_KEY,
-  endpointEnvKey: TASK_VERIFICATION_ENDPOINT_ENV_KEY,
-  headerEnvKey: TASK_VERIFICATION_HEADER_ENV_KEY,
-  id: "aelfscan-mainnet",
-  maxAttempts: 3,
-  maxResponseBytes: 65_536,
-  timeoutMs: 2_500,
-  verificationType: "ON_CHAIN",
-  ...overrides,
-});
+): Record<string, unknown> => {
+  const dappApi = overrides.verificationType === "DAPP_API";
+
+  return {
+    bodyEnvKey: TASK_VERIFICATION_REQUEST_BODY_ENV_KEY,
+    credentialEnvKey: TASK_VERIFICATION_CREDENTIAL_ENV_KEY,
+    degradationPolicy: "manual_review",
+    enabled: true,
+    endpointEnvKey: TASK_VERIFICATION_ENDPOINT_ENV_KEY,
+    endpointId: dappApi
+      ? "dapp-api-verification-status"
+      : "aefinder-aelfscan-indexer-query",
+    evidenceSource: dappApi ? "DAPP_API" : "AELFSCAN",
+    headerEnvKey: TASK_VERIFICATION_HEADER_ENV_KEY,
+    id: "aelfscan-mainnet",
+    maxAttempts: 3,
+    maxResponseBytes: 65_536,
+    providerFamily: dappApi ? "ebridge" : "aefinder",
+    providerGroupId: dappApi ? "dapp-api-adapters" : "aefinder-aelfscan-indexers",
+    requestMappingId: dappApi
+      ? "provider-http-request-map:dapp-api-status-v1"
+      : "provider-http-request-map:on-chain-indexer-v1",
+    responseMappingId: dappApi
+      ? "provider-http-response-map:dapp-api-status-v1"
+      : "provider-http-response-map:on-chain-indexer-v1",
+    revision: 1,
+    timeoutMs: 2_500,
+    verificationType: "ON_CHAIN",
+    ...overrides,
+  };
+};
+
+const disabledShapeOnlyBinding = (index: number): Record<string, unknown> => {
+  const suffix = String(index).padStart(2, "0");
+
+  return binding({
+    enabled: false,
+    endpointId: `shape-only-endpoint-${suffix}`,
+    id: `provider-${suffix}`,
+    providerGroupId: `shape-only-group-${suffix}`,
+    requestMappingId: `provider-http-request-map:shape-only-${suffix}`,
+    responseMappingId: `provider-http-response-map:shape-only-${suffix}`,
+  });
+};
 
 const resolve = ({
   bindings = [binding()],
@@ -110,7 +151,7 @@ describe("task verification binding config", () => {
     }
   });
 
-  it.each([undefined, "", "disabled"]) (
+  it.each([undefined, "", "0", "disabled"]) (
     "keeps verification deny-all for non-enabled syntax %j",
     (enablement) => {
       const input: TaskVerificationConfigInput = {
@@ -133,6 +174,22 @@ describe("task verification binding config", () => {
       });
     },
   );
+
+  it.each([0, false])("keeps verification deny-all for direct switch %j", (enablement) => {
+    const config = resolveTaskVerificationConfig({
+      bindingsJson: JSON.stringify([binding()]),
+      enablement,
+      env: materialEnv,
+      environment: "local",
+    });
+
+    expect(config).toMatchObject({
+      bindings: [],
+      enabled: false,
+      status: "disabled",
+      valid: true,
+    });
+  });
 
   it.each([
     "true",
@@ -167,6 +224,134 @@ describe("task verification binding config", () => {
     expect(config.getBinding("unknown-provider")).toBeUndefined();
   });
 
+  it("pins the public timeout, ownership, response, and dispatch bounds", () => {
+    expect(TASK_VERIFICATION_TIMEOUT_MS_MIN).toBe(100);
+    expect(TASK_VERIFICATION_TIMEOUT_MS_MAX).toBe(10_000);
+    expect(TASK_VERIFICATION_DEFAULT_TIMEOUT_MS).toBe(2_500);
+    expect(TASK_VERIFICATION_MAX_ATTEMPTS_MIN).toBe(1);
+    expect(TASK_VERIFICATION_MAX_ATTEMPTS_MAX).toBe(3);
+    expect(TASK_VERIFICATION_DEFAULT_MAX_ATTEMPTS).toBe(3);
+    expect(TASK_VERIFICATION_RESPONSE_MAX_BYTES_MAX).toBe(256 * 1024);
+    expect(TASK_VERIFICATION_DEFAULT_RESPONSE_MAX_BYTES).toBe(256 * 1024);
+    expect(TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT).toBe(1);
+  });
+
+  it("defaults each omitted binding switch and policy to a deny-all safe posture", () => {
+    const descriptor = binding();
+    delete descriptor.enabled;
+    delete descriptor.maxAttempts;
+    delete descriptor.maxResponseBytes;
+    delete descriptor.timeoutMs;
+    delete descriptor.degradationPolicy;
+    delete descriptor.revision;
+    delete descriptor.bodyEnvKey;
+    delete descriptor.headerEnvKey;
+    delete descriptor.credentialEnvKey;
+
+    const config = resolve({ bindings: [descriptor], env: {} });
+    const normalized = config.getBinding("aelfscan-mainnet");
+
+    expect(config.status).toBe("ready");
+    expect(config.hasLiveBindings).toBe(false);
+    expect(normalized).toMatchObject({
+      degradationPolicy: "manual_review",
+      enabled: false,
+      maxAttempts: TASK_VERIFICATION_DEFAULT_MAX_ATTEMPTS,
+      maxResponseBytes: TASK_VERIFICATION_DEFAULT_RESPONSE_MAX_BYTES,
+      revision: 1,
+      timeoutMs: TASK_VERIFICATION_DEFAULT_TIMEOUT_MS,
+    });
+    expect(config.resolveBinding("aelfscan-mainnet", "ON_CHAIN")).toMatchObject({
+      diagnosticCode: "TASK_VERIFICATION_BINDING_DISABLED",
+      status: "disabled",
+    });
+  });
+
+  it.each([
+    ["binding enablement", { enabled: "true" }, "TASK_VERIFICATION_BINDING_ENABLEMENT_INVALID"],
+    ["binding revision zero", { revision: 0 }, "TASK_VERIFICATION_BINDING_REVISION_INVALID"],
+    ["binding revision over max", { revision: TASK_VERIFICATION_MAX_REVISION + 1 }, "TASK_VERIFICATION_BINDING_REVISION_INVALID"],
+    ["binding revision fractional", { revision: 1.5 }, "TASK_VERIFICATION_BINDING_REVISION_INVALID"],
+    ["degradation policy", { degradationPolicy: "retry" }, "TASK_VERIFICATION_DEGRADATION_POLICY_INVALID"],
+    ["evidence source", { evidenceSource: "RAW_PROVIDER" }, "TASK_VERIFICATION_EVIDENCE_SOURCE_INVALID"],
+    ["provider family", { providerFamily: "unknown-provider" }, "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["provider group", { providerGroupId: "https://private.example/group" }, "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["endpoint ID", { endpointId: "endpoint id" }, "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["request mapping", { requestMappingId: "../request-map" }, "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["response mapping", { responseMappingId: "response-map\u0000secret" }, "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+  ])("rejects invalid %s", (_case, overrides, expectedCode) => {
+    const config = resolve({ bindings: [binding(overrides)] });
+
+    expect(config).toMatchObject({ bindings: [], enabled: false, valid: false });
+    expect(diagnosticCodes(config)).toEqual([expectedCode]);
+  });
+
+  it.each([
+    ["ON_CHAIN", "DAPP_API"],
+    ["DAPP_API", "AEFINDER"],
+    ["DAPP_API", "AELFSCAN"],
+  ])(
+    "rejects evidence source %s/%s mismatches",
+    (verificationType, evidenceSource) => {
+      const config = resolve({
+        bindings: [binding({ evidenceSource, verificationType })],
+      });
+
+      expect(diagnosticCodes(config)).toEqual([
+        "TASK_VERIFICATION_EVIDENCE_SOURCE_INVALID",
+      ]);
+    },
+  );
+
+  it("accepts revision and binding policy boundaries", () => {
+    const config = resolve({
+      bindings: [binding({
+        degradationPolicy: "blocked",
+        revision: TASK_VERIFICATION_MAX_REVISION,
+      })],
+    });
+
+    expect(config.getBinding("aelfscan-mainnet")).toMatchObject({
+      degradationPolicy: "blocked",
+      revision: TASK_VERIFICATION_MAX_REVISION,
+    });
+  });
+
+  it("feeds the normalized safe binding directly into registry compatibility", () => {
+    const config = resolve();
+    const normalized = config.getBinding("aelfscan-mainnet")!;
+    const compatibilityInput = toProviderHttpBindingCompatibilityInput(normalized);
+    const compatibility = validateProviderHttpVerificationBindingCompatibility(
+      compatibilityInput,
+    );
+
+    expect(compatibility).toMatchObject({
+      bindingId: "aelfscan-mainnet",
+      diagnosticCodes: [],
+      status: "compatible",
+      verificationType: "ON_CHAIN",
+    });
+    expect(config.resolveBinding("aelfscan-mainnet", "ON_CHAIN")).toEqual({
+      binding: normalized,
+      status: "resolved",
+    });
+    expect(config.resolveBinding("aelfscan-mainnet", "DAPP_API")).toMatchObject({
+      diagnosticCode: "TASK_VERIFICATION_BINDING_TYPE_MISMATCH",
+      status: "type_mismatch",
+    });
+    expect(createTaskVerificationConfigSummary(config)).toEqual({
+      bindingCount: 1,
+      bindingIds: ["aelfscan-mainnet"],
+      diagnosticCodes: [],
+      enabledBindingCount: 1,
+      environment: "local",
+      externalDispatchLimit: 1,
+      status: "ready",
+    });
+    expect(JSON.stringify(compatibilityInput)).not.toContain("CAMPAIGN_OS_");
+    expect(JSON.stringify(createTaskVerificationConfigSummary(config))).not.toContain("EnvKey");
+  });
+
   it("reads explicit input before the supplied env adapter", () => {
     const config = resolveTaskVerificationConfig({
       bindingsJson: JSON.stringify([binding()]),
@@ -189,19 +374,19 @@ describe("task verification binding config", () => {
     ["empty enabled registry", [], "TASK_VERIFICATION_SCHEMA_INVALID"],
     ["primitive entry", ["provider"], "TASK_VERIFICATION_SCHEMA_INVALID"],
     ["null entry", [null], "TASK_VERIFICATION_SCHEMA_INVALID"],
-    ["missing field", [{ ...binding(), bodyEnvKey: undefined }], "TASK_VERIFICATION_SCHEMA_INVALID"],
+    ["missing field", [{ ...binding(), endpointEnvKey: undefined }], "TASK_VERIFICATION_SCHEMA_INVALID"],
     ["unknown field", [{ ...binding(), token: "raw-token" }], "TASK_VERIFICATION_UNKNOWN_FIELD"],
   ])("rejects non-exact schema: %s", (_case, bindings, expectedCode) => {
     const normalized = Array.isArray(bindings)
       ? bindings.map((entry) => {
-        if (!entry || typeof entry !== "object" || !("bodyEnvKey" in entry)) {
+        if (!entry || typeof entry !== "object" || !("endpointEnvKey" in entry)) {
           return entry;
         }
 
         const copy = { ...entry } as Record<string, unknown>;
 
-        if (copy.bodyEnvKey === undefined) {
-          delete copy.bodyEnvKey;
+        if (copy.endpointEnvKey === undefined) {
+          delete copy.endpointEnvKey;
         }
 
         return copy;
@@ -288,6 +473,28 @@ describe("task verification binding config", () => {
     expect(resolve({ bindings: [binding({ id })] }).getBinding(id)?.id).toBe(id);
   });
 
+  it("bounds provider references inclusively", () => {
+    const exactEndpointId = `a${"b".repeat(
+      TASK_VERIFICATION_PROVIDER_REFERENCE_MAX_LENGTH - 1,
+    )}`;
+    const accepted = resolve({
+      bindings: [binding({ enabled: false, endpointId: exactEndpointId })],
+      env: {},
+    });
+    const rejected = resolve({
+      bindings: [binding({
+        enabled: false,
+        endpointId: `${exactEndpointId}c`,
+      })],
+      env: {},
+    });
+
+    expect(accepted.getBinding("aelfscan-mainnet")?.endpointId).toBe(exactEndpointId);
+    expect(diagnosticCodes(rejected)).toEqual([
+      "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID",
+    ]);
+  });
+
   it.each([
     ["empty", ""],
     ["lowercase", "CAMPAIGN_OS_task_endpoint"],
@@ -356,8 +563,10 @@ describe("task verification binding config", () => {
   });
 
   it("accepts exactly 32 entries and rejects the 33rd before partial activation", () => {
-    const atLimit = Array.from({ length: TASK_VERIFICATION_MAX_BINDINGS }, (_, index) =>
-      binding({ id: `provider-${String(index).padStart(2, "0")}` }));
+    const atLimit = Array.from(
+      { length: TASK_VERIFICATION_MAX_BINDINGS },
+      (_, index) => disabledShapeOnlyBinding(index),
+    );
 
     expect(resolve({ bindings: atLimit }).bindings).toHaveLength(TASK_VERIFICATION_MAX_BINDINGS);
 
@@ -429,6 +638,47 @@ describe("task verification binding config", () => {
 
     expect(diagnosticCodes(invalidTail)).toEqual(["TASK_VERIFICATION_TIMEOUT_INVALID"]);
     expect(diagnosticCodes(duplicate)).toEqual(["TASK_VERIFICATION_ID_CONFLICT"]);
+  });
+
+  it("rejects duplicate strategy tuples and enabled unknown mappings atomically", () => {
+    const duplicateStrategy = resolve({
+      bindings: [binding(), binding({ id: "same-strategy-other-id" })],
+    });
+    const unknownMapping = resolve({
+      bindings: [binding({
+        requestMappingId: "provider-http-request-map:unknown-v1",
+        responseMappingId: "provider-http-response-map:unknown-v1",
+      })],
+    });
+
+    expect(duplicateStrategy).toMatchObject({ bindings: [], enabled: false, valid: false });
+    expect(diagnosticCodes(duplicateStrategy)).toEqual([
+      "TASK_VERIFICATION_STRATEGY_CONFLICT",
+    ]);
+    expect(unknownMapping).toMatchObject({ bindings: [], enabled: false, valid: false });
+    expect(diagnosticCodes(unknownMapping)).toEqual([
+      "TASK_VERIFICATION_REGISTRY_INCOMPATIBLE",
+    ]);
+  });
+
+  it("allows disabled shape-only mappings without endpoint material or live compatibility", () => {
+    const config = resolve({
+      bindings: [binding({
+        enabled: false,
+        endpointId: "future-provider-endpoint",
+        requestMappingId: "provider-http-request-map:future-v1",
+        responseMappingId: "provider-http-response-map:future-v1",
+      })],
+      env: {},
+    });
+
+    expect(config).toMatchObject({
+      enabled: true,
+      hasLiveBindings: false,
+      status: "ready",
+      valid: true,
+    });
+    expect(config.getBinding("aelfscan-mainnet")?.enabled).toBe(false);
   });
 
   it.each(["local", "stage"] satisfies TaskVerificationEnvironment[])(
@@ -510,6 +760,34 @@ describe("task verification binding config", () => {
     }
   });
 
+  it("requires only optional material references that are present", () => {
+    const descriptor = binding();
+    delete descriptor.bodyEnvKey;
+    delete descriptor.headerEnvKey;
+    delete descriptor.credentialEnvKey;
+
+    const endpointOnly = resolve({
+      bindings: [descriptor],
+      env: {
+        [TASK_VERIFICATION_ENDPOINT_ENV_KEY]: materialEnv[TASK_VERIFICATION_ENDPOINT_ENV_KEY],
+      },
+    });
+    const missingReferencedHeader = resolve({
+      bindings: [{
+        ...descriptor,
+        headerEnvKey: TASK_VERIFICATION_HEADER_ENV_KEY,
+      }],
+      env: {
+        [TASK_VERIFICATION_ENDPOINT_ENV_KEY]: materialEnv[TASK_VERIFICATION_ENDPOINT_ENV_KEY],
+      },
+    });
+
+    expect(endpointOnly.status).toBe("ready");
+    expect(diagnosticCodes(missingReferencedHeader)).toEqual([
+      "TASK_VERIFICATION_MATERIAL_MISSING",
+    ]);
+  });
+
   it("returns secret-corpus-safe diagnostics with zero material hits", () => {
     const secretCorpus = [
       "raw-token-243",
@@ -581,8 +859,10 @@ describe("task verification binding config", () => {
   });
 
   it("uses exact-ID Map lookup and never exposes the mutable index", () => {
-    const bindings = Array.from({ length: TASK_VERIFICATION_MAX_BINDINGS }, (_, index) =>
-      binding({ id: `provider-${String(index).padStart(2, "0")}` }));
+    const bindings = Array.from(
+      { length: TASK_VERIFICATION_MAX_BINDINGS },
+      (_, index) => disabledShapeOnlyBinding(index),
+    );
     const config = resolve({ bindings });
 
     expect(config.getBinding("provider-00")?.id).toBe("provider-00");
