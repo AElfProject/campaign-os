@@ -623,6 +623,27 @@ describe("Admin review decision canonical payload", () => {
       deriveAdminReviewDecisionPayloadHash(input),
     );
   });
+
+  it("changes the hash for every immutable command identity field", () => {
+    const baseline = deriveAdminReviewDecisionPayloadHash(decisionInput());
+    const mutations: Array<[string, Partial<AdminReviewDecisionPayload>]> = [
+      ["campaignId", { campaignId: "campaign-admin-0002" }],
+      ["decision", { decision: "rejected" }],
+      ["expectedSnapshotFingerprint", { expectedSnapshotFingerprint: "8".repeat(64) }],
+      ["note", { note: "Different note." }],
+      ["operatorRole", { operatorRole: "internal_operator" }],
+      ["operatorSubject", { operatorSubject: "2F4DifferentOperator" }],
+      ["participantId", { participantId: "participant-admin-0002" }],
+      ["reasonCode", { reasonCode: "different_reason" }],
+    ];
+
+    for (const [field, mutation] of mutations) {
+      expect(
+        deriveAdminReviewDecisionPayloadHash(decisionInput(mutation)),
+        field,
+      ).not.toBe(baseline);
+    }
+  });
 });
 
 describe("PostgreSQL Admin review store contract", () => {
