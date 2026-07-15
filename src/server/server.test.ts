@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
+import type { ApiRuntimeResponse, CampaignOsApiRuntime } from "./apiRuntime";
+import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
+import { internalRuntimeError } from "./errors";
 import { apiRuntimeContractRoutes } from "./routes";
 import { startCampaignOsApiServer } from "./server";
 
@@ -92,6 +96,27 @@ const walletAuthHeaders = (
   "x-campaign-os-wallet-address": session.address,
   "x-campaign-os-wallet-source": session.walletSource,
 });
+
+const sha256 = (value: string) =>
+  createHash("sha256").update(value, "utf8").digest("hex");
+
+const startServerWithRuntimeResponse = async (
+  runtimeResponse: ApiRuntimeResponse,
+  allowedCorsOrigins?: string[],
+) => {
+  const runtime: CampaignOsApiRuntime = {
+    close: vi.fn(async () => undefined),
+    handle: vi.fn(async () => runtimeResponse),
+  };
+  const server = await startCampaignOsApiServer({
+    allowedCorsOrigins,
+    logger: false,
+    port: 0,
+    runtimeFactory: () => runtime,
+  });
+
+  return { runtime, server };
+};
 
 describe("Campaign OS API server entrypoint", () => {
   afterEach(() => {
@@ -344,24 +369,218 @@ describe("Campaign OS API server entrypoint", () => {
     });
   });
 
-  it("handles CORS preflight without entering the business runtime", async () => {
-    const server = await startCampaignOsApiServer({ logger: false, port: 0 });
+  it("handles the complete Admin workflow CORS preflight without widening authority", async () => {
+    const runtimeResponse = {
+      body: createSuccessEnvelope({
+        data: { status: "unexpected" },
+        routeCount: apiRuntimeContractRoutes.length,
+        timestamp: "2026-07-15T04:00:00.000Z",
+        traceId: "trace-unexpected-runtime",
+        version: "test",
+      }),
+      headers: { "content-type": "application/json; charset=utf-8" },
+      status: 200,
+    } satisfies ApiRuntimeResponse;
+    const trustedOrigin = "https://admin.campaign-os.test";
+    const { runtime, server } = await startServerWithRuntimeResponse(
+      runtimeResponse,
+      [trustedOrigin],
+    );
+    const decisionPath = "/api/admin/campaigns/campaign-transport/reviews/participant-1/decisions";
 
     try {
-      const response = await fetch(`${server.url}/api/campaigns`, {
+      const response = await fetch(`${server.url}${decisionPath}`, {
         headers: {
+          "access-control-request-headers": [
+            "content-type",
+            "Idempotency-Key",
+            "x-campaign-os-account-type",
+            "x-campaign-os-credential-boundary",
+            "x-campaign-os-proof-status",
+            "x-campaign-os-roles",
+            "x-campaign-os-session-id",
+            "x-campaign-os-trace-id",
+            "x-campaign-os-wallet-address",
+            "x-campaign-os-wallet-source",
+          ].join(", "),
           "access-control-request-method": "POST",
-          origin: "http://localhost:5173",
+          origin: trustedOrigin,
           "x-campaign-os-trace-id": "trace-preflight",
         },
         method: "OPTIONS",
       });
+      const allowedHeaders = response.headers
+        .get("access-control-allow-headers")
+        ?.split(",")
+        .map((header) => header.trim().toLowerCase());
 
       expect(response.status).toBe(204);
       expect(response.headers.get("x-campaign-os-trace-id")).toBe("trace-preflight");
-      expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+      expect(response.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
       expect(response.headers.get("access-control-allow-methods")).toContain("POST");
+      expect(allowedHeaders).toEqual(expect.arrayContaining([
+        "content-type",
+        "idempotency-key",
+        "x-campaign-os-account-type",
+        "x-campaign-os-credential-boundary",
+        "x-campaign-os-proof-status",
+        "x-campaign-os-roles",
+        "x-campaign-os-session-id",
+        "x-campaign-os-trace-id",
+        "x-campaign-os-wallet-address",
+        "x-campaign-os-wallet-source",
+      ]));
+      expect(allowedHeaders).not.toContain("*");
       expect(await response.text()).toBe("");
+      expect(runtime.handle).not.toHaveBeenCalled();
+
+      const denied = await fetch(`${server.url}${decisionPath}`, {
+        headers: {
+          "access-control-request-headers": "Idempotency-Key, x-campaign-os-roles",
+          "access-control-request-method": "POST",
+          origin: "https://untrusted.campaign-os.test",
+          "x-campaign-os-trace-id": "trace-preflight-denied",
+        },
+        method: "OPTIONS",
+      });
+
+      expect(denied.status).toBe(400);
+      expect(denied.headers.get("access-control-allow-origin"))
+        .not.toBe("https://untrusted.campaign-os.test");
+      expect(runtime.handle).not.toHaveBeenCalled();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it.each([
+    {
+      content: "campaignId,participantId,note\r\ncampaign-transport,p-1,caf\u00e9\r\n",
+      fileName: "campaign-transport-winners.csv",
+      format: "csv",
+      mimeType: "text/csv;charset=utf-8",
+    },
+    {
+      content: "{\n  \"campaignId\": \"campaign-transport\",\n  \"rows\": [\n    {\"participantId\": \"p-1\", \"note\": \"caf\u00e9\"}\n  ]\n}\n",
+      fileName: "campaign-transport-winners.json",
+      format: "json",
+      mimeType: "application/json;charset=utf-8",
+    },
+  ])("sends $format artifact bytes and validated download headers unchanged", async ({
+    content,
+    fileName,
+    format,
+    mimeType,
+  }) => {
+    const traceId = `trace-http-download-${format}`;
+    const expectedBytes = Buffer.from(content, "utf8");
+    const runtimeResponse = {
+      body: createSuccessEnvelope({
+        data: {
+          artifactId: `artifact-transport-${format}`,
+          format,
+        },
+        routeCount: apiRuntimeContractRoutes.length,
+        timestamp: "2026-07-15T04:00:00.000Z",
+        traceId,
+        version: "test",
+      }),
+      headers: {
+        "content-disposition": `attachment; filename="${fileName}"`,
+        "content-length": String(expectedBytes.byteLength),
+        "content-type": mimeType,
+        "x-campaign-os-content-sha256": sha256(content),
+        "x-campaign-os-trace-id": traceId,
+      },
+      rawBody: content,
+      status: 200,
+    } satisfies ApiRuntimeResponse;
+    const { runtime, server } = await startServerWithRuntimeResponse(runtimeResponse);
+    const path = `/api/admin/campaigns/campaign-transport/artifacts/artifact-transport-${format}/download`;
+
+    try {
+      const response = await fetch(`${server.url}${path}`);
+      const actualBytes = Buffer.from(await response.arrayBuffer());
+
+      expect(response.status).toBe(200);
+      expect(Buffer.compare(actualBytes, expectedBytes)).toBe(0);
+      expect(response.headers.get("content-type")).toBe(mimeType);
+      expect(response.headers.get("content-disposition"))
+        .toBe(`attachment; filename="${fileName}"`);
+      expect(response.headers.get("x-campaign-os-content-sha256")).toBe(sha256(content));
+      expect(response.headers.get("content-length")).toBe(String(expectedBytes.byteLength));
+      expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
+      expect(runtime.handle).toHaveBeenCalledWith(expect.objectContaining({
+        method: "GET",
+        path,
+      }));
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("does not emit a raw payload attached to a failed runtime response", async () => {
+    const traceId = "trace-http-download-corrupt";
+    const corruptPayload = "corrupt-export-payload-that-must-not-cross-http";
+    const failureBody = createFailureEnvelope({
+      error: internalRuntimeError().body,
+      routeCount: apiRuntimeContractRoutes.length,
+      timestamp: "2026-07-15T04:00:00.000Z",
+      traceId,
+      version: "test",
+    });
+    const runtimeResponse = {
+      body: failureBody,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-campaign-os-trace-id": traceId,
+      },
+      rawBody: corruptPayload,
+      status: 500,
+    } satisfies ApiRuntimeResponse;
+    const { server } = await startServerWithRuntimeResponse(runtimeResponse);
+
+    try {
+      const response = await fetch(
+        `${server.url}/api/admin/campaigns/campaign-transport/artifacts/artifact-corrupt/download`,
+      );
+      const body = await response.text();
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(body).toBe(JSON.stringify(failureBody));
+      expect(body).not.toContain(corruptPayload);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("continues to JSON serialize ordinary runtime responses", async () => {
+    const traceId = "trace-http-json-regression";
+    const responseBody = {
+      data: {
+        campaignId: "campaign-json-regression",
+        status: "DRAFT",
+      },
+      ok: true,
+      traceId,
+    } as const;
+    const runtimeResponse = {
+      body: responseBody,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-campaign-os-trace-id": traceId,
+      },
+      status: 200,
+    } satisfies ApiRuntimeResponse;
+    const { server } = await startServerWithRuntimeResponse(runtimeResponse);
+
+    try {
+      const response = await fetch(`${server.url}/api/campaigns/campaign-json-regression`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(await response.text()).toBe(JSON.stringify(responseBody));
     } finally {
       await server.stop();
     }

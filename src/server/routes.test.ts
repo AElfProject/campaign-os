@@ -210,7 +210,7 @@ describe("Admin API route catalog", () => {
         {
           maxLength: 128,
           minLength: 8,
-          name: "x-campaign-os-idempotency-key",
+          name: "Idempotency-Key",
           required: true,
         },
       ],

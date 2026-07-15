@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
 import { createCampaignOsApiRuntime } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
+import type { ApiRuntimeEnvelope } from "./envelope";
 import { startCampaignOsApiServer } from "./server";
 import {
   createServerRuntimeReadiness,
@@ -142,6 +143,13 @@ const isRuntimeMetadataPath = (path: string | undefined) => {
   return pathname === "/api/health" || pathname === "/api/contracts";
 };
 
+const isLegacyRuntimeEnvelope = (body: unknown): body is ApiRuntimeEnvelope =>
+  typeof body === "object"
+  && body !== null
+  && "runtime" in body
+  && "safety" in body
+  && "timestamp" in body;
+
 const startTestDurableCampaignServer = async (
   durableStoreFilePath: string,
 ): Promise<TestDurableCampaignServer> => {
@@ -182,6 +190,7 @@ const startTestDurableCampaignServer = async (
       path: request.url ?? "/",
     });
     const responseBody = isRuntimeMetadataPath(request.url)
+      && isLegacyRuntimeEnvelope(runtimeResponse.body)
       ? withServerRuntimeReadiness(
         runtimeResponse.body,
         createServerRuntimeReadiness({

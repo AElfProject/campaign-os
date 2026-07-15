@@ -10,6 +10,7 @@ import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectO
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
 import type { NormalizedWalletSession } from "../domain/types";
 import {
+  API_RUNTIME_CLOSE_MAX_DEADLINE_MS,
   createCampaignOsApiRuntime as createCampaignOsApiRuntimeBase,
   type ApiRuntimeResponse,
   type CampaignOsApiRuntime,
@@ -1157,6 +1158,77 @@ const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unkn
 
   return response.body.data as TPayload;
 };
+
+const expectExactKeys = (value: unknown, expectedKeys: readonly string[]) => {
+  expect(value).not.toBeNull();
+  expect(typeof value).toBe("object");
+  expect(Object.keys(value as Record<string, unknown>).sort()).toEqual([...expectedKeys].sort());
+};
+
+const expectAdminSuccessData = <TPayload = unknown>(
+  response: ApiRuntimeResponse<unknown>,
+  status = 200,
+) => {
+  expect(response.status).toBe(status);
+  expect(response.body.ok).toBe(true);
+  expectExactKeys(response.body, ["data", "ok", "traceId"]);
+
+  if (!response.body.ok) {
+    throw new Error("Expected Admin API success envelope.");
+  }
+
+  expect(response.body.traceId).not.toHaveLength(0);
+  return response.body.data as TPayload;
+};
+
+const expectAdminErrorEnvelope = (
+  response: ApiRuntimeResponse<unknown>,
+  status: number,
+) => {
+  expect(response.status).toBe(status);
+  expect(response.body.ok).toBe(false);
+  expectExactKeys(response.body, ["error", "ok", "traceId"]);
+
+  if (response.body.ok) {
+    throw new Error("Expected Admin API error envelope.");
+  }
+
+  expect(typeof response.body.error.message).toBe("string");
+  expectExactKeys(
+    response.body.error,
+    response.body.error.details === undefined
+      ? ["code", "message"]
+      : ["code", "details", "message"],
+  );
+  if (response.body.error.details !== undefined) {
+    expect(Object.keys(response.body.error.details)).toEqual(expect.arrayContaining([]));
+    expect(Object.keys(response.body.error.details).every((key) => [
+      "diagnosticCode",
+      "field",
+      "operation",
+      "reconnectRequired",
+      "retryable",
+      "routeId",
+    ].includes(key))).toBe(true);
+  }
+};
+
+const adminArtifactMetadataKeys = [
+  "artifactId",
+  "campaignId",
+  "contentBytes",
+  "contentHash",
+  "createdAt",
+  "creatorRole",
+  "creatorSubject",
+  "fileName",
+  "format",
+  "mimeType",
+  "rowCount",
+  "sourceFingerprint",
+  "sourceVersion",
+  "traceId",
+] as const;
 
 const projectOwnerAuthHeaders = (
   ownerAddress: string,
@@ -8490,6 +8562,9 @@ describe("Campaign OS API runtime", () => {
     ]) {
       expectNoForbiddenResponseKeys(response.body);
       expect(response.body.traceId).not.toHaveLength(0);
+      if (!response.body.runtime) {
+        throw new Error("Expected legacy API runtime metadata.");
+      }
       expect(response.headers["content-type"]).toBe("application/json; charset=utf-8");
       expect(response.body.runtime.mode).toBe("local_seeded");
       expect(response.body.safety).toMatchObject({
@@ -8884,6 +8959,7 @@ describe("Campaign OS API runtime", () => {
         },
         status: 404,
       });
+      expectAdminErrorEnvelope(response, 404);
       expect(adminReviewPoolFactory).not.toHaveBeenCalled();
       await runtime.close();
     });
@@ -8918,6 +8994,7 @@ describe("Campaign OS API runtime", () => {
         },
         status: 503,
       });
+      expectAdminErrorEnvelope(response, 503);
       expect(readSnapshot).not.toHaveBeenCalled();
       await runtime.close();
     });
@@ -8961,10 +9038,9 @@ describe("Campaign OS API runtime", () => {
         },
         status: 403,
       });
-      expect({ ...known.body, timestamp: "<timestamp>" }).toEqual({
-        ...unknown.body,
-        timestamp: "<timestamp>",
-      });
+      expectAdminErrorEnvelope(known, 403);
+      expectAdminErrorEnvelope(unknown, 403);
+      expect(known.body).toEqual(unknown.body);
       expect(readSnapshot).not.toHaveBeenCalled();
       await runtime.close();
     });
@@ -8985,7 +9061,24 @@ describe("Campaign OS API runtime", () => {
         path: "/api/admin/campaigns/campaign-admin-runtime/reviews?limit=20",
       });
 
-      expect(expectSuccessData<unknown[]>(response)).toEqual([]);
+      const data = expectAdminSuccessData<{
+        campaignId: string;
+        items: unknown[];
+        summary: Record<string, number>;
+      }>(response);
+
+      expect(data).toEqual({
+        campaignId: "campaign-admin-runtime",
+        items: [],
+        summary: {
+          approvedCurrent: 0,
+          needsReviewCurrent: 0,
+          pendingReview: 0,
+          rejectedCurrent: 0,
+          stale: 0,
+          total: 0,
+        },
+      });
       expect(readSnapshot).toHaveBeenCalledTimes(1);
       expect(readSnapshot).toHaveBeenCalledWith(
         { campaignId: "campaign-admin-runtime" },
@@ -9038,8 +9131,66 @@ describe("Campaign OS API runtime", () => {
         path: "/api/admin/campaigns?limit=10",
       });
 
-      expect(expectSuccessData<Array<{ campaignId: string; taskCount: number }>>(response))
+      const data = expectAdminSuccessData<{
+        campaigns: Array<{ campaignId: string; taskCount: number }>;
+        repository: Record<string, unknown>;
+      }>(response);
+
+      expect(data.campaigns)
         .toEqual([expect.objectContaining({ campaignId: visible.id, taskCount: 1 })]);
+      expect(data.repository).toEqual({
+        adapterId: "campaign-db-postgresql-adapter",
+        durable: true,
+        repositoryId: "campaign-db-postgresql-runtime",
+        storeId: "campaign-db",
+      });
+      await runtime.close();
+    });
+
+    it("resolves scoped Campaign membership beyond the repository's first 100 rows", async () => {
+      const baseRepository = createCampaignDbRepository();
+      const target = await baseRepository.createDraft({
+        duration: "2026-08-01/2026-08-15",
+        endTime: "2026-08-15T00:00:00.000Z",
+        goal: "Admin membership continuation target",
+        ownerAddress: "2F4AdminCampaignOwner",
+        projectId: "project-admin-membership-target",
+        rewardDescription: "Staged review reward",
+        startTime: "2026-08-01T00:00:00.000Z",
+      });
+      const targetProjection = await baseRepository.getById(target.id);
+
+      expect(targetProjection).toBeDefined();
+      const firstPage = Array.from({ length: 100 }, (_, index) => ({
+        ...targetProjection!,
+        id: `campaign-admin-first-page-${String(index).padStart(3, "0")}`,
+      }));
+      const list = vi.fn(async () => firstPage);
+      const getById = vi.fn(async (campaignId: string) =>
+        campaignId === target.id ? targetProjection : undefined);
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(
+          "2F4AdminRuntimeOperator",
+          [target.id],
+        ),
+        adminReviewStore: createAdminReviewStoreMock(),
+        campaignDbRepository: { ...baseRepository, getById, list },
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+      });
+      const response = await runtime.handle({
+        headers: adminOperatorAuthHeaders("2F4AdminRuntimeOperator"),
+        method: "GET",
+        path: "/api/admin/campaigns?limit=10",
+      });
+
+      expect(expectAdminSuccessData<{
+        campaigns: Array<{ campaignId: string }>;
+      }>(response).campaigns).toEqual([
+        expect.objectContaining({ campaignId: target.id }),
+      ]);
+      expect(getById).toHaveBeenCalledWith(target.id, {
+        traceId: response.body.traceId,
+      });
       await runtime.close();
     });
 
@@ -9075,6 +9226,97 @@ describe("Campaign OS API runtime", () => {
       await runtime.close();
     });
 
+    it("returns the strict OpenAPI error envelope across the Admin error matrix", async () => {
+      const validHeaders = adminOperatorAuthHeaders("2F4AdminRuntimeOperator", {
+        "content-type": "application/json",
+      });
+      const artifactPath = "/api/admin/campaigns/campaign-admin-runtime/artifacts";
+      const detailPath = `${artifactPath}/artifact-missing`;
+      const cases: Array<{
+        expectedCode: string;
+        expectedStatus: number;
+        headers: Record<string, string>;
+        method: "GET" | "POST";
+        path: string;
+        store?: AdminReviewStore;
+        body?: string;
+      }> = [
+        {
+          body: JSON.stringify({ format: "xml" }),
+          expectedCode: "INVALID_REQUEST",
+          expectedStatus: 400,
+          headers: validHeaders,
+          method: "POST",
+          path: artifactPath,
+        },
+        {
+          expectedCode: "AUTH_SESSION_REQUIRED",
+          expectedStatus: 401,
+          headers: { "x-campaign-os-trace-id": "trace-admin-matrix-401" },
+          method: "GET",
+          path: detailPath,
+        },
+        {
+          expectedCode: "AUTH_FORBIDDEN",
+          expectedStatus: 403,
+          headers: validHeaders,
+          method: "GET",
+          path: "/api/admin/campaigns/campaign-admin-out-of-scope/artifacts/artifact-missing",
+        },
+        {
+          expectedCode: "INVALID_REQUEST",
+          expectedStatus: 404,
+          headers: validHeaders,
+          method: "GET",
+          path: detailPath,
+        },
+        ...([
+          ["ADMIN_REVIEW_STORE_CONSTRAINT_FAILED", 409],
+          ["ADMIN_REVIEW_STORE_BOUND_EXCEEDED", 413],
+          ["ADMIN_REVIEW_STORE_ROW_CORRUPTION", 422],
+          ["ADMIN_REVIEW_STORE_QUERY_FAILED", 503],
+        ] as const).map(([code, expectedStatus]) => ({
+          body: JSON.stringify({ format: "csv" }),
+          expectedCode: expectedStatus === 503 ? "PERSISTENCE_UNAVAILABLE" : "INVALID_REQUEST",
+          expectedStatus,
+          headers: validHeaders,
+          method: "POST" as const,
+          path: artifactPath,
+          store: createAdminReviewStoreMock({
+            putArtifactFromSnapshot: vi.fn(async (_input, _project, context) => {
+              throw new AdminReviewStoreError({
+                code,
+                field: "artifact",
+                operation: "putArtifactFromSnapshot",
+                traceId: context.traceId,
+              });
+            }),
+          }),
+        })),
+      ];
+
+      for (const testCase of cases) {
+        const runtime = createCampaignOsApiRuntime({
+          adminReviewConfig: enabledAdminReviewConfig(),
+          adminReviewStore: testCase.store ?? createAdminReviewStoreMock(),
+          runtimeConfigOptions: { env: postgresCampaignDbEnv },
+        });
+        const response = await runtime.handle({
+          ...(testCase.body === undefined ? {} : { body: testCase.body }),
+          headers: testCase.headers,
+          method: testCase.method,
+          path: testCase.path,
+        });
+
+        expectAdminErrorEnvelope(response, testCase.expectedStatus);
+        expect(response.body).toMatchObject({
+          error: { code: testCase.expectedCode },
+          ok: false,
+        });
+        await runtime.close();
+      }
+    });
+
     it("executes the durable Admin review, winner, artifact, and exact download workflow", async () => {
       const { store } = createStatefulAdminReviewStore();
       const runtime = createCampaignOsApiRuntime({
@@ -9097,22 +9339,83 @@ describe("Campaign OS API runtime", () => {
         method: "GET",
         path: "/api/admin/campaigns/campaign-admin-runtime/reviews",
       });
-      expect(expectSuccessData<Array<{ reviewState: string }>>(queue)).toEqual([
+      const queueData = expectAdminSuccessData<{
+        campaignId: string;
+        items: Array<Record<string, unknown> & { reviewState: string }>;
+        summary: Record<string, number>;
+      }>(queue);
+
+      expectExactKeys(queueData, ["campaignId", "items", "summary"]);
+      expect(queueData.campaignId).toBe("campaign-admin-runtime");
+      expect(queueData.items).toEqual([
         expect.objectContaining({
           participantId: "participant-admin-runtime",
           reviewState: "pending_review",
         }),
       ]);
+      expectExactKeys(queueData.items[0], [
+        "campaignId",
+        "coverage",
+        "currentDecision",
+        "currentFingerprint",
+        "eligible",
+        "participantId",
+        "rank",
+        "reviewState",
+        "riskFlags",
+        "totalPoints",
+        "walletAddress",
+      ]);
+      expectExactKeys(queueData.items[0]?.coverage, [
+        "completedTasks",
+        "evidenceCount",
+        "requiredTasks",
+        "totalTasks",
+      ]);
+      expect(queueData.summary).toEqual({
+        approvedCurrent: 0,
+        needsReviewCurrent: 0,
+        pendingReview: 1,
+        rejectedCurrent: 0,
+        stale: 0,
+        total: 1,
+      });
 
       const detail = await runtime.handle({
         headers: headers("trace-admin-workflow-detail"),
         method: "GET",
         path: "/api/admin/campaigns/campaign-admin-runtime/reviews/participant-admin-runtime",
       });
-      expect(expectSuccessData<{ reviewState: string }>(detail)).toMatchObject({
+      const detailData = expectAdminSuccessData<Record<string, unknown> & {
+        reviewState: string;
+        snapshot: Record<string, unknown> & { fingerprint: string };
+      }>(detail);
+
+      expect(detailData).toMatchObject({
+        campaignId: "campaign-admin-runtime",
+        currentDecision: null,
+        history: [],
+        participantId: "participant-admin-runtime",
         reviewState: "pending_review",
         snapshot: { fingerprint: snapshot.fingerprint },
       });
+      expectExactKeys(detailData, [
+        "campaignId",
+        "currentDecision",
+        "history",
+        "participantId",
+        "reviewState",
+        "snapshot",
+      ]);
+      expectExactKeys(detailData.snapshot, [
+        "campaignId",
+        "completions",
+        "evidence",
+        "fingerprint",
+        "fingerprintVersion",
+        "participantId",
+        "tasks",
+      ]);
 
       const decisionRequest = {
         body: JSON.stringify({
@@ -9123,7 +9426,7 @@ describe("Campaign OS API runtime", () => {
         }),
         headers: {
           ...headers("trace-admin-workflow-decision"),
-          "x-campaign-os-idempotency-key": "decision-admin-runtime-0001",
+          "iDeMpOtEnCy-KeY": "decision-admin-runtime-0001",
         },
         method: "POST",
         path: "/api/admin/campaigns/campaign-admin-runtime/reviews/participant-admin-runtime/decisions",
@@ -9131,28 +9434,75 @@ describe("Campaign OS API runtime", () => {
       const createdDecision = await runtime.handle(decisionRequest);
       const replayedDecision = await runtime.handle(decisionRequest);
 
-      expect(createdDecision).toMatchObject({
-        body: {
-          data: { created: true, replayed: false },
-          ok: true,
-        },
-        status: 201,
+      const createdDecisionData = expectAdminSuccessData<Record<string, unknown>>(createdDecision, 201);
+      const replayedDecisionData = expectAdminSuccessData<Record<string, unknown>>(replayedDecision);
+
+      expect(createdDecisionData).toEqual({
+        campaignId: "campaign-admin-runtime",
+        created: true,
+        decisionId: "decision-admin-runtime",
+        participantId: "participant-admin-runtime",
+        snapshotFingerprint: snapshot.fingerprint,
+        version: 1,
       });
-      expect(replayedDecision).toMatchObject({
-        body: {
-          data: { created: false, replayed: true },
-          ok: true,
-        },
-        status: 200,
+      expect(replayedDecisionData).toEqual({
+        ...createdDecisionData,
+        created: false,
       });
+
+      const decidedDetail = await runtime.handle({
+        headers: headers("trace-admin-workflow-decided-detail"),
+        method: "GET",
+        path: "/api/admin/campaigns/campaign-admin-runtime/reviews/participant-admin-runtime",
+      });
+      const decidedDetailData = expectAdminSuccessData<{
+        currentDecision: Record<string, unknown>;
+        history: Array<Record<string, unknown>>;
+      }>(decidedDetail);
+
+      expectExactKeys(decidedDetailData.currentDecision, [
+        "decidedAt",
+        "decision",
+        "decisionId",
+        "note",
+        "operatorRole",
+        "operatorSubject",
+        "payloadHash",
+        "reasonCode",
+        "snapshotFingerprint",
+        "traceId",
+        "version",
+      ]);
+      expect(decidedDetailData.history).toEqual([decidedDetailData.currentDecision]);
 
       const winners = await runtime.handle({
         headers: headers("trace-admin-workflow-winners"),
         method: "GET",
         path: "/api/admin/campaigns/campaign-admin-runtime/winners",
       });
-      expect(expectSuccessData<{ items: Array<{ participantId: string }> }>(winners).items)
+      const winnerData = expectAdminSuccessData<{
+        campaignId: string;
+        rows: Array<Record<string, unknown> & { participantId: string }>;
+        sourceFingerprint: string;
+        sourceVersion: string;
+      }>(winners);
+
+      expectExactKeys(winnerData, ["campaignId", "rows", "sourceFingerprint", "sourceVersion"]);
+      expect(winnerData.campaignId).toBe("campaign-admin-runtime");
+      expect(winnerData.rows)
         .toEqual([expect.objectContaining({ participantId: "participant-admin-runtime" })]);
+      expectExactKeys(winnerData.rows[0], [
+        "campaignId",
+        "decisionId",
+        "decisionVersion",
+        "evidenceHashes",
+        "participantId",
+        "rank",
+        "snapshotFingerprint",
+        "totalPoints",
+        "walletAddress",
+      ]);
+      expect(winnerData.sourceVersion).toBe("artifact-source-v1");
 
       const artifactRequest = {
         body: JSON.stringify({ format: "csv" }),
@@ -9163,28 +9513,24 @@ describe("Campaign OS API runtime", () => {
       const createdArtifact = await runtime.handle(artifactRequest);
       const replayedArtifact = await runtime.handle(artifactRequest);
 
-      expect(createdArtifact).toMatchObject({
-        body: {
-          data: {
-            artifactId: "artifact-admin-runtime-csv",
-            created: true,
-            replayed: false,
-            rowCount: 1,
-          },
-          ok: true,
-        },
-        status: 201,
+      const createdArtifactData = expectAdminSuccessData<{
+        artifact: Record<string, unknown> & { artifactId: string; rowCount: number };
+        created: boolean;
+      }>(createdArtifact, 201);
+      const replayedArtifactData = expectAdminSuccessData<{
+        artifact: Record<string, unknown> & { artifactId: string };
+        created: boolean;
+      }>(replayedArtifact);
+
+      expectExactKeys(createdArtifactData, ["artifact", "created"]);
+      expectExactKeys(createdArtifactData.artifact, adminArtifactMetadataKeys);
+      expect(createdArtifactData).toMatchObject({
+        artifact: { artifactId: "artifact-admin-runtime-csv", rowCount: 1 },
+        created: true,
       });
-      expect(replayedArtifact).toMatchObject({
-        body: {
-          data: {
-            artifactId: "artifact-admin-runtime-csv",
-            created: false,
-            replayed: true,
-          },
-          ok: true,
-        },
-        status: 200,
+      expect(replayedArtifactData).toEqual({
+        artifact: createdArtifactData.artifact,
+        created: false,
       });
 
       const artifactList = await runtime.handle({
@@ -9192,17 +9538,32 @@ describe("Campaign OS API runtime", () => {
         method: "GET",
         path: "/api/admin/campaigns/campaign-admin-runtime/artifacts?format=csv&limit=10",
       });
-      expect(expectSuccessData<Array<{ id: string }>>(artifactList)).toEqual([
-        expect.objectContaining({ id: "artifact-admin-runtime-csv" }),
+      const artifactListData = expectAdminSuccessData<{
+        artifacts: Array<Record<string, unknown> & { artifactId: string }>;
+        campaignId: string;
+      }>(artifactList);
+
+      expectExactKeys(artifactListData, ["artifacts", "campaignId"]);
+      expect(artifactListData.campaignId).toBe("campaign-admin-runtime");
+      expect(artifactListData.artifacts).toEqual([
+        expect.objectContaining({ artifactId: "artifact-admin-runtime-csv" }),
       ]);
+      expectExactKeys(artifactListData.artifacts[0], adminArtifactMetadataKeys);
 
       const artifactDetail = await runtime.handle({
         headers: headers("trace-admin-workflow-artifact-detail"),
         method: "GET",
         path: "/api/admin/campaigns/campaign-admin-runtime/artifacts/artifact-admin-runtime-csv",
       });
-      expect(expectSuccessData<{ artifact: { id: string } }>(artifactDetail)).toMatchObject({
-        artifact: { id: "artifact-admin-runtime-csv" },
+      const artifactDetailData = expectAdminSuccessData<{
+        artifact: Record<string, unknown> & { artifactId: string };
+        sourceManifest: Record<string, unknown>;
+      }>(artifactDetail);
+
+      expectExactKeys(artifactDetailData, ["artifact", "sourceManifest"]);
+      expectExactKeys(artifactDetailData.artifact, adminArtifactMetadataKeys);
+      expect(artifactDetailData).toMatchObject({
+        artifact: { artifactId: "artifact-admin-runtime-csv" },
       });
 
       const download = await runtime.handle({
@@ -9220,7 +9581,77 @@ describe("Campaign OS API runtime", () => {
         "x-campaign-os-content-sha256": sha256(download.rawBody!),
         "x-campaign-os-trace-id": "trace-admin-workflow-download",
       });
+      expectAdminSuccessData(download);
       expect(JSON.stringify(download.body)).not.toContain(download.rawBody!);
+      await runtime.close();
+    });
+
+    it("pushes artifact format filtering before the 100-row response bound", async () => {
+      const artifact = (
+        id: string,
+        format: "csv" | "json",
+        createdAt: string,
+      ): AdminExportArtifactMetadata => ({
+        campaignId: "campaign-admin-runtime",
+        contentBytes: 10,
+        contentHash: sha256(`content-${id}`),
+        createdAt,
+        creatorRole: "review_operator",
+        creatorSubject: "2F4AdminRuntimeOperator",
+        fileName: `${id}.${format}`,
+        format,
+        id,
+        mimeType: format === "csv"
+          ? "text/csv;charset=utf-8"
+          : "application/json;charset=utf-8",
+        rowCount: 1,
+        sourceFingerprint: sha256(`source-${id}`),
+        sourceVersion: "artifact-source-v1",
+        traceId: `trace-${id}`,
+      });
+      const storedArtifacts = [
+        ...Array.from({ length: 100 }, (_, index) => artifact(
+          `artifact-json-${String(index).padStart(3, "0")}`,
+          "json",
+          `2026-07-15T01:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        )),
+        artifact("artifact-csv-after-first-page", "csv", "2026-07-14T00:00:00.000Z"),
+      ];
+      const listArtifacts = vi.fn<AdminReviewStore["listArtifacts"]>(async (input) => {
+        const { format } = input;
+        return storedArtifacts
+          .filter((candidate) => candidate.campaignId === input.campaignId)
+          .filter((candidate) => format === undefined || candidate.format === format)
+          .slice(0, input.limit ?? 100);
+      });
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(),
+        adminReviewStore: createAdminReviewStoreMock({ listArtifacts }),
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+      });
+      const response = await runtime.handle({
+        headers: adminOperatorAuthHeaders(),
+        method: "GET",
+        path: "/api/admin/campaigns/campaign-admin-runtime/artifacts?format=csv&limit=10",
+      });
+      const data = expectAdminSuccessData<{
+        artifacts: Array<{ artifactId: string; format: string }>;
+      }>(response);
+
+      expect(data.artifacts).toEqual([
+        expect.objectContaining({
+          artifactId: "artifact-csv-after-first-page",
+          format: "csv",
+        }),
+      ]);
+      expect(listArtifacts).toHaveBeenCalledWith(
+        {
+          campaignId: "campaign-admin-runtime",
+          format: "csv",
+          limit: 10,
+        },
+        { traceId: response.body.traceId },
+      );
       await runtime.close();
     });
 
@@ -9238,7 +9669,7 @@ describe("Campaign OS API runtime", () => {
       });
       const headers = adminOperatorAuthHeaders("2F4AdminRuntimeOperator", {
         "content-type": "application/json",
-        "x-campaign-os-idempotency-key": "decision-admin-runtime-negative",
+        "Idempotency-Key": "decision-admin-runtime-negative",
       });
       await runtime.handle({
         body: JSON.stringify({
@@ -9270,6 +9701,7 @@ describe("Campaign OS API runtime", () => {
         },
         status: 409,
       });
+      expectAdminErrorEnvelope(stale, 409);
 
       await runtime.handle({
         body: JSON.stringify({ format: "json" }),
@@ -9302,6 +9734,7 @@ describe("Campaign OS API runtime", () => {
         },
         status: 422,
       });
+      expectAdminErrorEnvelope(corrupt, 422);
       expect(corrupt.rawBody).toBeUndefined();
       expect(JSON.stringify(corrupt.body)).not.toContain("tampered");
       await runtime.close();
@@ -9340,6 +9773,111 @@ describe("Campaign OS API runtime", () => {
       await expect(firstClose).resolves.toBeUndefined();
       expect(close).toHaveBeenCalledTimes(1);
       expect(close).toHaveBeenCalledWith({ traceId: expect.stringMatching(/^admin-runtime-close-/) });
+    });
+
+    it("fails safely within the configured deadline when request drain never resolves", async () => {
+      const readSnapshot = vi.fn(() => new Promise<AdminReviewSnapshotRows>(() => undefined));
+      const close = vi.fn(async () => undefined);
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(),
+        adminReviewStore: createAdminReviewStoreMock({ close, readSnapshot }),
+        adminReviewStoreOwnership: "runtime",
+        closeDeadlineMs: 20,
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+      });
+      void runtime.handle({
+        headers: adminOperatorAuthHeaders(),
+        method: "GET",
+        path: "/api/admin/campaigns/campaign-admin-runtime/reviews",
+      });
+
+      await vi.waitFor(() => expect(readSnapshot).toHaveBeenCalledOnce());
+      const outcome = await Promise.race([
+        runtime.close().then(
+          () => ({ type: "resolved" as const }),
+          (error: unknown) => ({ error, type: "rejected" as const }),
+        ),
+        new Promise<{ type: "watchdog" }>((resolve) => {
+          setTimeout(() => resolve({ type: "watchdog" }), 200);
+        }),
+      ]);
+
+      expect(outcome).toMatchObject({
+        error: {
+          body: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: {
+              diagnosticCode: "API_RUNTIME_CLOSE_DEADLINE_EXCEEDED",
+              operation: "runtime.close",
+              phase: "request_drain",
+            },
+          },
+        },
+        type: "rejected",
+      });
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it("caps the production close deadline at ten seconds", () => {
+      expect(API_RUNTIME_CLOSE_MAX_DEADLINE_MS).toBe(10_000);
+      expect(() => createCampaignOsApiRuntime({
+        closeDeadlineMs: API_RUNTIME_CLOSE_MAX_DEADLINE_MS + 1,
+      })).toThrowError(RangeError);
+    });
+
+    it("fails safely within the configured deadline when an owned resource never closes", async () => {
+      const close = vi.fn(() => new Promise<void>(() => undefined));
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(),
+        adminReviewStore: createAdminReviewStoreMock({ close }),
+        adminReviewStoreOwnership: "runtime",
+        closeDeadlineMs: 20,
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+      });
+      const outcome = await Promise.race([
+        runtime.close().then(
+          () => ({ type: "resolved" as const }),
+          (error: unknown) => ({ error, type: "rejected" as const }),
+        ),
+        new Promise<{ type: "watchdog" }>((resolve) => {
+          setTimeout(() => resolve({ type: "watchdog" }), 200);
+        }),
+      ]);
+
+      expect(outcome).toMatchObject({
+        error: {
+          body: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: {
+              diagnosticCode: "API_RUNTIME_CLOSE_DEADLINE_EXCEEDED",
+              operation: "runtime.close",
+              phase: "resource_close",
+            },
+          },
+        },
+        type: "rejected",
+      });
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    it("closes a shared owned dependency only once", async () => {
+      const sharedClose = vi.fn(async (_context?: unknown) => undefined);
+      const sharedDependency = {
+        ...createCampaignDbRepository(),
+        ...createAdminReviewStoreMock(),
+        close: sharedClose,
+      };
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(),
+        adminReviewStore: sharedDependency,
+        adminReviewStoreOwnership: "runtime",
+        campaignDbRepository: sharedDependency,
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+      });
+
+      await runtime.close();
+
+      expect(sharedClose).toHaveBeenCalledOnce();
     });
   });
 });

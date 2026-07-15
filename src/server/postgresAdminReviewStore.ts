@@ -976,6 +976,12 @@ const validateArtifactListInput = (
   traceId: string,
 ) => {
   validateBoundedString(input?.campaignId, "campaignId", IDENTIFIER_MAX_LENGTH, operation, traceId);
+  if (
+    input.format !== undefined
+    && !(["csv", "json"] as const).includes(input.format)
+  ) {
+    throw storeError("ADMIN_REVIEW_STORE_ARGUMENT_INVALID", "format", operation, traceId);
+  }
   validateLimit(input.limit, fallbackLimit, operation, traceId);
 };
 
@@ -2602,17 +2608,29 @@ export const createPostgresAdminReviewStore = (
     validateArtifactListInput(input, boundedListLimit, operation, traceId);
     const limit = validateLimit(input.limit, boundedListLimit, operation, traceId);
     await assertSchemaReady(pool, operation, traceId);
-    const result = await queryWith(
-      pool,
-      operation,
-      traceId,
-      `SELECT ${ARTIFACT_METADATA_COLUMNS}
-       FROM campaign_os.campaign_export_artifacts
-       WHERE campaign_id = $1
-       ORDER BY created_at DESC, id COLLATE "C" ASC
-       LIMIT $2`,
-      [input.campaignId, limit],
-    );
+    const result = input.format === undefined
+      ? await queryWith(
+        pool,
+        operation,
+        traceId,
+        `SELECT ${ARTIFACT_METADATA_COLUMNS}
+         FROM campaign_os.campaign_export_artifacts
+         WHERE campaign_id = $1
+         ORDER BY created_at DESC, id COLLATE "C" ASC
+         LIMIT $2`,
+        [input.campaignId, limit],
+      )
+      : await queryWith(
+        pool,
+        operation,
+        traceId,
+        `SELECT ${ARTIFACT_METADATA_COLUMNS}
+         FROM campaign_os.campaign_export_artifacts
+         WHERE campaign_id = $1 AND format = $2
+         ORDER BY created_at DESC, id COLLATE "C" ASC
+         LIMIT $3`,
+        [input.campaignId, input.format, limit],
+      );
 
     try {
       return mapRows(result.rows, (row) => {

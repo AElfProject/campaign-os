@@ -128,6 +128,7 @@ const DEFAULT_ALLOWED_METHODS = ["GET", "POST", "OPTIONS"] as const;
 const DEFAULT_ALLOWED_HEADERS = [
   "authorization",
   "content-type",
+  "idempotency-key",
   "x-campaign-os-account-type",
   "x-campaign-os-credential-boundary",
   "x-campaign-os-proof-status",

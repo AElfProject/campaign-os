@@ -37,6 +37,7 @@ import {
   persistenceUnavailable,
   routeNotFound,
   toApiRuntimeErrorBody,
+  type ApiRuntimeErrorBody,
 } from "./errors";
 import type { ApiRuntimeRouteContract } from "./contracts";
 import {
@@ -109,8 +110,35 @@ export interface ApiRuntimeRequest {
   path: string;
 }
 
+export interface AdminApiSuccessEnvelope<TPayload> {
+  data: TPayload;
+  ok: true;
+  runtime?: never;
+  safety?: never;
+  timestamp?: never;
+  traceId: string;
+}
+
+export interface AdminApiFailureEnvelope {
+  error: {
+    code: string;
+    details?: Record<string, string | boolean>;
+    message: string;
+  };
+  ok: false;
+  runtime?: never;
+  safety?: never;
+  timestamp?: never;
+  traceId: string;
+}
+
+export type ApiRuntimeResponseBody<TPayload = unknown> =
+  | ApiRuntimeEnvelope<TPayload>
+  | AdminApiSuccessEnvelope<TPayload>
+  | AdminApiFailureEnvelope;
+
 export interface ApiRuntimeResponse<TPayload = unknown> {
-  body: ApiRuntimeEnvelope<TPayload>;
+  body: ApiRuntimeResponseBody<TPayload>;
   headers: Record<string, string>;
   rawBody?: string;
   status: number;
@@ -162,6 +190,69 @@ class ApiRuntimeResourceCloseError extends Error {
     this.failureCount = failures.length;
   }
 }
+
+export const API_RUNTIME_CLOSE_MAX_DEADLINE_MS = 10_000;
+
+type ApiRuntimeClosePhase = "request_drain" | "resource_close";
+
+const closeDeadlineExceeded = (
+  phase: ApiRuntimeClosePhase,
+  timeoutMs: number,
+) => new ApiRuntimeError({
+  code: "PERSISTENCE_UNAVAILABLE",
+  details: {
+    diagnosticCode: "API_RUNTIME_CLOSE_DEADLINE_EXCEEDED",
+    operation: "runtime.close",
+    phase,
+    timeoutMs,
+  },
+  message: {
+    "en-US": "Campaign OS API runtime shutdown exceeded its safe deadline.",
+    "zh-CN": "Campaign OS API runtime 关闭超过安全期限。",
+    "zh-TW": "Campaign OS API runtime 關閉超過安全期限。",
+  },
+  status: 503,
+});
+
+const resolveCloseDeadlineMs = (value: number | undefined): number => {
+  const deadlineMs = value ?? API_RUNTIME_CLOSE_MAX_DEADLINE_MS;
+
+  if (
+    !Number.isSafeInteger(deadlineMs)
+    || deadlineMs < 1
+    || deadlineMs > API_RUNTIME_CLOSE_MAX_DEADLINE_MS
+  ) {
+    throw new RangeError(
+      `closeDeadlineMs must be an integer between 1 and ${API_RUNTIME_CLOSE_MAX_DEADLINE_MS}.`,
+    );
+  }
+
+  return deadlineMs;
+};
+
+const waitForClosePhase = <T>(
+  pending: Promise<T>,
+  deadlineAt: number,
+  phase: ApiRuntimeClosePhase,
+  timeoutMs: number,
+): Promise<T> => new Promise<T>((resolvePending, rejectPending) => {
+  const remainingMs = Math.max(0, deadlineAt - Date.now());
+  const timer = setTimeout(() => {
+    rejectPending(closeDeadlineExceeded(phase, timeoutMs));
+  }, remainingMs);
+  timer.unref?.();
+
+  pending.then(
+    (value) => {
+      clearTimeout(timer);
+      resolvePending(value);
+    },
+    (error: unknown) => {
+      clearTimeout(timer);
+      rejectPending(error);
+    },
+  );
+});
 
 export interface CampaignDbRuntimePool extends PostgresCampaignStorePool {
   onError(listener: (error: unknown) => void): void;
@@ -260,6 +351,7 @@ export interface CreateCampaignOsApiRuntimeOptions {
   campaignDbPoolFactory?: CampaignDbPoolFactory;
   campaignDbRepository?: CampaignDbRepository;
   campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
+  closeDeadlineMs?: number;
   exportArtifactRegistry?: ExportArtifactRegistry;
   logger?: Pick<Console, "error"> | false;
   participantPreviewConfigOptions?: CampaignOsParticipantPreviewConfigOptions;
@@ -358,6 +450,52 @@ const responseHeaders = (traceId: string): Record<string, string> => ({
   "content-type": "application/json; charset=utf-8",
   "x-campaign-os-trace-id": traceId,
 });
+
+const ADMIN_ERROR_STRING_DETAIL_KEYS = new Set([
+  "diagnosticCode",
+  "field",
+  "operation",
+  "routeId",
+]);
+const ADMIN_ERROR_BOOLEAN_DETAIL_KEYS = new Set([
+  "reconnectRequired",
+  "retryable",
+]);
+
+const createAdminSuccessEnvelope = <TPayload>(
+  data: TPayload,
+  traceId: string,
+): AdminApiSuccessEnvelope<TPayload> => ({
+  data,
+  ok: true,
+  traceId,
+});
+
+const createAdminFailureEnvelope = (
+  error: ApiRuntimeErrorBody,
+  traceId: string,
+): AdminApiFailureEnvelope => {
+  const details = Object.fromEntries(Object.entries(error.details ?? {}).filter(([key, value]) =>
+    (ADMIN_ERROR_STRING_DETAIL_KEYS.has(key) && typeof value === "string")
+    || (ADMIN_ERROR_BOOLEAN_DETAIL_KEYS.has(key) && typeof value === "boolean")
+  )) as Record<string, string | boolean>;
+
+  return {
+    error: {
+      code: error.code,
+      ...(Object.keys(details).length === 0 ? {} : { details }),
+      message: error.message["en-US"],
+    },
+    ok: false,
+    traceId,
+  };
+};
+
+const isAdminRequestTarget = (requestTarget: string): boolean => {
+  const pathname = requestTarget.trim().split(/[?#]/u, 1)[0] ?? "";
+
+  return pathname === "/api/admin" || pathname.startsWith("/api/admin/");
+};
 
 const normalizeMethod = (method: string) => method.trim().toUpperCase();
 
@@ -1407,6 +1545,7 @@ export const createCampaignOsApiRuntime = ({
   campaignDbPoolFactory = createPgCampaignPool,
   campaignDbRepository,
   campaignDbRepositoryOptions,
+  closeDeadlineMs,
   exportArtifactRegistry = createExportArtifactRegistry(),
   logger = console,
   participantPreviewConfigOptions,
@@ -1419,6 +1558,7 @@ export const createCampaignOsApiRuntime = ({
   walletSessionRepository,
   walletSessionRepositoryOptions,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
+  const runtimeCloseDeadlineMs = resolveCloseDeadlineMs(closeDeadlineMs);
   let configError: unknown;
   const resolvedConfig = (() => {
     if (runtimeConfig) {
@@ -1508,12 +1648,15 @@ export const createCampaignOsApiRuntime = ({
     composedCampaignDbRepository,
   );
   const activeWalletSessionIds = new Set<string>();
+  const composedWalletSessionRepository = walletSessionRepository
+    ?? createWalletSessionRepository(walletSessionRepositoryOptions);
   const safeWalletSessionRepository = createSafeWalletSessionRepository(
-    walletSessionRepository ?? createWalletSessionRepository(walletSessionRepositoryOptions),
+    composedWalletSessionRepository,
     (sessionId) => activeWalletSessionIds.add(sessionId),
   );
   let adminReviewInitializationError: unknown;
   let adminReviewPartialCleanup: Promise<void> | undefined;
+  let composedAdminReviewPool: PostgresAdminReviewStorePool | undefined;
   const composedAdminReviewStore = (() => {
     if (!initialAdminReviewConfig.enabled || adminReviewConfigError) {
       return undefined;
@@ -1530,13 +1673,11 @@ export const createCampaignOsApiRuntime = ({
       return undefined;
     }
 
-    let pool: PostgresAdminReviewStorePool | undefined;
-
     try {
       const expectedMigration = adminReviewExpectedMigration
         ?? resolveAdminReviewExpectedMigration();
-      pool = adminReviewPoolFactory(resolvedCampaignDbConfig.pool);
-      const onError = (pool as PostgresAdminReviewStorePool & {
+      composedAdminReviewPool = adminReviewPoolFactory(resolvedCampaignDbConfig.pool);
+      const onError = (composedAdminReviewPool as PostgresAdminReviewStorePool & {
         onError?: (listener: (error: unknown) => void) => void;
       }).onError;
 
@@ -1552,17 +1693,18 @@ export const createCampaignOsApiRuntime = ({
         boundedListLimit: ADMIN_REVIEW_MAX_LIST_LIMIT,
         expectedMigration,
         ownsPool: true,
-        pool,
+        pool: composedAdminReviewPool,
       });
     } catch (error) {
       adminReviewInitializationError = error;
-      if (pool) {
-        adminReviewPartialCleanup = pool.end().catch(() => undefined);
+      if (composedAdminReviewPool) {
+        adminReviewPartialCleanup = composedAdminReviewPool.end().catch(() => undefined);
       }
 
       return undefined;
     }
   })();
+  const activeAdminReviewStore = composedAdminReviewStore;
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeContractRoutes.map(compileRouteMatcher);
   const runtimeVersion = version ?? resolvedConfig.version;
@@ -1597,20 +1739,48 @@ export const createCampaignOsApiRuntime = ({
       drainWaiters.clear();
     }
   };
-  let closePromise: Promise<void> | undefined;
-  const close = (): Promise<void> => {
-    acceptingRequests = false;
-    closePromise ??= waitForRequestDrain().then(() => Promise.allSettled([
-      safeCampaignDbRepository.close?.() ?? Promise.resolve(),
-      safeWalletSessionRepository.close(),
-      ...(composedAdminReviewStore && adminReviewStoreOwnership === "runtime"
-        ? [composedAdminReviewStore.close({
-          traceId: `admin-runtime-close-${randomUUID()}`,
-        })]
-        : []),
-      ...(adminReviewPartialCleanup ? [adminReviewPartialCleanup] : []),
-    ])).then((results) => {
-      activeWalletSessionIds.clear();
+  const resourceClosers: Array<{ close: () => Promise<void>; key: unknown }> = [];
+  const registeredResourceKeys = new Set<unknown>();
+  const registerResourceCloser = (key: unknown, closeResource: () => Promise<void>) => {
+    if (registeredResourceKeys.has(key)) {
+      return;
+    }
+
+    registeredResourceKeys.add(key);
+    resourceClosers.push({ close: closeResource, key });
+  };
+
+  if (composedCampaignDbRepository.close) {
+    registerResourceCloser(
+      composedCampaignDbRepository,
+      () => safeCampaignDbRepository.close?.() ?? Promise.resolve(),
+    );
+  }
+  registerResourceCloser(
+    composedWalletSessionRepository,
+    () => safeWalletSessionRepository.close(),
+  );
+  if (composedAdminReviewStore && adminReviewStoreOwnership === "runtime") {
+    registerResourceCloser(
+      composedAdminReviewStore,
+      () => composedAdminReviewStore.close({
+        traceId: `admin-runtime-close-${randomUUID()}`,
+      }),
+    );
+  }
+  if (adminReviewPartialCleanup) {
+    registerResourceCloser(adminReviewPartialCleanup, () => adminReviewPartialCleanup!);
+  }
+
+  let resourceClosePromise: Promise<void> | undefined;
+  const closeOwnedResources = (): Promise<void> => {
+    resourceClosePromise ??= Promise.allSettled(resourceClosers.map(({ close: closeResource }) => {
+      try {
+        return closeResource();
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    })).then((results) => {
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason as unknown);
@@ -1624,6 +1794,40 @@ export const createCampaignOsApiRuntime = ({
       }
     });
 
+    return resourceClosePromise;
+  };
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    acceptingRequests = false;
+    closePromise ??= (async () => {
+      const deadlineAt = Date.now() + runtimeCloseDeadlineMs;
+
+      try {
+        await waitForClosePhase(
+          waitForRequestDrain(),
+          deadlineAt,
+          "request_drain",
+          runtimeCloseDeadlineMs,
+        );
+      } catch (error) {
+        drainWaiters.clear();
+        activeWalletSessionIds.clear();
+        void closeOwnedResources().catch(() => undefined);
+        throw error;
+      }
+
+      try {
+        await waitForClosePhase(
+          closeOwnedResources(),
+          deadlineAt,
+          "resource_close",
+          runtimeCloseDeadlineMs,
+        );
+      } finally {
+        activeWalletSessionIds.clear();
+      }
+    })();
+
     return closePromise;
   };
 
@@ -1631,17 +1835,20 @@ export const createCampaignOsApiRuntime = ({
     close,
     handle: async (request) => {
       const traceId = createTraceId(request.headers);
+      const adminRequest = isAdminRequestTarget(request.path);
 
       if (!acceptingRequests) {
         const runtimeError = persistenceUnavailable("runtime.close").body;
 
         return {
-          body: createFailureEnvelope({
-            error: runtimeError,
-            routeCount: apiRuntimeContractRoutes.length,
-            traceId,
-            version: runtimeVersion,
-          }),
+          body: adminRequest
+            ? createAdminFailureEnvelope(runtimeError, traceId)
+            : createFailureEnvelope({
+              error: runtimeError,
+              routeCount: apiRuntimeContractRoutes.length,
+              traceId,
+              version: runtimeVersion,
+            }),
           headers: responseHeaders(traceId),
           status: runtimeError.status,
         };
@@ -1687,7 +1894,7 @@ export const createCampaignOsApiRuntime = ({
           if (adminReviewConfigError) {
             throw adminRuntimeUnavailable("ADMIN_REVIEW_CONFIG_INVALID");
           }
-          if (adminReviewInitializationError || !composedAdminReviewStore) {
+          if (adminReviewInitializationError || !activeAdminReviewStore) {
             throw adminRuntimeUnavailable("ADMIN_REVIEW_STORE_UNAVAILABLE");
           }
 
@@ -1787,8 +1994,8 @@ export const createCampaignOsApiRuntime = ({
           ...(authDecision?.adminOperator
             ? { adminOperator: authDecision.adminOperator }
             : {}),
-          ...(composedAdminReviewStore
-            ? { adminReviewStore: composedAdminReviewStore }
+          ...(activeAdminReviewStore
+            ? { adminReviewStore: activeAdminReviewStore }
             : {}),
           auth: authDecision,
         });
@@ -1810,12 +2017,14 @@ export const createCampaignOsApiRuntime = ({
           : data;
 
         return {
-          body: createSuccessEnvelope({
-            data: responseData,
-            routeCount: apiRuntimeContractRoutes.length,
-            traceId,
-            version: runtimeVersion,
-          }),
+          body: adminPolicy
+            ? createAdminSuccessEnvelope(responseData, traceId)
+            : createSuccessEnvelope({
+              data: responseData,
+              routeCount: apiRuntimeContractRoutes.length,
+              traceId,
+              version: runtimeVersion,
+            }),
           headers: {
             ...responseHeaders(traceId),
             ...transport?.headers,
@@ -1827,12 +2036,14 @@ export const createCampaignOsApiRuntime = ({
         const runtimeError = toApiRuntimeErrorBody(error);
 
         return {
-          body: createFailureEnvelope({
-            error: runtimeError,
-            routeCount: apiRuntimeContractRoutes.length,
-            traceId,
-            version: runtimeVersion,
-          }),
+          body: adminRequest
+            ? createAdminFailureEnvelope(runtimeError, traceId)
+            : createFailureEnvelope({
+              error: runtimeError,
+              routeCount: apiRuntimeContractRoutes.length,
+              traceId,
+              version: runtimeVersion,
+            }),
           headers: responseHeaders(traceId),
           status: runtimeError.status,
         };

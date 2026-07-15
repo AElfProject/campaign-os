@@ -777,7 +777,7 @@ const artifactGenerateBody = Object.freeze({
 const idempotencyKeyHeader = Object.freeze({
   maxLength: 128,
   minLength: 8,
-  name: "x-campaign-os-idempotency-key",
+  name: "Idempotency-Key",
   pattern: "^[A-Za-z0-9._:-]+$",
   required: true,
 }) satisfies AdminApiRequestFieldContract;

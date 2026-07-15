@@ -278,6 +278,7 @@ export interface AdminExportArtifactScope {
 
 export interface AdminExportArtifactListInput {
   campaignId: string;
+  format?: AdminExportArtifactFormat;
   limit?: number;
 }
 

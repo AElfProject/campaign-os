@@ -135,7 +135,13 @@ import {
   readAdminReviewQueue,
   readAdminReviewWinnerSource,
   submitAdminReviewDecision,
+  type AdminReviewDecisionDetail,
+  type AdminReviewDecisionReceipt,
+  type AdminReviewDecisionSummary,
+  type AdminReviewDetail,
+  type AdminReviewQueueItem,
   type AdminReviewState,
+  type AdminReviewWinnerSource,
   type TrustedAdminReviewOperatorContext,
 } from "./adminReview";
 import {
@@ -143,7 +149,9 @@ import {
   ADMIN_REVIEW_MAX_LIST_LIMIT,
   AdminReviewStoreError,
   type AdminExportArtifactContent,
+  type AdminExportArtifactDetail,
   type AdminExportArtifactFormat,
+  type AdminExportArtifactMetadata,
   type AdminReviewStore,
 } from "./adminReviewStore";
 import {
@@ -2483,8 +2491,155 @@ const requiredAdminHeader = (
 
 const currentAdminTimestamp = () => new Date().toISOString();
 
-const safeAdminArtifactDetail = (detail: AdminExportArtifactContent) => ({
-  artifact: detail.artifact,
+const ADMIN_REPOSITORY_METADATA = Object.freeze({
+  adapterId: "campaign-db-postgresql-adapter" as const,
+  durable: true as const,
+  repositoryId: "campaign-db-postgresql-runtime",
+  storeId: "campaign-db" as const,
+});
+
+const toAdminDecisionSummary = (decision: AdminReviewDecisionSummary) => ({
+  decidedAt: decision.decidedAt,
+  decision: decision.decision,
+  decisionId: decision.id,
+  operatorRole: decision.operatorRole,
+  operatorSubject: decision.operatorSubject,
+  reasonCode: decision.reasonCode,
+  snapshotFingerprint: decision.snapshotFingerprint,
+  version: decision.version,
+});
+
+const toAdminDecisionRecord = (decision: AdminReviewDecisionDetail) => ({
+  ...toAdminDecisionSummary(decision),
+  note: decision.note ?? null,
+  payloadHash: decision.payloadHash,
+  traceId: decision.traceId,
+});
+
+const toAdminQueueItem = (item: AdminReviewQueueItem) => ({
+  campaignId: item.campaignId,
+  coverage: {
+    completedTasks: item.taskCoverage.completed,
+    evidenceCount: item.taskCoverage.evidence,
+    requiredTasks: item.taskCoverage.required,
+    totalTasks: item.taskCoverage.total,
+  },
+  currentDecision: item.latestDecision
+    ? toAdminDecisionSummary(item.latestDecision)
+    : null,
+  currentFingerprint: item.currentFingerprint,
+  eligible: item.eligible,
+  participantId: item.participantId,
+  rank: item.rank,
+  reviewState: item.reviewState,
+  riskFlags: item.riskFlags,
+  totalPoints: item.totalPoints,
+  walletAddress: item.walletAddress,
+});
+
+const toAdminQueueData = (
+  campaignId: string,
+  queue: readonly AdminReviewQueueItem[],
+) => {
+  const summary = {
+    approvedCurrent: 0,
+    needsReviewCurrent: 0,
+    pendingReview: 0,
+    rejectedCurrent: 0,
+    stale: 0,
+    total: queue.length,
+  };
+
+  for (const item of queue) {
+    switch (item.reviewState) {
+      case "approved_current":
+        summary.approvedCurrent += 1;
+        break;
+      case "needs_review_current":
+        summary.needsReviewCurrent += 1;
+        break;
+      case "pending_review":
+        summary.pendingReview += 1;
+        break;
+      case "rejected_current":
+        summary.rejectedCurrent += 1;
+        break;
+      case "stale":
+        summary.stale += 1;
+        break;
+    }
+  }
+
+  return {
+    campaignId,
+    items: queue.map(toAdminQueueItem),
+    summary,
+  };
+};
+
+const toAdminReviewDetail = (detail: AdminReviewDetail) => {
+  const participantId = detail.snapshot.manifest.participant.id;
+  const campaignId = detail.snapshot.manifest.campaign.id;
+
+  return {
+    campaignId,
+    currentDecision: detail.latestDecision
+      ? toAdminDecisionRecord(detail.latestDecision)
+      : null,
+    history: detail.history.map(toAdminDecisionRecord),
+    participantId,
+    reviewState: detail.reviewState,
+    snapshot: {
+      campaignId,
+      completions: detail.snapshot.manifest.completions,
+      evidence: detail.snapshot.manifest.evidence,
+      fingerprint: detail.snapshot.fingerprint,
+      fingerprintVersion: detail.snapshot.fingerprintVersion,
+      participantId,
+      tasks: detail.snapshot.manifest.tasks,
+    },
+  };
+};
+
+const toAdminDecisionReceipt = (receipt: AdminReviewDecisionReceipt) => ({
+  campaignId: receipt.campaignId,
+  created: receipt.created,
+  decisionId: receipt.decisionId,
+  participantId: receipt.participantId,
+  snapshotFingerprint: receipt.snapshotFingerprint,
+  version: receipt.version,
+});
+
+const toAdminWinnerList = (
+  campaignId: string,
+  source: AdminReviewWinnerSource,
+  limit: number,
+) => ({
+  campaignId,
+  rows: source.rows.slice(0, limit),
+  sourceFingerprint: source.fingerprint,
+  sourceVersion: source.sourceVersion,
+});
+
+const toAdminArtifactMetadata = (artifact: AdminExportArtifactMetadata) => ({
+  artifactId: artifact.id,
+  campaignId: artifact.campaignId,
+  contentBytes: artifact.contentBytes,
+  contentHash: artifact.contentHash,
+  createdAt: artifact.createdAt,
+  creatorRole: artifact.creatorRole,
+  creatorSubject: artifact.creatorSubject,
+  fileName: artifact.fileName,
+  format: artifact.format,
+  mimeType: artifact.mimeType,
+  rowCount: artifact.rowCount,
+  sourceFingerprint: artifact.sourceFingerprint,
+  sourceVersion: artifact.sourceVersion,
+  traceId: artifact.traceId,
+});
+
+const toAdminArtifactDetail = (detail: AdminExportArtifactDetail) => ({
+  artifact: toAdminArtifactMetadata(detail.artifact),
   sourceManifest: detail.sourceManifest,
 });
 
@@ -2645,12 +2800,15 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     const allowedCampaignIds = context.adminOperator?.campaignIds === null
       ? null
       : new Set(context.adminOperator?.campaignIds ?? []);
-    const campaigns = await context.campaignDbRepository.list(
-      { limit: ADMIN_REVIEW_MAX_LIST_LIMIT },
-      { traceId: context.traceId },
-    );
+    const campaigns = allowedCampaignIds === null
+      ? await context.campaignDbRepository.list(
+        { limit: limit ?? ADMIN_REVIEW_MAX_LIST_LIMIT },
+        { traceId: context.traceId },
+      )
+      : (await Promise.all([...allowedCampaignIds].map((campaignId) =>
+        context.campaignDbRepository.getById(campaignId, { traceId: context.traceId })
+      ))).filter((campaign) => campaign !== undefined);
     const visibleCampaigns = campaigns
-      .filter((campaign) => allowedCampaignIds === null || allowedCampaignIds.has(campaign.id))
       .map((campaign) => ({
         campaignId: campaign.id,
         ownerAddress: campaign.ownerAddress,
@@ -2660,10 +2818,13 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
         taskCount: campaign.tasks.length,
       }));
 
-    return projectAdminReviewCampaignFeed(visibleCampaigns, {
-      ...(limit === undefined ? {} : { limit }),
-      traceId: operator.traceId,
-    });
+    return {
+      campaigns: projectAdminReviewCampaignFeed(visibleCampaigns, {
+        ...(limit === undefined ? {} : { limit }),
+        traceId: operator.traceId,
+      }),
+      repository: ADMIN_REPOSITORY_METADATA,
+    };
   }),
   "admin.reviews.list": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, ["limit", "state"]);
@@ -2673,13 +2834,15 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
 
     requireTrustedAdminContext(context);
 
-    return readAdminReviewQueue(requireAdminStore(context), {
+    const queue = await readAdminReviewQueue(requireAdminStore(context), {
       campaignId,
       generatedAt: currentAdminTimestamp(),
       ...(limit === undefined ? {} : { limit }),
       ...(state === undefined ? {} : { state }),
       traceId: context.traceId,
     });
+
+    return toAdminQueueData(campaignId, queue);
   }),
   "admin.reviews.detail": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, []);
@@ -2688,12 +2851,14 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
 
     requireTrustedAdminContext(context);
 
-    return readAdminReviewDetail(requireAdminStore(context), {
+    const detail = await readAdminReviewDetail(requireAdminStore(context), {
       campaignId,
       generatedAt: currentAdminTimestamp(),
       participantId,
       traceId: context.traceId,
     });
+
+    return toAdminReviewDetail(detail);
   }),
   "admin.reviews.decide": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, []);
@@ -2707,7 +2872,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     ]);
     const idempotencyKey = requiredAdminHeader(
       context,
-      "x-campaign-os-idempotency-key",
+      "Idempotency-Key",
     );
     const note = optionalString(body.note);
 
@@ -2721,7 +2886,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey)
     ) {
       throw invalidRequest(
-        "x-campaign-os-idempotency-key",
+        "Idempotency-Key",
         "Admin decision idempotency key is invalid.",
       );
     }
@@ -2736,7 +2901,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       reasonCode: requiredString(body, "reasonCode"),
     }, requireTrustedAdminContext(context));
 
-    return adminTransport(receipt, receipt.created ? 201 : 200);
+    return adminTransport(toAdminDecisionReceipt(receipt), receipt.created ? 201 : 200);
   }),
   "admin.winners.list": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, ["limit"]);
@@ -2751,12 +2916,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       traceId: context.traceId,
     });
 
-    return {
-      items: source.rows.slice(0, limit),
-      rowCount: Math.min(source.rowCount, limit),
-      sourceFingerprint: source.fingerprint,
-      sourceVersion: source.sourceVersion,
-    };
+    return toAdminWinnerList(campaignId, source, limit);
   }),
   "admin.artifacts.list": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, ["format", "limit"]);
@@ -2770,12 +2930,23 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
 
     const artifacts = await requireAdminStore(context).listArtifacts({
       campaignId,
-      limit: ADMIN_REVIEW_MAX_LIST_LIMIT,
+      ...(format === undefined ? {} : { format }),
+      limit,
     }, { traceId: context.traceId });
 
-    return artifacts
-      .filter((artifact) => format === undefined || artifact.format === format)
-      .slice(0, limit);
+    if (format !== undefined && artifacts.some((artifact) => artifact.format !== format)) {
+      throw adminHttpFailure(
+        503,
+        "ADMIN_REVIEW_FORMAT_QUERY_UNAVAILABLE",
+        "format",
+        "adminReview.listArtifacts",
+      );
+    }
+
+    return {
+      artifacts: artifacts.map(toAdminArtifactMetadata),
+      campaignId,
+    };
   }),
   "admin.artifacts.generate": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, []);
@@ -2801,15 +2972,8 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       format: adminArtifactFormat(body.format),
     }, requireTrustedAdminContext(context));
     const receipt = {
-      artifactId: result.artifact.id,
-      campaignId: result.artifact.campaignId,
-      contentBytes: result.artifact.contentBytes,
-      contentHash: result.artifact.contentHash,
+      artifact: toAdminArtifactMetadata(result.artifact),
       created: result.created,
-      format: result.artifact.format,
-      replayed: !result.created,
-      rowCount: result.artifact.rowCount,
-      sourceFingerprint: result.artifact.sourceFingerprint,
     };
 
     return adminTransport(receipt, result.created ? 201 : 200);
@@ -2835,7 +2999,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       );
     }
 
-    return detail;
+    return toAdminArtifactDetail(detail);
   }),
   "admin.artifacts.download": (context) => runAdminHandler(async () => {
     assertAdminQuery(context, []);
@@ -2859,7 +3023,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     );
 
     return adminTransport(
-      safeAdminArtifactDetail(detail),
+      toAdminArtifactDetail(detail),
       200,
       { headers: download.headers, rawBody: download.content },
     );

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { describe, expect, it, vi } from "vitest";
 import {
   canonicalizeAdminReviewJson,
@@ -88,6 +89,15 @@ const winnerSource = (
     sourceVersion: ADMIN_ARTIFACT_SOURCE_VERSION,
   };
 };
+
+const maximumArtifactRows = () => Array.from(
+  { length: ADMIN_REVIEW_MAX_ARTIFACT_ROWS },
+  (_, index) => winnerRow(`p${index}`, {
+    decisionId: `d${index}`,
+    evidenceHashes: [],
+    walletAddress: `w${index}`,
+  }),
+);
 
 const specialRows = (): readonly AdminReviewWinnerRow[] => [
   winnerRow("participant,\"line\n\u96ea", {
@@ -401,12 +411,7 @@ describe("Admin export artifact serializer contract", () => {
     expect(serializeAdminExportArtifact(winnerSource([]), "csv")).toMatchObject({
       rowCount: 0,
     });
-    const rows = Array.from({ length: ADMIN_REVIEW_MAX_ARTIFACT_ROWS }, (_, index) =>
-      winnerRow(`p${index}`, {
-        decisionId: `d${index}`,
-        evidenceHashes: [],
-        walletAddress: `w${index}`,
-      }));
+    const rows = maximumArtifactRows();
     expect(serializeAdminExportArtifact(winnerSource(rows), "csv").rowCount)
       .toBe(ADMIN_REVIEW_MAX_ARTIFACT_ROWS);
 
@@ -427,6 +432,25 @@ describe("Admin export artifact serializer contract", () => {
       }),
     );
   });
+
+  it("keeps 5000-row CSV and JSON serialization plus SHA-256 verification within p95", () => {
+    const source = winnerSource(maximumArtifactRows());
+
+    for (const format of ["csv", "json"] as const) {
+      serializeAdminExportArtifact(source, format);
+      const samples = Array.from({ length: 3 }, () => {
+        const startedAt = performance.now();
+        const result = serializeAdminExportArtifact(source, format);
+
+        expect(result.rowCount).toBe(ADMIN_REVIEW_MAX_ARTIFACT_ROWS);
+        expect(result.contentHash).toBe(sha256(result.content));
+        return performance.now() - startedAt;
+      }).sort((left, right) => left - right);
+      const p95 = samples[Math.ceil(samples.length * 0.95) - 1]!;
+
+      expect(p95).toBeLessThan(2_000);
+    }
+  }, 15_000);
 
   it("accepts exactly 10 MiB and rejects one additional UTF-8 byte", () => {
     const source = winnerSource([]);

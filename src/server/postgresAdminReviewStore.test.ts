@@ -2,7 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import pg, { type Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  canonicalizeAdminReviewJson,
+  type AdminReviewWinnerRow,
+  type AdminReviewWinnerSource,
+} from "./adminReview";
+import { serializeAdminExportArtifact } from "./adminExportArtifact";
+import {
   ADMIN_ARTIFACT_SOURCE_VERSION,
+  ADMIN_REVIEW_MAX_ARTIFACT_ROWS,
   ADMIN_REVIEW_MAX_SOURCE_MANIFEST_BYTES,
   ADMIN_REVIEW_MIGRATION_ID,
   ADMIN_REVIEW_SNAPSHOT_VERSION,
@@ -13,6 +20,7 @@ import {
   type AdminExportArtifactProjectionInput,
   type AdminReviewDecisionInput,
   type AdminReviewDecisionPayload,
+  type AdminReviewJsonObject,
   type AdminReviewSnapshotProjection,
 } from "./adminReviewStore";
 import {
@@ -49,6 +57,50 @@ const pgPoolCompatibility: PgPoolIsCompatible = true;
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
+
+const maximumArtifactWinnerSource = (revision: string): AdminReviewWinnerSource => {
+  const campaignId = "campaign-admin-0001";
+  const rows = Array.from(
+    { length: ADMIN_REVIEW_MAX_ARTIFACT_ROWS },
+    (_, index): AdminReviewWinnerRow => ({
+      campaignId,
+      decisionId: `d${index}`,
+      decisionVersion: 1,
+      evidenceHashes: [],
+      participantId: `p${index}`,
+      rank: index + 1,
+      snapshotFingerprint: sha256(`snapshot-${index}`),
+      totalPoints: ADMIN_REVIEW_MAX_ARTIFACT_ROWS - index,
+      walletAddress: `w${index}`,
+    }),
+  );
+  const manifest = {
+    campaign: {
+      contractMode: "OFF_CHAIN_MVP" as const,
+      endTime: "2026-08-15T00:00:00.000Z",
+      id: campaignId,
+      startTime: "2026-08-01T00:00:00.000Z",
+      status: "ended",
+      updatedAt: `2026-07-15T00:00:${revision}.000Z`,
+      walletPolicy: "ANY" as const,
+    },
+    rows,
+    version: ADMIN_ARTIFACT_SOURCE_VERSION,
+  } satisfies AdminReviewWinnerSource["manifest"];
+  const canonicalJson = canonicalizeAdminReviewJson(
+    manifest as unknown as AdminReviewJsonObject,
+    { field: "sourceManifest", traceId: `trace-5000-source-${revision}` },
+  );
+
+  return {
+    canonicalJson,
+    fingerprint: sha256(canonicalJson),
+    manifest,
+    rowCount: rows.length,
+    rows,
+    sourceVersion: ADMIN_ARTIFACT_SOURCE_VERSION,
+  };
+};
 const expectedMigration = {
   checksum: "a".repeat(64),
   id: ADMIN_REVIEW_MIGRATION_ID,
@@ -1765,6 +1817,31 @@ describe("PostgreSQL Admin export artifacts", () => {
     expect(dataQueries[2]?.text).toMatch(/(?:^|,\s*)content(?:\s*,|\s+FROM)/i);
   });
 
+  it("pushes optional artifact format filtering into the bounded metadata query", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.schema_migrations")) {
+        return { rows: [readinessRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_export_artifacts")) {
+        return { rows: [artifactRow()] };
+      }
+
+      return { rows: [] };
+    });
+    const store = createStore(pool);
+
+    await expect(store.listArtifacts(
+      { campaignId: "campaign-admin-0001", format: "csv", limit: 25 },
+      { traceId: "trace-artifact-format-list" },
+    )).resolves.toEqual([expect.objectContaining({ format: "csv" })]);
+
+    const dataQuery = pool.directCalls.find(({ text }) =>
+      text.includes("FROM campaign_os.campaign_export_artifacts"));
+    expect(dataQuery?.text).toContain("WHERE campaign_id = $1 AND format = $2");
+    expect(dataQuery?.text).toContain("LIMIT $3");
+    expect(dataQuery?.values).toEqual(["campaign-admin-0001", "csv", 25]);
+  });
+
   it.each([
     ["content hash", { content_hash: "9".repeat(64) }, "ADMIN_REVIEW_STORE_CONTENT_INTEGRITY_FAILED", "contentHash"],
     ["content bytes", { content_bytes: 1 }, "ADMIN_REVIEW_STORE_CONTENT_INTEGRITY_FAILED", "contentBytes"],
@@ -2936,6 +3013,49 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       );
     }
   }, 60_000);
+
+  it("keeps 5000-row serialize, SHA-256, and PostgreSQL transaction p95 within two seconds", async () => {
+    for (const [formatIndex, format] of (["csv", "json"] as const).entries()) {
+      const samples: number[] = [];
+
+      for (let sampleIndex = 0; sampleIndex < 3; sampleIndex += 1) {
+        const revision = String(10 + formatIndex * 3 + sampleIndex);
+        const source = maximumArtifactWinnerSource(revision);
+        const traceId = `trace-real-5000-${format}-${sampleIndex}`;
+        const startedAt = performance.now();
+        const projection = serializeAdminExportArtifact(source, format, { traceId });
+        const result = await store.putArtifact({
+          campaignId: source.manifest.campaign.id,
+          content: projection.content,
+          contentHash: projection.contentHash,
+          creatorRole: "review_operator",
+          creatorSubject: "2F4ReviewOperator",
+          fileName: projection.fileName,
+          format,
+          mimeType: projection.mimeType,
+          rowCount: projection.rowCount,
+          sourceFingerprint: projection.sourceFingerprint,
+          sourceManifest: projection.sourceManifest,
+          sourceVersion: projection.sourceVersion,
+        }, { traceId });
+        samples.push(performance.now() - startedAt);
+
+        expect(result).toMatchObject({
+          artifact: {
+            contentHash: projection.contentHash,
+            format,
+            rowCount: ADMIN_REVIEW_MAX_ARTIFACT_ROWS,
+            sourceFingerprint: projection.sourceFingerprint,
+          },
+          created: true,
+        });
+      }
+
+      samples.sort((left, right) => left - right);
+      const p95 = samples[Math.ceil(samples.length * 0.95) - 1]!;
+      expect(p95).toBeLessThan(2_000);
+    }
+  }, 30_000);
 
   it("rolls back commit faults and reports rollback/release cleanup faults without leaks", async () => {
     type Fault = "commit" | "release" | "rollback";
