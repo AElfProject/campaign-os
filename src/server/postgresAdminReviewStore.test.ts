@@ -2625,8 +2625,10 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     )).rejects.toMatchObject({ code: "55000" });
   }, 60_000);
 
-  it("scopes real ranking rows and decision projection to one Participant", async () => {
+  it("preserves the campaign-wide rank for a scoped second-place Participant", async () => {
     await seedRealCampaign(databasePool, multiParticipantCampaign);
+    const scopedParticipantId = "participant-admin-multi-b";
+    const scopedWalletAddress = "2F4MultiParticipantB";
     await databasePool.query(
       `INSERT INTO campaign_os.campaign_participants (
          id, campaign_id, wallet_address, account_type, wallet_source,
@@ -2636,9 +2638,9 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14
        )`,
       [
-        "participant-admin-multi-b",
+        scopedParticipantId,
         multiParticipantCampaign.campaignId,
-        "2F4MultiParticipantB",
+        scopedWalletAddress,
         "EOA",
         "PORTKEY_EOA_EXTENSION",
         true,
@@ -2656,57 +2658,45 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
 
     const snapshot = await store.readSnapshot({
       campaignId: multiParticipantCampaign.campaignId,
-      participantId: multiParticipantCampaign.participantId,
+      participantId: scopedParticipantId,
     }, { traceId: "trace-real-multi-participant-snapshot" });
-    expect(snapshot.participants.map(({ id }) => id)).toEqual([
-      multiParticipantCampaign.participantId,
-    ]);
-    expect(snapshot.ranking.map(({ participantId }) => participantId)).toEqual([
-      multiParticipantCampaign.participantId,
-    ]);
-    expect(snapshot.completions.map(({ walletAddress }) => walletAddress)).toEqual([
-      multiParticipantCampaign.walletAddress,
-    ]);
-    expect(snapshot.evidence.map(({ walletAddress }) => walletAddress)).toEqual([
-      multiParticipantCampaign.walletAddress,
-    ]);
+    expect(snapshot.participants).toMatchObject([{ id: scopedParticipantId, rank: 2 }]);
+    expect(snapshot.ranking).toMatchObject([{ participantId: scopedParticipantId, rank: 2 }]);
+    expect(snapshot.completions).toEqual([]);
+    expect(snapshot.evidence).toEqual([]);
 
     const expectedFingerprint = "6".repeat(64);
     const input = decisionInput({
       campaignId: multiParticipantCampaign.campaignId,
       expectedSnapshotFingerprint: expectedFingerprint,
       idempotencyKeyHash: sha256("real-multi-participant-decision"),
-      participantId: multiParticipantCampaign.participantId,
+      participantId: scopedParticipantId,
     });
     await expect(store.appendDecision(input, async (rows) => {
-      expect(rows.participants.map(({ id }) => id)).toEqual([
-        multiParticipantCampaign.participantId,
-      ]);
-      expect(rows.ranking.map(({ participantId }) => participantId)).toEqual([
-        multiParticipantCampaign.participantId,
-      ]);
+      expect(rows.participants).toMatchObject([{ id: scopedParticipantId, rank: 2 }]);
+      expect(rows.ranking).toMatchObject([{ participantId: scopedParticipantId, rank: 2 }]);
 
       return snapshotProjection({
         fingerprint: expectedFingerprint,
         manifest: {
           campaignId: multiParticipantCampaign.campaignId,
-          participantId: multiParticipantCampaign.participantId,
+          participantId: scopedParticipantId,
           version: ADMIN_REVIEW_SNAPSHOT_VERSION,
         },
-        walletAddress: multiParticipantCampaign.walletAddress,
+        walletAddress: scopedWalletAddress,
       });
     }, { traceId: "trace-real-multi-participant-decision" })).resolves.toMatchObject({
       created: true,
       record: {
         campaignId: multiParticipantCampaign.campaignId,
-        participantId: multiParticipantCampaign.participantId,
+        participantId: scopedParticipantId,
       },
     });
     const persisted = await databasePool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count
        FROM campaign_os.campaign_review_decisions
        WHERE campaign_id = $1 AND participant_id = $2`,
-      [multiParticipantCampaign.campaignId, multiParticipantCampaign.participantId],
+      [multiParticipantCampaign.campaignId, scopedParticipantId],
     );
     expect(persisted.rows).toEqual([{ count: "1" }]);
     expect(await factSnapshot()).toEqual(beforeFacts);
@@ -3059,7 +3049,8 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     }
   }, 60_000);
 
-  it("reads a 5000-Participant ranked snapshot with one indexed window query under two seconds p95", async () => {
+  it("bounds the production ranked window query above the 5000-Participant limit", async () => {
+    const scaleParticipantCount = 20_000;
     const scaleCampaign = {
       campaignId: "campaign-admin-scale",
       completionId: "completion-admin-scale-0001",
@@ -3071,15 +3062,21 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     };
     await seedRealCampaign(databasePool, scaleCampaign);
     await databasePool.query(
+      `UPDATE campaign_os.campaign_participants
+       SET total_points = $1
+       WHERE campaign_id = $2 AND id = $3`,
+      [scaleParticipantCount + 1, scaleCampaign.campaignId, scaleCampaign.participantId],
+    );
+    await databasePool.query(
       `INSERT INTO campaign_os.campaign_participants (
          id, campaign_id, wallet_address, account_type, wallet_source,
          wallet_type_verified, wallet_signature_status, wallet_verified_at,
          locale_preference, total_points, rank, risk_flags, created_at, updated_at
        )
        SELECT
-         'participant-admin-scale-' || lpad(ordinal::text, 4, '0'),
+         'participant-admin-scale-' || lpad(ordinal::text, 6, '0'),
          $1,
-         '2F4ScaleWallet' || lpad(ordinal::text, 4, '0'),
+         '2F4ScaleWallet' || lpad(ordinal::text, 6, '0'),
          'EOA',
          'PORTKEY_EOA_EXTENSION',
          true,
@@ -3092,11 +3089,13 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
          '2026-07-15T01:00:00.000Z'::timestamptz + ordinal * interval '1 millisecond',
          '2026-07-15T01:00:01.000Z'::timestamptz + ordinal * interval '1 millisecond'
        FROM generate_series(2, $2) AS ordinal`,
-      [scaleCampaign.campaignId, ADMIN_REVIEW_MAX_ARTIFACT_ROWS],
+      [scaleCampaign.campaignId, scaleParticipantCount],
     );
     await databasePool.query("ANALYZE campaign_os.campaign_participants");
 
     let rankedQueryCount = 0;
+    let rankedQueryText: string | undefined;
+    let rankedQueryValues: readonly unknown[] = [];
     const countedPool: PostgresAdminReviewStorePool = {
       connect: async () => {
         const client = await databasePool.connect();
@@ -3105,6 +3104,8 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
           query: async (text, values = []) => {
             if (text.includes("ROW_NUMBER() OVER")) {
               rankedQueryCount += 1;
+              rankedQueryText = text;
+              rankedQueryValues = values;
             }
             const result = await client.query(text, [...values]);
 
@@ -3137,8 +3138,8 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       );
       samples.push(performance.now() - startedAt);
 
-      expect(snapshot.participants).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS);
-      expect(snapshot.ranking).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS);
+      expect(snapshot.participants).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1);
+      expect(snapshot.ranking).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1);
       expect(rankedQueryCount).toBe(1);
     }
 
@@ -3147,25 +3148,38 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
 
     const explainClient = await databasePool.connect();
     try {
-      await explainClient.query("BEGIN");
-      await explainClient.query("SET LOCAL enable_seqscan = off");
+      expect(rankedQueryText).toBeDefined();
       const explain = await explainClient.query(
-        `EXPLAIN (ANALYZE, FORMAT JSON)
-         SELECT id, wallet_address, total_points, created_at
-         FROM campaign_os.campaign_participants
-         WHERE campaign_id = $1
-         ORDER BY
-           total_points DESC,
-           created_at ASC,
-           id COLLATE "C" ASC,
-           wallet_address COLLATE "C" ASC
-         LIMIT $2`,
-        [scaleCampaign.campaignId, ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1],
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${rankedQueryText!}`,
+        [...rankedQueryValues],
       );
-      expect(JSON.stringify(explain.rows)).toContain(
+      const explainJson = JSON.stringify(explain.rows);
+      expect(explainJson).toContain(
         "campaign_os_campaign_participants_dynamic_rank_idx",
       );
-      await explainClient.query("ROLLBACK");
+      const rootPlan = explain.rows[0]?.["QUERY PLAN"]?.[0]?.Plan as {
+        "Actual Rows"?: number;
+        "Node Type"?: string;
+        Plans?: unknown[];
+      } | undefined;
+      const planStack: unknown[] = rootPlan ? [rootPlan] : [];
+      let windowActualRows: number | undefined;
+
+      while (planStack.length > 0) {
+        const node = planStack.pop() as {
+          "Actual Rows"?: number;
+          "Node Type"?: string;
+          Plans?: unknown[];
+        };
+        if (node["Node Type"] === "WindowAgg") {
+          windowActualRows = node["Actual Rows"];
+          break;
+        }
+        planStack.push(...(node.Plans ?? []));
+      }
+
+      expect(windowActualRows).toBeGreaterThan(0);
+      expect(windowActualRows).toBeLessThanOrEqual(ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1);
     } finally {
       explainClient.release();
       await countedStore.close({ traceId: "trace-real-ranked-scale-close" });

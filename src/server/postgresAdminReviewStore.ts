@@ -1524,7 +1524,7 @@ export const createPostgresAdminReviewStore = (
          FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
          WHERE ranked_participant.campaign_id = $1
          ORDER BY
-           rank ASC,
+           total_points DESC,
            created_at ASC,
            id COLLATE "C" ASC,
            wallet_address COLLATE "C" ASC
