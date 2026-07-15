@@ -184,6 +184,7 @@ const decisionRow = (overrides: Record<string, unknown> = {}): Record<string, un
   id: "decision-admin-0001",
   idempotency_key_hash: "2".repeat(64),
   note: "Evidence reviewed.",
+  ownership_valid: true,
   operator_role: "review_operator",
   operator_subject: "2F4ReviewOperator",
   participant_id: "participant-admin-0001",
@@ -213,6 +214,7 @@ const snapshotQueryResponse = (
   if (
     call.text.includes("FROM campaign_os.campaign_participants")
     && call.text.includes("id = $2")
+    && !call.text.includes("FROM campaign_os.campaign_review_decisions")
   ) {
     return { rows: [participantRow()] };
   }
@@ -296,7 +298,7 @@ class StatefulDecisionPool implements PostgresAdminReviewStorePool {
     const call = { text: normalizeSql(text), values };
     this.calls.push(call);
 
-    if (call.text === "BEGIN") {
+    if (call.text.startsWith("BEGIN")) {
       transaction.active = true;
       return { rows: [] };
     }
@@ -991,34 +993,35 @@ describe("PostgreSQL Admin review decisions", () => {
 
     expect(projector).toHaveBeenCalledOnce();
     expect(pool.directCalls).toEqual([]);
-    expect(pool.calls.map(({ text }) => text)).toEqual([
-      "BEGIN",
-      expect.stringContaining("FROM campaign_os.schema_migrations"),
-      expect.stringContaining(
-        "pg_advisory_xact_lock( hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0) )",
-      ),
-      expect.stringContaining("FROM campaign_os.campaigns"),
-      expect.stringContaining("FROM campaign_os.campaign_tasks"),
-      expect.stringContaining("FROM campaign_os.campaign_participants"),
-      expect.stringContaining("FROM campaign_os.campaign_task_completions"),
-      expect.stringContaining("FROM campaign_os.campaign_task_evidence"),
-      expect.stringContaining("AS participant_id"),
-      expect.stringContaining("idempotency_key_hash = $3"),
-      expect.stringContaining("COALESCE(MAX(version), 0)"),
-      expect.stringContaining("INSERT INTO campaign_os.campaign_review_decisions"),
-      "COMMIT",
-    ]);
+    expect(pool.calls[0]?.text).toBe("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+    const advisoryIndex = pool.calls.findIndex(({ text }) => text.includes("pg_advisory_xact_lock"));
+    const idempotencyIndex = pool.calls.findIndex(({ text }) =>
+      text.includes("idempotency_key_hash = $3"));
+    const campaignLockIndex = pool.calls.findIndex(({ text }) =>
+      text.includes("FROM campaign_os.campaigns") && text.includes("FOR NO KEY UPDATE"));
+    const participantLockIndex = pool.calls.findIndex(({ text }) =>
+      text.includes("FROM campaign_os.campaign_participants")
+      && text.includes("FOR NO KEY UPDATE"));
+    expect(advisoryIndex).toBeGreaterThan(0);
+    expect(idempotencyIndex).toBeGreaterThan(advisoryIndex);
+    expect(campaignLockIndex).toBeGreaterThan(idempotencyIndex);
+    expect(participantLockIndex).toBeGreaterThan(campaignLockIndex);
+    expect(pool.calls.some(({ text }) =>
+      text.startsWith("INSERT INTO campaign_os.campaign_review_decisions")
+      && text.includes("ON CONFLICT DO NOTHING"))).toBe(true);
+    expect(pool.calls[pool.calls.length - 1]?.text).toBe("COMMIT");
     expect(pool.calls[2]?.values).toEqual([
       "campaign-admin-0001",
       "participant-admin-0001",
     ]);
-    expect(pool.calls[9]?.values).toEqual([
+    expect(pool.calls[idempotencyIndex]?.values).toEqual([
       "campaign-admin-0001",
       "participant-admin-0001",
       "2".repeat(64),
     ]);
-    expect(pool.calls[11]?.values).not.toContain("raw-idempotency-key");
-    expect(pool.calls.every(({ text }) => !/\b(?:UPDATE|DELETE|TRUNCATE)\b/i.test(text))).toBe(true);
+    expect(pool.calls.every(({ values }) => !values.includes("raw-idempotency-key"))).toBe(true);
+    expect(pool.calls.every(({ text }) =>
+      !/\b(?:UPDATE\s+campaign_os|DELETE\s+FROM|TRUNCATE\s+TABLE)\b/i.test(text))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
   });
 
@@ -1033,6 +1036,7 @@ describe("PostgreSQL Admin review decisions", () => {
         if (
           call.text.includes("FROM campaign_os.campaign_participants")
           && call.text.includes("id = $2")
+          && !call.text.includes("FROM campaign_os.campaign_review_decisions")
         ) {
           return { rows: options.participant ? [options.participant] : [] };
         }
@@ -1059,6 +1063,7 @@ describe("PostgreSQL Admin review decisions", () => {
     const replay = await run({
       existing: decisionRow({ trace_id: "trace-original" }),
       participant: participantRow(),
+      projection: snapshotProjection({ fingerprint: "8".repeat(64) }),
       traceId: "trace-decision-replay",
     });
     expect(replay.result).toEqual({
@@ -1068,6 +1073,7 @@ describe("PostgreSQL Admin review decisions", () => {
         record: expect.objectContaining({ id: "decision-admin-0001", version: 1 }),
       }),
     });
+    expect(replay.projector).not.toHaveBeenCalled();
     expect(replay.pool.calls.some(({ text }) => text.startsWith("INSERT"))).toBe(false);
     expect(replay.pool.calls[replay.pool.calls.length - 1]?.text).toBe("COMMIT");
 
@@ -1092,7 +1098,7 @@ describe("PostgreSQL Admin review decisions", () => {
       error: expect.objectContaining({ code: "ADMIN_REVIEW_STORE_STALE" }),
       ok: false,
     });
-    expect(stale.pool.calls.some(({ text }) => text.includes("idempotency_key_hash = $3"))).toBe(false);
+    expect(stale.pool.calls.some(({ text }) => text.includes("idempotency_key_hash = $3"))).toBe(true);
     expect(stale.pool.calls[stale.pool.calls.length - 1]?.text).toBe("ROLLBACK");
 
     const missing = await run({
@@ -1108,6 +1114,104 @@ describe("PostgreSQL Admin review decisions", () => {
     expect(missing.projector).not.toHaveBeenCalled();
     expect(missing.pool.calls.some(({ text }) => text.startsWith("INSERT"))).toBe(false);
     expect(missing.pool.calls[missing.pool.calls.length - 1]?.text).toBe("ROLLBACK");
+  });
+
+  it("compares every immutable command field instead of trusting the claimed payload hash", async () => {
+    const mutations: Array<[string, Partial<AdminReviewDecisionInput>]> = [
+      ["decision", { decision: "rejected" }],
+      ["snapshot fingerprint", { expectedSnapshotFingerprint: "8".repeat(64) }],
+      ["reason", { reasonCode: "different_reason" }],
+      ["note", { note: "Different note." }],
+      ["operator subject", { operatorSubject: "2F4DifferentOperator" }],
+      ["operator role", { operatorRole: "internal_operator" }],
+    ];
+
+    for (const [caseName, overrides] of mutations) {
+      const pool = new TranscriptPool((call) => {
+        if (call.text.includes("idempotency_key_hash = $3")) {
+          return { rows: [decisionRow({ trace_id: "trace-original" })] };
+        }
+
+        return snapshotQueryResponse(call) ?? { rows: [] };
+      });
+      const projector = vi.fn(async () => snapshotProjection());
+
+      await expect(createStore(pool).appendDecision(
+        decisionInput(overrides),
+        projector,
+        { traceId: `trace-semantic-${caseName.replace(/\s+/g, "-")}` },
+      )).rejects.toMatchObject({
+        code: "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
+        field: "idempotencyKeyHash",
+      });
+      expect(projector).not.toHaveBeenCalled();
+      expect(pool.calls.some(({ text }) => text.startsWith("INSERT"))).toBe(false);
+      expect(pool.calls[pool.calls.length - 1]?.text).toBe("ROLLBACK");
+    }
+  });
+
+  it("fails closed when a persisted decision no longer has composite ownership", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.schema_migrations")) {
+        return { rows: [readinessRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_review_decisions")) {
+        return { rows: [decisionRow({ ownership_valid: false })] };
+      }
+
+      return { rows: [] };
+    });
+
+    await expect(createStore(pool).getCurrentDecision(
+      { campaignId: "campaign-admin-0001", participantId: "participant-admin-0001" },
+      { traceId: "trace-decision-ownership-corrupt" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
+      field: "wallet_address",
+    });
+    expect(pool.calls[1]?.text).toContain("AS ownership_valid");
+  });
+
+  it("recovers a PostgreSQL unique serialization race in a fresh transaction", async () => {
+    let idempotencyReads = 0;
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("idempotency_key_hash = $3")) {
+        idempotencyReads += 1;
+
+        return {
+          rows: idempotencyReads === 1
+            ? []
+            : [decisionRow({ trace_id: "trace-race-winner" })],
+        };
+      }
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_review_decisions")) {
+        throw Object.assign(new Error("serialization race"), { code: "40001" });
+      }
+      if (call.text.includes("COALESCE(MAX(version), 0)")) {
+        return { rows: [{ current_version: "0" }] };
+      }
+
+      return snapshotQueryResponse(call) ?? { rows: [] };
+    });
+
+    await expect(createStore(pool).appendDecision(
+      decisionInput(),
+      async () => snapshotProjection(),
+      { traceId: "trace-decision-race-recovery" },
+    )).resolves.toEqual({
+      created: false,
+      record: expect.objectContaining({
+        id: "decision-admin-0001",
+        traceId: "trace-race-winner",
+        version: 1,
+      }),
+    });
+    expect(idempotencyReads).toBe(2);
+    expect(pool.calls.filter(({ text }) => text === "ROLLBACK")).toHaveLength(1);
+    expect(pool.calls.filter(({ text }) =>
+      text === "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ")).toHaveLength(2);
+    expect(pool.calls[pool.calls.length - 1]?.text).toBe("COMMIT");
+    expect(pool.release).toHaveBeenCalledOnce();
   });
 
   it("serializes twenty-way retries and preserves unique monotonic versions", async () => {
@@ -1140,6 +1244,29 @@ describe("PostgreSQL Admin review decisions", () => {
     expect(pool.committed).toHaveLength(1);
     expect(pool.insertCount).toBe(1);
 
+    const semanticConflicts = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => {
+      const variants: Array<Partial<AdminReviewDecisionInput>> = [
+        { decision: "rejected" },
+        { expectedSnapshotFingerprint: "8".repeat(64) },
+        { note: `Different note ${index}` },
+        { operatorRole: "internal_operator" },
+        { operatorSubject: `2F4DifferentOperator${index}` },
+        { reasonCode: `different_reason_${index}` },
+      ];
+
+      return store.appendDecision(
+        decisionInput(variants[index % variants.length]),
+        project,
+        { traceId: `trace-decision-semantic-conflict-${index}` },
+      );
+    }));
+    expect(semanticConflicts.every((result) =>
+      result.status === "rejected"
+      && result.reason instanceof AdminReviewStoreError
+      && result.reason.code === "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT")).toBe(true);
+    expect(pool.committed).toHaveLength(1);
+    expect(pool.insertCount).toBe(1);
+
     const differentKeys = await Promise.all(Array.from({ length: 20 }, (_, index) =>
       store.appendDecision(
         decisionInput({
@@ -1155,7 +1282,7 @@ describe("PostgreSQL Admin review decisions", () => {
       Array.from({ length: 20 }, (_, index) => index + 2),
     );
     expect(pool.maxActiveLockHolders).toBe(1);
-    expect(pool.release).toHaveBeenCalledTimes(60);
+    expect(pool.release).toHaveBeenCalledTimes(80);
   });
 });
 
@@ -1749,6 +1876,32 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       "campaign_os_campaign_review_decisions_current_idx",
       "campaign_os_campaign_review_decisions_filter_idx",
     ]));
+    const ownershipConstraints = await databasePool.query<{
+      constraint_definition: string;
+      constraint_name: string;
+    }>(
+      `SELECT conname AS constraint_name, pg_get_constraintdef(oid) AS constraint_definition
+       FROM pg_constraint
+       WHERE connamespace = 'campaign_os'::regnamespace
+         AND conname IN ($1, $2)
+       ORDER BY conname`,
+      [
+        "campaign_os_campaign_participants_campaign_id_id_wallet_key",
+        "campaign_os_campaign_review_decisions_participant_owner_fk",
+      ],
+    );
+    expect(ownershipConstraints.rows).toEqual([
+      {
+        constraint_definition: "UNIQUE (campaign_id, id, wallet_address)",
+        constraint_name: "campaign_os_campaign_participants_campaign_id_id_wallet_key",
+      },
+      {
+        constraint_definition: expect.stringContaining(
+          "FOREIGN KEY (campaign_id, participant_id, wallet_address)",
+        ),
+        constraint_name: "campaign_os_campaign_review_decisions_participant_owner_fk",
+      },
+    ]);
     const triggers = await databasePool.query<{ event_manipulation: string; trigger_name: string }>(
       `SELECT trigger_name, event_manipulation
        FROM information_schema.triggers
@@ -1763,8 +1916,24 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       { event_manipulation: "DELETE", trigger_name: "campaign_review_decisions_append_only" },
       { event_manipulation: "UPDATE", trigger_name: "campaign_review_decisions_append_only" },
     ]));
+    const truncateTriggers = await databasePool.query<{ trigger_name: string }>(
+      `SELECT tgname AS trigger_name
+       FROM pg_trigger
+       WHERE tgrelid IN ($1::regclass, $2::regclass)
+         AND NOT tgisinternal
+         AND (tgtype & 32) = 32
+       ORDER BY tgname`,
+      [
+        "campaign_os.campaign_review_decisions",
+        "campaign_os.campaign_export_artifacts",
+      ],
+    );
+    expect(truncateTriggers.rows).toEqual([
+      { trigger_name: "campaign_export_artifacts_truncate_append_only" },
+      { trigger_name: "campaign_review_decisions_truncate_append_only" },
+    ]);
 
-    await expect(databasePool.query(
+    const decisionInsertSql =
       `INSERT INTO campaign_os.campaign_review_decisions (
          id, campaign_id, participant_id, wallet_address, version, decision,
          snapshot_version, snapshot_fingerprint, snapshot_manifest, reason_code,
@@ -1773,12 +1942,18 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
          $11, $12, $13, $14, $15, CURRENT_TIMESTAMP
-       )`,
-      [
-        "decision-invalid-fk",
-        campaignA.campaignId,
-        "participant-missing",
-        campaignA.walletAddress,
+       )`;
+    const invalidOwnership = [
+      ["cross-campaign", campaignA.campaignId, campaignB.participantId, campaignB.walletAddress],
+      ["wrong-wallet", campaignA.campaignId, campaignA.participantId, "2F4WrongWallet"],
+      ["cross-wallet", campaignB.campaignId, campaignA.participantId, campaignA.walletAddress],
+    ] as const;
+    for (const [suffix, campaignId, participantId, walletAddress] of invalidOwnership) {
+      await expect(databasePool.query(decisionInsertSql, [
+        `decision-invalid-${suffix}`,
+        campaignId,
+        participantId,
+        walletAddress,
         1,
         "approved",
         ADMIN_REVIEW_SNAPSHOT_VERSION,
@@ -1787,11 +1962,20 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
         "evidence_verified",
         "2F4ReviewOperator",
         "review_operator",
-        "2".repeat(64),
-        "3".repeat(64),
-        "trace-real-invalid-fk",
-      ],
-    )).rejects.toMatchObject({ code: "23503" });
+        sha256(`invalid-key-${suffix}`),
+        sha256(`invalid-payload-${suffix}`),
+        `trace-real-invalid-${suffix}`,
+      ])).rejects.toMatchObject({ code: "23503" });
+    }
+    await expect(store.getCurrentDecision(
+      { campaignId: campaignA.campaignId, participantId: campaignB.participantId },
+      { traceId: "trace-real-invalid-ownership-read" },
+    )).resolves.toBeUndefined();
+    for (const table of ["campaign_review_decisions", "campaign_export_artifacts"]) {
+      await expect(databasePool.query(`TRUNCATE TABLE campaign_os.${table}`)).rejects.toMatchObject({
+        code: "55000",
+      });
+    }
     await expect(databasePool.query(
       `INSERT INTO campaign_os.campaign_export_artifacts (
          id, campaign_id, source_version, source_fingerprint, source_manifest,
@@ -1975,6 +2159,180 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     )).rejects.toMatchObject({ code: "55000" });
   }, 60_000);
 
+  it("locks canonical ownership and replays the exact command after fact drift", async () => {
+    const input = decisionInput({
+      campaignId: campaignB.campaignId,
+      idempotencyKeyHash: sha256("real-lock-and-drift-key"),
+      participantId: campaignB.participantId,
+      payloadHash: sha256("real-lock-and-drift-payload"),
+    });
+    const projection = snapshotProjection({
+      manifest: {
+        campaignId: campaignB.campaignId,
+        participantId: campaignB.participantId,
+        version: ADMIN_REVIEW_SNAPSHOT_VERSION,
+      },
+      walletAddress: campaignB.walletAddress,
+    });
+    let walletMutationSettled = false;
+    let factMutationSettled = false;
+    let walletMutation: Promise<{ error?: unknown; rowCount?: number }> | undefined;
+    let factMutation: Promise<{ error?: unknown; rowCount?: number }> | undefined;
+
+    try {
+      const created = await store.appendDecision(input, async (rows) => {
+        expect(rows.participants).toEqual([
+          expect.objectContaining({
+            id: campaignB.participantId,
+            totalPoints: 120,
+            walletAddress: campaignB.walletAddress,
+          }),
+        ]);
+        walletMutation = databasePool.query(
+          `UPDATE campaign_os.campaign_participants
+           SET wallet_address = $1, updated_at = $2
+           WHERE campaign_id = $3 AND id = $4`,
+          [
+            "2F4ConcurrentWallet",
+            "2026-07-15T01:00:02.000Z",
+            campaignB.campaignId,
+            campaignB.participantId,
+          ],
+        ).then(
+          ({ rowCount }) => ({ rowCount: rowCount ?? 0 }),
+          (error: unknown) => ({ error }),
+        ).finally(() => {
+          walletMutationSettled = true;
+        });
+        factMutation = databasePool.query(
+          `UPDATE campaign_os.campaign_participants
+           SET total_points = $1, updated_at = $2
+           WHERE campaign_id = $3 AND id = $4`,
+          [121, "2026-07-15T01:00:02.000Z", campaignB.campaignId, campaignB.participantId],
+        ).then(
+          ({ rowCount }) => ({ rowCount: rowCount ?? 0 }),
+          (error: unknown) => ({ error }),
+        ).finally(() => {
+          factMutationSettled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(walletMutationSettled).toBe(false);
+        expect(factMutationSettled).toBe(false);
+
+        return projection;
+      }, { traceId: "trace-real-lock-and-drift-create" });
+      expect(created.created).toBe(true);
+
+      const walletOutcome = await walletMutation!;
+      const factOutcome = await factMutation!;
+      expect(walletOutcome.error).toMatchObject({ code: "23503" });
+      expect(factOutcome).toEqual({ rowCount: 1 });
+
+      const replayProjector = vi.fn(async () => snapshotProjection({
+        fingerprint: "9".repeat(64),
+      }));
+      await expect(store.appendDecision(
+        input,
+        replayProjector,
+        { traceId: "trace-real-lock-and-drift-replay" },
+      )).resolves.toMatchObject({
+        created: false,
+        record: { id: created.record.id, version: created.record.version },
+      });
+      expect(replayProjector).not.toHaveBeenCalled();
+
+      const conflictProjector = vi.fn(async () => projection);
+      await expect(store.appendDecision(
+        { ...input, decision: "rejected" },
+        conflictProjector,
+        { traceId: "trace-real-semantic-conflict" },
+      )).rejects.toMatchObject({
+        code: "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
+        field: "idempotencyKeyHash",
+      });
+      expect(conflictProjector).not.toHaveBeenCalled();
+    } finally {
+      await Promise.all([walletMutation, factMutation].filter(
+        (pending): pending is Promise<{ error?: unknown; rowCount?: number }> => pending !== undefined,
+      ));
+      await databasePool.query(
+        `UPDATE campaign_os.campaign_participants
+         SET total_points = $1, updated_at = $2
+         WHERE campaign_id = $3 AND id = $4`,
+        [120, "2026-07-15T01:00:03.000Z", campaignB.campaignId, campaignB.participantId],
+      );
+    }
+  }, 60_000);
+
+  it("recovers an external same-key winner without querying an aborted transaction", async () => {
+    const input = decisionInput({
+      campaignId: campaignB.campaignId,
+      idempotencyKeyHash: sha256("real-external-race-key"),
+      participantId: campaignB.participantId,
+      payloadHash: sha256("real-external-race-payload"),
+    });
+    const projection = snapshotProjection({
+      manifest: {
+        campaignId: campaignB.campaignId,
+        participantId: campaignB.participantId,
+        version: ADMIN_REVIEW_SNAPSHOT_VERSION,
+      },
+      walletAddress: campaignB.walletAddress,
+    });
+    const versionResult = await databasePool.query<{ current_version: string }>(
+      `SELECT COALESCE(MAX(version), 0)::text AS current_version
+       FROM campaign_os.campaign_review_decisions
+       WHERE campaign_id = $1 AND participant_id = $2`,
+      [campaignB.campaignId, campaignB.participantId],
+    );
+    const competingId = "decision-real-external-winner";
+    const result = await store.appendDecision(input, async () => {
+      await databasePool.query(
+        `INSERT INTO campaign_os.campaign_review_decisions (
+           id, campaign_id, participant_id, wallet_address, version, decision,
+           snapshot_version, snapshot_fingerprint, snapshot_manifest, reason_code,
+           note, operator_subject, operator_role, idempotency_key_hash, payload_hash,
+           trace_id, decided_at
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
+           $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP
+         )`,
+        [
+          competingId,
+          input.campaignId,
+          input.participantId,
+          campaignB.walletAddress,
+          Number(versionResult.rows[0]!.current_version) + 1,
+          input.decision,
+          ADMIN_REVIEW_SNAPSHOT_VERSION,
+          input.expectedSnapshotFingerprint,
+          JSON.stringify(projection.manifest),
+          input.reasonCode,
+          input.note ?? null,
+          input.operatorSubject,
+          input.operatorRole,
+          input.idempotencyKeyHash,
+          input.payloadHash,
+          "trace-real-external-winner",
+        ],
+      );
+
+      return projection;
+    }, { traceId: "trace-real-external-race" });
+
+    expect(result).toMatchObject({
+      created: false,
+      record: { id: competingId, traceId: "trace-real-external-winner" },
+    });
+    const persisted = await databasePool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM campaign_os.campaign_review_decisions
+       WHERE campaign_id = $1 AND participant_id = $2 AND idempotency_key_hash = $3`,
+      [input.campaignId, input.participantId, input.idempotencyKeyHash],
+    );
+    expect(persisted.rows).toEqual([{ count: "1" }]);
+  }, 60_000);
+
   it("persists one real artifact race winner and fails closed on stored corruption", async () => {
     const input = artifactInput();
     const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
@@ -2051,6 +2409,162 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       field: "contentHash",
       traceId: "trace-real-artifact-corrupt",
     });
+
+    const correctBytes = Buffer.byteLength(input.content, "utf8");
+    await databasePool.query(
+      "ALTER TABLE campaign_os.campaign_export_artifacts DISABLE TRIGGER campaign_export_artifacts_append_only",
+    );
+    await databasePool.query(
+      `ALTER TABLE campaign_os.campaign_export_artifacts
+       DROP CONSTRAINT campaign_os_campaign_export_artifacts_content_bytes_check`,
+    );
+    try {
+      await databasePool.query(
+        `UPDATE campaign_os.campaign_export_artifacts
+         SET content_hash = $1, content_bytes = $2
+         WHERE id = $3`,
+        [input.contentHash, correctBytes + 1, artifactId],
+      );
+      await databasePool.query(
+        "ALTER TABLE campaign_os.campaign_export_artifacts ENABLE TRIGGER campaign_export_artifacts_append_only",
+      );
+      await expect(store.readArtifactContent(
+        { artifactId, campaignId: input.campaignId },
+        { traceId: "trace-real-artifact-bytes-corrupt" },
+      )).rejects.toMatchObject({
+        code: "ADMIN_REVIEW_STORE_CONTENT_INTEGRITY_FAILED",
+        field: "contentBytes",
+        traceId: "trace-real-artifact-bytes-corrupt",
+      });
+    } finally {
+      await databasePool.query(
+        "ALTER TABLE campaign_os.campaign_export_artifacts DISABLE TRIGGER campaign_export_artifacts_append_only",
+      );
+      await databasePool.query(
+        `UPDATE campaign_os.campaign_export_artifacts
+         SET content_hash = $1, content_bytes = $2
+         WHERE id = $3`,
+        [input.contentHash, correctBytes, artifactId],
+      );
+      await databasePool.query(
+        "ALTER TABLE campaign_os.campaign_export_artifacts ENABLE TRIGGER campaign_export_artifacts_append_only",
+      );
+      await databasePool.query(
+        `ALTER TABLE campaign_os.campaign_export_artifacts
+         ADD CONSTRAINT campaign_os_campaign_export_artifacts_content_bytes_check CHECK (
+           content_bytes BETWEEN 0 AND 10485760
+           AND content_bytes = octet_length(content)
+         )`,
+      );
+    }
+  }, 60_000);
+
+  it("rolls back commit faults and reports rollback/release cleanup faults without leaks", async () => {
+    type Fault = "commit" | "release" | "rollback";
+    const createFaultStore = (fault: Fault) => {
+      let releaseCount = 0;
+      const faultPool: PostgresAdminReviewStorePool = {
+        connect: async () => {
+          const client = await databasePool.connect();
+
+          return {
+            query: async (text, values = []) => {
+              const normalized = normalizeSql(text);
+              if (fault === "commit" && normalized === "COMMIT") {
+                throw new Error("injected commit failure");
+              }
+              if (fault === "rollback" && normalized === "ROLLBACK") {
+                await client.query(text, [...values]);
+                throw new Error("injected rollback acknowledgement failure");
+              }
+              const result = await client.query(text, [...values]);
+
+              return { rows: result.rows as Array<Record<string, unknown>> };
+            },
+            release: () => {
+              client.release();
+              releaseCount += 1;
+              if (fault === "release") {
+                throw new Error("injected release acknowledgement failure");
+              }
+            },
+          };
+        },
+        end: async () => undefined,
+        query: async (text, values = []) => {
+          const result = await databasePool.query(text, [...values]);
+
+          return { rows: result.rows as Array<Record<string, unknown>> };
+        },
+      };
+
+      return {
+        get releaseCount() {
+          return releaseCount;
+        },
+        store: createPostgresAdminReviewStore({
+          boundedListLimit: 100,
+          expectedMigration: { checksum: reviewMigration.checksum, id: reviewMigration.id },
+          ownsPool: false,
+          pool: faultPool,
+        }),
+      };
+    };
+    const countDecision = async (idempotencyKeyHash: string) => {
+      const result = await databasePool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM campaign_os.campaign_review_decisions
+         WHERE campaign_id = $1 AND participant_id = $2 AND idempotency_key_hash = $3`,
+        [campaignA.campaignId, campaignA.participantId, idempotencyKeyHash],
+      );
+
+      return Number(result.rows[0]!.count);
+    };
+
+    const commitInput = decisionInput({
+      idempotencyKeyHash: sha256("real-commit-fault-key"),
+      payloadHash: sha256("real-commit-fault-payload"),
+    });
+    const commitFault = createFaultStore("commit");
+    await expect(commitFault.store.appendDecision(
+      commitInput,
+      async () => snapshotProjection(),
+      { traceId: "trace-real-commit-fault" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_QUERY_FAILED",
+      field: "database",
+    });
+    expect(await countDecision(commitInput.idempotencyKeyHash)).toBe(0);
+    expect(commitFault.releaseCount).toBe(1);
+
+    const rollbackInput = decisionInput({
+      idempotencyKeyHash: sha256("real-rollback-fault-key"),
+      payloadHash: sha256("real-rollback-fault-payload"),
+    });
+    const rollbackFault = createFaultStore("rollback");
+    await expect(rollbackFault.store.appendDecision(
+      rollbackInput,
+      async () => {
+        throw new Error("injected projector failure");
+      },
+      { traceId: "trace-real-rollback-fault" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_CLEANUP_FAILED",
+      field: "transaction",
+    });
+    expect(await countDecision(rollbackInput.idempotencyKeyHash)).toBe(0);
+    expect(rollbackFault.releaseCount).toBe(1);
+
+    const releaseFault = createFaultStore("release");
+    await expect(releaseFault.store.readSnapshot(
+      { campaignId: campaignA.campaignId, participantId: campaignA.participantId },
+      { traceId: "trace-real-release-fault" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_CLEANUP_FAILED",
+      field: "client",
+    });
+    expect(releaseFault.releaseCount).toBe(1);
+    expect(databasePool.totalCount).toBe(databasePool.idleCount);
   }, 60_000);
 
   it("closes real owned and borrowed pools with one owner in under ten seconds", async () => {

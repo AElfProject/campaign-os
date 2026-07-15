@@ -147,8 +147,12 @@ describe("PostgreSQL migration runtime", () => {
       "CREATE TABLE campaign_os.campaign_export_artifacts",
     );
     for (const contractFragment of [
-      "campaign_os_campaign_review_decisions_campaign_fk",
-      "campaign_os_campaign_review_decisions_participant_fk",
+      "ALTER TABLE campaign_os.campaign_participants",
+      "campaign_os_campaign_participants_campaign_id_id_wallet_key",
+      "UNIQUE (campaign_id, id, wallet_address)",
+      "campaign_os_campaign_review_decisions_participant_owner_fk",
+      "FOREIGN KEY (campaign_id, participant_id, wallet_address)",
+      "REFERENCES campaign_os.campaign_participants (campaign_id, id, wallet_address)",
       "campaign_os_campaign_review_decisions_version_key",
       "campaign_os_campaign_review_decisions_idempotency_key",
       "campaign_os_campaign_review_decisions_current_idx",
@@ -166,14 +170,25 @@ describe("PostgreSQL migration runtime", () => {
       "application/json;charset=utf-8",
       "BEFORE UPDATE OR DELETE ON campaign_os.campaign_review_decisions",
       "BEFORE UPDATE OR DELETE ON campaign_os.campaign_export_artifacts",
+      "BEFORE TRUNCATE ON campaign_os.campaign_review_decisions",
+      "BEFORE TRUNCATE ON campaign_os.campaign_export_artifacts",
+      "FOR EACH STATEMENT EXECUTE FUNCTION campaign_os.reject_admin_review_export_mutation()",
     ]) {
       expect(adminReviewExport?.upSql).toContain(contractFragment);
     }
+    expect(adminReviewExport?.upSql).not.toContain(
+      "campaign_os_campaign_review_decisions_participant_fk",
+    );
+    expect(adminReviewExport?.upSql).not.toContain(
+      "campaign_os_campaign_review_decisions_campaign_fk",
+    );
+    expect(adminReviewExport?.checksum).toBe(
+      "4f8eb20ac83b52bc9bc3e842416ff09fce369ec64412b7d67b974f2c900e6af5",
+    );
 
     const factTables = [
       "campaigns",
       "campaign_tasks",
-      "campaign_participants",
       "campaign_task_completions",
       "campaign_task_evidence",
       "campaign_referral_bindings",
@@ -188,17 +203,37 @@ describe("PostgreSQL migration runtime", () => {
         "i",
       ));
     }
-    expect(adminReviewExport?.upSql).not.toMatch(/\b(?:BACKFILL|TRUNCATE)\b/i);
+    expect(adminReviewExport?.upSql?.match(
+      /\bALTER\s+TABLE\s+campaign_os\.campaign_participants\b/gi,
+    )).toHaveLength(1);
+    expect(adminReviewExport?.upSql).not.toMatch(
+      /\b(?:DROP|TRUNCATE)\s+(?:TABLE\s+)?(?:IF\s+EXISTS\s+)?campaign_os\.campaign_participants\b/i,
+    );
+    expect(adminReviewExport?.upSql).not.toMatch(
+      /\b(?:UPDATE|DELETE\s+FROM)\s+campaign_os\.campaign_participants\b/i,
+    );
+    expect(adminReviewExport?.upSql).not.toMatch(/\bBACKFILL\b/i);
+    expect(adminReviewExport?.upSql).not.toMatch(/\bTRUNCATE\s+TABLE\b/i);
 
     const downSql = adminReviewExport?.downSql ?? "";
     expect(downSql).toContain("DESTRUCTIVE OPERATOR RECOVERY ONLY");
     expect(downSql).toContain("DROP TRIGGER IF EXISTS campaign_review_decisions_append_only");
     expect(downSql).toContain("DROP TRIGGER IF EXISTS campaign_export_artifacts_append_only");
+    expect(downSql).toContain("DROP TRIGGER IF EXISTS campaign_review_decisions_truncate_append_only");
+    expect(downSql).toContain("DROP TRIGGER IF EXISTS campaign_export_artifacts_truncate_append_only");
     expect(downSql).toContain("DROP TABLE IF EXISTS campaign_os.campaign_export_artifacts");
     expect(downSql).toContain("DROP TABLE IF EXISTS campaign_os.campaign_review_decisions");
+    expect(downSql).toContain(
+      "DROP CONSTRAINT IF EXISTS campaign_os_campaign_participants_campaign_id_id_wallet_key",
+    );
     expect(downSql).toContain("DROP FUNCTION IF EXISTS campaign_os.reject_admin_review_export_mutation()");
     expect(downSql.indexOf("DROP TRIGGER")).toBeLessThan(downSql.indexOf("DROP TABLE"));
-    expect(downSql.lastIndexOf("DROP TABLE")).toBeLessThan(downSql.indexOf("DROP FUNCTION"));
+    expect(downSql.indexOf("DROP TABLE IF EXISTS campaign_os.campaign_review_decisions")).toBeLessThan(
+      downSql.indexOf("DROP CONSTRAINT IF EXISTS"),
+    );
+    expect(downSql.indexOf("DROP CONSTRAINT IF EXISTS")).toBeLessThan(
+      downSql.indexOf("DROP FUNCTION"),
+    );
     for (const forbiddenOwnershipTarget of [
       ...factTables,
       "schema_migrations",

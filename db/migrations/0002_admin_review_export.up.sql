@@ -1,3 +1,7 @@
+ALTER TABLE campaign_os.campaign_participants
+  ADD CONSTRAINT campaign_os_campaign_participants_campaign_id_id_wallet_key
+  UNIQUE (campaign_id, id, wallet_address);
+
 CREATE TABLE campaign_os.campaign_review_decisions (
   id text PRIMARY KEY,
   campaign_id text NOT NULL,
@@ -64,10 +68,10 @@ CREATE TABLE campaign_os.campaign_review_decisions (
   CONSTRAINT campaign_os_campaign_review_decisions_trace_id_check CHECK (
     trace_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
   ),
-  CONSTRAINT campaign_os_campaign_review_decisions_campaign_fk
-    FOREIGN KEY (campaign_id) REFERENCES campaign_os.campaigns (id) ON DELETE CASCADE,
-  CONSTRAINT campaign_os_campaign_review_decisions_participant_fk
-    FOREIGN KEY (participant_id) REFERENCES campaign_os.campaign_participants (id) ON DELETE CASCADE,
+  CONSTRAINT campaign_os_campaign_review_decisions_participant_owner_fk
+    FOREIGN KEY (campaign_id, participant_id, wallet_address)
+    REFERENCES campaign_os.campaign_participants (campaign_id, id, wallet_address)
+    ON DELETE CASCADE,
   CONSTRAINT campaign_os_campaign_review_decisions_version_key
     UNIQUE (campaign_id, participant_id, version),
   CONSTRAINT campaign_os_campaign_review_decisions_idempotency_key
@@ -173,3 +177,11 @@ FOR EACH ROW EXECUTE FUNCTION campaign_os.reject_admin_review_export_mutation();
 CREATE TRIGGER campaign_export_artifacts_append_only
 BEFORE UPDATE OR DELETE ON campaign_os.campaign_export_artifacts
 FOR EACH ROW EXECUTE FUNCTION campaign_os.reject_admin_review_export_mutation();
+
+CREATE TRIGGER campaign_review_decisions_truncate_append_only
+BEFORE TRUNCATE ON campaign_os.campaign_review_decisions
+FOR EACH STATEMENT EXECUTE FUNCTION campaign_os.reject_admin_review_export_mutation();
+
+CREATE TRIGGER campaign_export_artifacts_truncate_append_only
+BEFORE TRUNCATE ON campaign_os.campaign_export_artifacts
+FOR EACH STATEMENT EXECUTE FUNCTION campaign_os.reject_admin_review_export_mutation();

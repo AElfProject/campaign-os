@@ -41,6 +41,7 @@ const SAFE_FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
 const IDENTIFIER_MAX_LENGTH = 160;
 const SUBJECT_MAX_LENGTH = 256;
 const SNAPSHOT_PAGE_SIZE = 100;
+const MAX_DECISION_WRITE_ATTEMPTS = 64;
 
 const CAMPAIGN_STATUSES = [
   "draft",
@@ -144,6 +145,32 @@ const DECISION_COLUMNS = `
   payload_hash,
   trace_id,
   decided_at
+`;
+const DECISION_READ_COLUMNS = `
+  decision_record.id,
+  decision_record.campaign_id,
+  decision_record.participant_id,
+  decision_record.wallet_address,
+  decision_record.version,
+  decision_record.decision,
+  decision_record.snapshot_version,
+  decision_record.snapshot_fingerprint,
+  decision_record.snapshot_manifest,
+  decision_record.reason_code,
+  decision_record.note,
+  decision_record.operator_subject,
+  decision_record.operator_role,
+  decision_record.idempotency_key_hash,
+  decision_record.payload_hash,
+  decision_record.trace_id,
+  decision_record.decided_at,
+  EXISTS (
+    SELECT 1
+    FROM campaign_os.campaign_participants AS decision_owner
+    WHERE decision_owner.campaign_id = decision_record.campaign_id
+      AND decision_owner.id = decision_record.participant_id
+      AND decision_owner.wallet_address = decision_record.wallet_address
+  ) AS ownership_valid
 `;
 const ARTIFACT_METADATA_COLUMNS = `
   id,
@@ -1126,6 +1153,30 @@ export const createPostgresAdminReviewStore = (
     }
   };
 
+  const queryDecisionInsert = async (
+    client: PostgresAdminReviewStoreClient,
+    operation: AdminReviewStoreOperation,
+    traceId: string,
+    sql: string,
+    values: readonly unknown[],
+  ): Promise<PostgresAdminReviewStoreQueryResult | undefined> => {
+    try {
+      const result = await client.query(sql, values);
+
+      if (!result || !Array.isArray(result.rows)) {
+        throw new RowDecodeError("rows");
+      }
+
+      return result;
+    } catch (error) {
+      if (driverCode(error) === "40001") {
+        return undefined;
+      }
+
+      throw normalizeFailure(error, operation, traceId);
+    }
+  };
+
   const assertSchemaReady = async (
     queryable: Pick<PostgresAdminReviewStorePool, "query">,
     operation: AdminReviewStoreOperation,
@@ -1570,6 +1621,46 @@ export const createPostgresAdminReviewStore = (
     return record;
   };
 
+  const decodePersistedDecisionForScope = (
+    value: unknown,
+    scope: AdminReviewDecisionScope,
+  ) => {
+    const row = decodeRow(value);
+
+    if (!decodeBoolean(row, "ownership_valid")) {
+      throw new RowDecodeError("wallet_address");
+    }
+
+    return decodeDecisionForScope(row, scope);
+  };
+
+  const assertReplayMatchesInput = (
+    record: AdminReviewDecisionRecord,
+    input: AdminReviewDecisionInput,
+    operation: AdminReviewStoreOperation,
+    traceId: string,
+  ) => {
+    if (
+      record.campaignId !== input.campaignId
+      || record.participantId !== input.participantId
+      || record.idempotencyKeyHash !== input.idempotencyKeyHash
+      || record.payloadHash !== input.payloadHash
+      || record.decision !== input.decision
+      || record.snapshotFingerprint !== input.expectedSnapshotFingerprint
+      || record.reasonCode !== input.reasonCode
+      || record.note !== input.note
+      || record.operatorSubject !== input.operatorSubject
+      || record.operatorRole !== input.operatorRole
+    ) {
+      throw storeError(
+        "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
+        "idempotencyKeyHash",
+        operation,
+        traceId,
+      );
+    }
+  };
+
   const readDecisionByIdempotency = async (
     queryable: Pick<PostgresAdminReviewStorePool, "query">,
     input: AdminReviewDecisionInput,
@@ -1580,11 +1671,11 @@ export const createPostgresAdminReviewStore = (
       queryable,
       operation,
       traceId,
-      `SELECT ${DECISION_COLUMNS}
-       FROM campaign_os.campaign_review_decisions
-       WHERE campaign_id = $1
-         AND participant_id = $2
-         AND idempotency_key_hash = $3
+      `SELECT ${DECISION_READ_COLUMNS}
+       FROM campaign_os.campaign_review_decisions AS decision_record
+       WHERE decision_record.campaign_id = $1
+         AND decision_record.participant_id = $2
+         AND decision_record.idempotency_key_hash = $3
        LIMIT 1`,
       [input.campaignId, input.participantId, input.idempotencyKeyHash],
     );
@@ -1592,7 +1683,7 @@ export const createPostgresAdminReviewStore = (
     try {
       return optionalOne(
         result.rows,
-        (row) => decodeDecisionForScope(row, input),
+        (row) => decodePersistedDecisionForScope(row, input),
       );
     } catch (error) {
       throw normalizeFailure(error, operation, traceId);
@@ -1620,7 +1711,12 @@ export const createPostgresAdminReviewStore = (
     let transactionStarted = false;
 
     try {
-      await queryWith(client, operation, traceId, "BEGIN");
+      await queryWith(
+        client,
+        operation,
+        traceId,
+        "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+      );
       transactionStarted = true;
       await assertSchemaReady(client, operation, traceId);
       await queryWith(
@@ -1629,8 +1725,86 @@ export const createPostgresAdminReviewStore = (
         traceId,
         `SELECT pg_advisory_xact_lock(
            hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0)
-         )`,
+        )`,
         [input.campaignId, input.participantId],
+      );
+      for (
+        let writeAttempt = 0;
+        writeAttempt < MAX_DECISION_WRITE_ATTEMPTS;
+        writeAttempt += 1
+      ) {
+        const existing = await readDecisionByIdempotency(client, input, operation, traceId);
+      if (existing) {
+        assertReplayMatchesInput(existing, input, operation, traceId);
+        await queryWith(client, operation, traceId, "COMMIT");
+        transactionStarted = false;
+
+        return { created: false, record: existing };
+      }
+
+      const campaignOwnershipResult = await queryWith(
+        client,
+        operation,
+        traceId,
+        `SELECT id
+         FROM campaign_os.campaigns
+         WHERE id = $1
+         FOR NO KEY UPDATE`,
+        [input.campaignId],
+      );
+      if (campaignOwnershipResult.rows.length === 0) {
+        throw storeError(
+          "ADMIN_REVIEW_STORE_NOT_FOUND",
+          "campaignId",
+          operation,
+          traceId,
+        );
+      }
+      if (
+        campaignOwnershipResult.rows.length !== 1
+        || decodeString(
+          decodeRow(campaignOwnershipResult.rows[0]),
+          "id",
+          IDENTIFIER_MAX_LENGTH,
+        ) !== input.campaignId
+      ) {
+        throw new RowDecodeError("campaign_id");
+      }
+
+      const participantOwnershipResult = await queryWith(
+        client,
+        operation,
+        traceId,
+        `SELECT id, campaign_id, wallet_address
+         FROM campaign_os.campaign_participants
+         WHERE campaign_id = $1 AND id = $2
+         FOR NO KEY UPDATE`,
+        [input.campaignId, input.participantId],
+      );
+      if (participantOwnershipResult.rows.length === 0) {
+        throw storeError(
+          "ADMIN_REVIEW_STORE_NOT_FOUND",
+          "participantId",
+          operation,
+          traceId,
+        );
+      }
+      if (participantOwnershipResult.rows.length !== 1) {
+        throw new RowDecodeError("participant_id");
+      }
+      const participantOwnershipRow = decodeRow(participantOwnershipResult.rows[0]);
+      if (
+        decodeString(participantOwnershipRow, "campaign_id", IDENTIFIER_MAX_LENGTH)
+          !== input.campaignId
+        || decodeString(participantOwnershipRow, "id", IDENTIFIER_MAX_LENGTH)
+          !== input.participantId
+      ) {
+        throw new RowDecodeError("participant_id");
+      }
+      const lockedWalletAddress = decodeString(
+        participantOwnershipRow,
+        "wallet_address",
+        SUBJECT_MAX_LENGTH,
       );
       const snapshot = await readSnapshotWithClient(
         client,
@@ -1691,7 +1865,10 @@ export const createPostgresAdminReviewStore = (
         operation,
         traceId,
       );
-      if (projection.walletAddress !== participant.walletAddress) {
+      if (
+        projection.walletAddress !== participant.walletAddress
+        || participant.walletAddress !== lockedWalletAddress
+      ) {
         throw storeError(
           "ADMIN_REVIEW_STORE_ARGUMENT_INVALID",
           "walletAddress",
@@ -1706,23 +1883,6 @@ export const createPostgresAdminReviewStore = (
           operation,
           traceId,
         );
-      }
-
-      const existing = await readDecisionByIdempotency(client, input, operation, traceId);
-      if (existing) {
-        if (existing.payloadHash !== input.payloadHash) {
-          throw storeError(
-            "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
-            "idempotencyKeyHash",
-            operation,
-            traceId,
-          );
-        }
-
-        await queryWith(client, operation, traceId, "COMMIT");
-        transactionStarted = false;
-
-        return { created: false, record: existing };
       }
 
       const versionResult = await queryWith(
@@ -1752,14 +1912,11 @@ export const createPostgresAdminReviewStore = (
         );
       }
 
-      let record: AdminReviewDecisionRecord;
-      let created = true;
-      try {
-        const insertResult = await queryWith(
-          client,
-          operation,
-          traceId,
-          `INSERT INTO campaign_os.campaign_review_decisions (
+      const insertResult = await queryDecisionInsert(
+        client,
+        operation,
+        traceId,
+        `INSERT INTO campaign_os.campaign_review_decisions (
              id,
              campaign_id,
              participant_id,
@@ -1781,51 +1938,62 @@ export const createPostgresAdminReviewStore = (
              $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
              $10, $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP
            )
+           ON CONFLICT DO NOTHING
            RETURNING ${DECISION_COLUMNS}`,
-          [
-            randomUUID(),
-            input.campaignId,
-            input.participantId,
-            participant.walletAddress,
-            currentVersion + 1,
-            input.decision,
-            "review-snapshot-v1",
-            projection.fingerprint,
-            encodedManifest,
-            input.reasonCode,
-            input.note ?? null,
-            input.operatorSubject,
-            input.operatorRole,
-            input.idempotencyKeyHash,
-            input.payloadHash,
-            traceId,
-          ],
-        );
-        if (insertResult.rows.length !== 1) {
-          throw new RowDecodeError("decisionInsert");
-        }
-        record = decodeDecisionForScope(insertResult.rows[0], input);
-      } catch (error) {
-        const failure = normalizeFailure(error, operation, traceId);
+        [
+          randomUUID(),
+          input.campaignId,
+          input.participantId,
+          participant.walletAddress,
+          currentVersion + 1,
+          input.decision,
+          "review-snapshot-v1",
+          projection.fingerprint,
+          encodedManifest,
+          input.reasonCode,
+          input.note ?? null,
+          input.operatorSubject,
+          input.operatorRole,
+          input.idempotencyKeyHash,
+          input.payloadHash,
+          traceId,
+        ],
+      );
 
-        if (failure.code !== "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED") {
-          throw failure;
-        }
-        const raced = await readDecisionByIdempotency(client, input, operation, traceId);
-        if (!raced) {
-          throw failure;
-        }
-        if (raced.payloadHash !== input.payloadHash) {
+      if (insertResult === undefined || insertResult.rows.length === 0) {
+        await queryWith(client, operation, traceId, "ROLLBACK");
+        transactionStarted = false;
+        if (writeAttempt === MAX_DECISION_WRITE_ATTEMPTS - 1) {
           throw storeError(
-            "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
-            "idempotencyKeyHash",
+            "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED",
+            "version",
             operation,
             traceId,
           );
         }
-        record = raced;
-        created = false;
+        await queryWith(
+          client,
+          operation,
+          traceId,
+          "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        );
+        transactionStarted = true;
+        await assertSchemaReady(client, operation, traceId);
+        await queryWith(
+          client,
+          operation,
+          traceId,
+          `SELECT pg_advisory_xact_lock(
+             hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0)
+          )`,
+          [input.campaignId, input.participantId],
+        );
+        continue;
       }
+      if (insertResult.rows.length !== 1) {
+        throw new RowDecodeError("decisionInsert");
+      }
+      const record = decodeDecisionForScope(insertResult.rows[0], input);
 
       if (
         record.walletAddress !== participant.walletAddress
@@ -1835,6 +2003,10 @@ export const createPostgresAdminReviewStore = (
         || record.payloadHash !== input.payloadHash
         || record.traceId !== traceId
         || record.decision !== input.decision
+        || record.reasonCode !== input.reasonCode
+        || record.note !== input.note
+        || record.operatorSubject !== input.operatorSubject
+        || record.operatorRole !== input.operatorRole
       ) {
         throw storeError(
           "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
@@ -1847,7 +2019,15 @@ export const createPostgresAdminReviewStore = (
       await queryWith(client, operation, traceId, "COMMIT");
       transactionStarted = false;
 
-      return { created, record };
+      return { created: true, record };
+      }
+
+      throw storeError(
+        "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED",
+        "version",
+        operation,
+        traceId,
+      );
     } catch (error) {
       const failure = normalizeFailure(error, operation, traceId);
 
@@ -1882,16 +2062,16 @@ export const createPostgresAdminReviewStore = (
       pool,
       operation,
       traceId,
-      `SELECT ${DECISION_COLUMNS}
-       FROM campaign_os.campaign_review_decisions
-       WHERE campaign_id = $1 AND participant_id = $2
-       ORDER BY version DESC
+      `SELECT ${DECISION_READ_COLUMNS}
+       FROM campaign_os.campaign_review_decisions AS decision_record
+       WHERE decision_record.campaign_id = $1 AND decision_record.participant_id = $2
+       ORDER BY decision_record.version DESC
        LIMIT 1`,
       [input.campaignId, input.participantId],
     );
 
     try {
-      return optionalOne(result.rows, (row) => decodeDecisionForScope(row, input));
+      return optionalOne(result.rows, (row) => decodePersistedDecisionForScope(row, input));
     } catch (error) {
       throw normalizeFailure(error, operation, traceId);
     }
@@ -1910,16 +2090,18 @@ export const createPostgresAdminReviewStore = (
       pool,
       operation,
       traceId,
-      `SELECT ${DECISION_COLUMNS}
-       FROM campaign_os.campaign_review_decisions
-       WHERE campaign_id = $1 AND participant_id = $2
-       ORDER BY version DESC, decided_at DESC, id COLLATE "C" ASC
+      `SELECT ${DECISION_READ_COLUMNS}
+       FROM campaign_os.campaign_review_decisions AS decision_record
+       WHERE decision_record.campaign_id = $1 AND decision_record.participant_id = $2
+       ORDER BY decision_record.version DESC,
+         decision_record.decided_at DESC,
+         decision_record.id COLLATE "C" ASC
        LIMIT $3`,
       [input.campaignId, input.participantId, limit],
     );
 
     try {
-      return mapRows(result.rows, (row) => decodeDecisionForScope(row, input));
+      return mapRows(result.rows, (row) => decodePersistedDecisionForScope(row, input));
     } catch (error) {
       throw normalizeFailure(error, operation, traceId);
     }
