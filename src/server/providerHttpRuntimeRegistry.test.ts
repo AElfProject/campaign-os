@@ -5,6 +5,7 @@ import {
   findProviderHttpEndpointById,
   findProviderHttpEndpointForVerification,
   listProviderHttpEndpointEntries,
+  providerHttpEndpointRegistry,
   providerHttpVerificationBindingExamples,
   providerHttpRuntimeProductionPreconditions,
   validateProviderHttpVerificationBindingCompatibility,
@@ -245,6 +246,16 @@ describe("provider HTTP runtime registry", () => {
     expect(mismatchedEndpoint).toBeUndefined();
   });
 
+  it("deeply freezes the cached default endpoint registry snapshot", () => {
+    const endpoint = providerHttpEndpointRegistry[0]!;
+
+    expect(Object.isFrozen(providerHttpEndpointRegistry)).toBe(true);
+    expect(Object.isFrozen(endpoint)).toBe(true);
+    expect(Object.isFrozen(endpoint.headerRefs)).toBe(true);
+    expect(Object.isFrozen(endpoint.requiredConfigKeys)).toBe(true);
+    expect(Object.isFrozen(endpoint.supportedVerificationTypes)).toBe(true);
+  });
+
   it("publishes provider binding examples as disabled shape-only metadata", () => {
     const examples = providerHttpVerificationBindingExamples;
     const serialized = JSON.stringify(examples);
@@ -316,6 +327,52 @@ describe("provider HTTP runtime registry", () => {
     expect("downstreamLiveFlags" in onChain).toBe(false);
     expect("productionReady" in onChain).toBe(false);
     expect("liveHttpCallsAttempted" in onChain).toBe(false);
+    expect(Object.isFrozen(onChain)).toBe(true);
+    expect(Object.isFrozen(onChain.diagnosticCodes)).toBe(true);
+  });
+
+  it("rebuilds custom registry indexes after mutation instead of returning stale compatibility", () => {
+    const endpoint = {
+      ...findProviderHttpEndpointById("aefinder-aelfscan-indexer-query")!,
+      headerRefs: ["header-ref:provider-http-indexer-auth"],
+      requiredConfigKeys: ["CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF"],
+      supportedVerificationTypes: ["ON_CHAIN" as const],
+    };
+    const mutableRegistry: ProviderHttpEndpointEntry[] = [endpoint];
+    const input = enabledExample("aefinder-aelfscan");
+
+    expect(validateProviderHttpVerificationBindingCompatibility(
+      input,
+      mutableRegistry,
+    ).status).toBe("compatible");
+
+    mutableRegistry[0] = {
+      ...endpoint,
+      requestMappingId: "provider-http-request-map:unknown-v1",
+      responseMappingId: "provider-http-response-map:unknown-v1",
+    };
+    const changedMapping = validateProviderHttpVerificationBindingCompatibility(
+      input,
+      mutableRegistry,
+    );
+
+    expect(changedMapping.status).toBe("incompatible");
+    expect(changedMapping.diagnosticCodes).toEqual(expect.arrayContaining([
+      "PROVIDER_HTTP_BINDING_REQUEST_MAPPING_MISMATCH",
+      "PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_MISMATCH",
+    ]));
+
+    mutableRegistry[0] = endpoint;
+    mutableRegistry.push({ ...endpoint });
+    const duplicated = validateProviderHttpVerificationBindingCompatibility(
+      input,
+      mutableRegistry,
+    );
+
+    expect(duplicated.status).toBe("incompatible");
+    expect(duplicated.diagnosticCodes).toContain(
+      "PROVIDER_HTTP_BINDING_ENDPOINT_DUPLICATED",
+    );
   });
 
   it("accepts the safe structural projection of a task verification config binding", () => {

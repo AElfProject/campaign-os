@@ -4,7 +4,11 @@ import {
   TASK_VERIFICATION_MAX_REVISION,
   type TaskVerificationEvidenceSource,
 } from "./taskVerification";
-import { validateProviderHttpVerificationBindingCompatibility } from "./providerHttpRuntimeRegistry";
+import {
+  createProviderHttpRuntimeSummary,
+  validateProviderHttpVerificationBindingCompatibility,
+} from "./providerHttpRuntimeRegistry";
+import { containsUnsafeProviderHttpRuntimeMaterial } from "./providerHttpRuntimeRedaction";
 import type {
   ProviderHttpBindingCompatibilityInput,
   ProviderHttpProviderFamily,
@@ -72,6 +76,7 @@ export type TaskVerificationConfigDiagnosticCode =
   | "TASK_VERIFICATION_DEGRADATION_POLICY_INVALID"
   | "TASK_VERIFICATION_EVIDENCE_SOURCE_INVALID"
   | "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"
+  | "TASK_VERIFICATION_PRODUCTION_RUNTIME_NOT_READY"
   | "TASK_VERIFICATION_REGISTRY_INCOMPATIBLE"
   | "TASK_VERIFICATION_STRATEGY_CONFLICT";
 
@@ -145,6 +150,7 @@ export interface TaskVerificationConfigInput {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly environment: TaskVerificationEnvironment;
   readonly jsonParser?: (source: string) => unknown;
+  readonly providerHttpTransportProvided?: boolean;
 }
 
 const bindingFields = Object.freeze([
@@ -238,6 +244,8 @@ const diagnosticMessages: Readonly<Record<TaskVerificationConfigDiagnosticCode, 
       "Task verification response limit is invalid.",
     TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID:
       "Task verification provider reference is invalid.",
+    TASK_VERIFICATION_PRODUCTION_RUNTIME_NOT_READY:
+      "Task verification production runtime is not ready.",
     TASK_VERIFICATION_REGISTRY_INCOMPATIBLE:
       "Task verification binding is incompatible with the provider registry.",
     TASK_VERIFICATION_SCHEMA_INVALID:
@@ -394,6 +402,7 @@ const normalizeId = (value: unknown): string => {
     || value.length === 0
     || value.length > TASK_VERIFICATION_BINDING_ID_MAX_LENGTH
     || !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(value)
+    || containsUnsafeProviderHttpRuntimeMaterial(value)
   ) {
     return fail("TASK_VERIFICATION_ID_INVALID", "bindings[].id");
   }
@@ -496,6 +505,7 @@ const normalizeProviderReference = (
     || value.length === 0
     || value.length > TASK_VERIFICATION_PROVIDER_REFERENCE_MAX_LENGTH
     || !/^[a-z0-9][a-z0-9._:-]*$/.test(value)
+    || containsUnsafeProviderHttpRuntimeMaterial(value)
   ) {
     return fail(
       "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID",
@@ -866,6 +876,29 @@ const validateMaterialPosture = (
   }
 };
 
+const validateProductionRuntime = (
+  input: TaskVerificationConfigInput,
+  bindings: readonly TaskVerificationBinding[],
+  environment: TaskVerificationEnvironment,
+): void => {
+  if (environment !== "production" || !bindings.some(({ enabled }) => enabled)) {
+    return;
+  }
+
+  const runtime = createProviderHttpRuntimeSummary({
+    env: input.env as Record<string, unknown>,
+    profileId: "production-required",
+    transportProvided: input.providerHttpTransportProvided === true,
+  });
+
+  if (!runtime.valid || runtime.status !== "activated") {
+    fail(
+      "TASK_VERIFICATION_PRODUCTION_RUNTIME_NOT_READY",
+      "providerHttpRuntime",
+    );
+  }
+};
+
 const resolveEnabledConfig = (
   input: TaskVerificationConfigInput,
   environment: TaskVerificationEnvironment,
@@ -877,6 +910,7 @@ const resolveEnabledConfig = (
 
   validateRegistryCompatibility(bindings);
   validateMaterialPosture(bindings, input.env, environment);
+  validateProductionRuntime(input, bindings, environment);
 
   return createConfig("ready", environment, bindings);
 };

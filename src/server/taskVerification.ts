@@ -130,6 +130,11 @@ const fail = (code: TaskVerificationDomainErrorCode, context: ErrorContext): nev
   throw new TaskVerificationDomainError({ code, ...context });
 };
 
+declare const canonicalTaskVerificationRevisionBrand: unique symbol;
+declare const trustedTaskVerificationIdentityInputBrand: unique symbol;
+declare const taskVerificationIdentityBrand: unique symbol;
+declare const taskVerificationTransitionBrand: unique symbol;
+
 export type TaskVerificationRulePrimitive = string | number | boolean;
 export type TaskVerificationRuleValue =
   | TaskVerificationRulePrimitive
@@ -156,6 +161,7 @@ export interface TaskVerificationRevisionInput {
 }
 
 export interface CanonicalTaskVerificationRevision {
+  readonly [canonicalTaskVerificationRevisionBrand]: true;
   readonly campaignId: string;
   readonly evidenceRule: CanonicalTaskVerificationRule;
   readonly evidenceRuleDigest: string;
@@ -182,13 +188,15 @@ export interface TaskVerificationBindingIdentityInput {
 }
 
 export interface TrustedTaskVerificationIdentityInput {
-  binding: TaskVerificationBindingIdentityInput;
-  issuedSubject: IssuedTaskVerificationSubjectInput;
-  task: CanonicalTaskVerificationRevision;
-  traceId: string;
+  readonly [trustedTaskVerificationIdentityInputBrand]: true;
+  readonly binding: Readonly<TaskVerificationBindingIdentityInput>;
+  readonly issuedSubject: Readonly<IssuedTaskVerificationSubjectInput>;
+  readonly task: CanonicalTaskVerificationRevision;
+  readonly traceId: string;
 }
 
 export interface TaskVerificationIdentity {
+  readonly [taskVerificationIdentityBrand]: true;
   readonly binding: Readonly<TaskVerificationBindingIdentityInput>;
   readonly campaignId: string;
   readonly evidenceRuleDigest: string;
@@ -230,6 +238,7 @@ export interface TaskVerificationTransitionInput {
 }
 
 export interface TaskVerificationTransition {
+  readonly [taskVerificationTransitionBrand]: true;
   readonly bindingEnabled: boolean;
   readonly diagnosticCodes: readonly string[];
   readonly evidence?: TaskVerificationSafeEvidence;
@@ -252,6 +261,11 @@ export interface TaskVerificationExecutionResolution {
   readonly posture: TaskVerificationExecutionPosture;
   readonly transportAllowed: boolean;
 }
+
+const canonicalTaskVerificationRevisions = new WeakSet<object>();
+const trustedTaskVerificationIdentityInputs = new WeakSet<object>();
+const serverIssuedTaskVerificationIdentities = new WeakSet<object>();
+const serverIssuedTaskVerificationTransitions = new WeakSet<object>();
 
 const ATTEMPT_TRANSITIONS: Readonly<Record<TaskVerificationAttemptStatus, ReadonlySet<TaskVerificationAttemptStatus>>> =
   Object.freeze({
@@ -365,7 +379,7 @@ export const createCanonicalTaskVerificationRevision = (
     walletPolicy,
   });
 
-  return Object.freeze({
+  const canonicalTask = Object.freeze({
     campaignId,
     evidenceRule: canonicalRule.value,
     evidenceRuleDigest: canonicalRule.digest,
@@ -380,14 +394,15 @@ export const createCanonicalTaskVerificationRevision = (
     updatedAt,
     verificationType,
     walletPolicy,
-  });
+  }) as CanonicalTaskVerificationRevision;
+
+  canonicalTaskVerificationRevisions.add(canonicalTask);
+  return canonicalTask;
 };
 
-export const deriveTaskVerificationIdentity = (
+export const issueTrustedTaskVerificationIdentityInput = (
   input: unknown,
-  untrustedClientClaims?: unknown,
-): TaskVerificationIdentity => {
-  void untrustedClientClaims;
+): TrustedTaskVerificationIdentityInput => {
   const traceId = traceIdFromUnknown(input);
   const record = assertExactRecord(
     input,
@@ -431,13 +446,45 @@ export const deriveTaskVerificationIdentity = (
     "binding",
     validatedTraceId,
   );
-  const bindingId = assertSafeId(bindingRecord.bindingId, "binding.bindingId", validatedTraceId);
+  const bindingId = assertSafeId(
+    bindingRecord.bindingId,
+    "binding.bindingId",
+    validatedTraceId,
+  );
   const bindingRevision = assertPositiveInteger(
     bindingRecord.bindingRevision,
     "binding.bindingRevision",
     TASK_VERIFICATION_MAX_REVISION,
     validatedTraceId,
   );
+  const trustedInput = Object.freeze({
+    binding: Object.freeze({ bindingId, bindingRevision }),
+    issuedSubject: Object.freeze({ accountType, sessionRef, walletAddress, walletSource }),
+    task,
+    traceId: validatedTraceId,
+  }) as TrustedTaskVerificationIdentityInput;
+
+  trustedTaskVerificationIdentityInputs.add(trustedInput);
+  return trustedInput;
+};
+
+export const deriveTaskVerificationIdentity = (
+  input: TrustedTaskVerificationIdentityInput,
+  untrustedClientClaims?: unknown,
+): TaskVerificationIdentity => {
+  void untrustedClientClaims;
+  const traceId = traceIdFromUnknown(input);
+  if (
+    typeof input !== "object"
+    || input === null
+    || !trustedTaskVerificationIdentityInputs.has(input)
+  ) {
+    return fail("TASK_VERIFICATION_INVALID_IDENTITY", { field: "input", traceId });
+  }
+
+  const task = input.task;
+  const { accountType, sessionRef, walletAddress, walletSource } = input.issuedSubject;
+  const { bindingId, bindingRevision } = input.binding;
   const idempotencyPayload = serializeCanonicalRecord({
     accountType,
     bindingId,
@@ -451,7 +498,7 @@ export const deriveTaskVerificationIdentity = (
     walletSource,
   });
 
-  return Object.freeze({
+  const identity = Object.freeze({
     binding: Object.freeze({ bindingId, bindingRevision }),
     campaignId: task.campaignId,
     evidenceRuleDigest: task.evidenceRuleDigest,
@@ -464,7 +511,10 @@ export const deriveTaskVerificationIdentity = (
     taskId: task.taskId,
     taskRevision: task.revision,
     taskRevisionDigest: task.taskRevisionDigest,
-  });
+  }) as TaskVerificationIdentity;
+
+  serverIssuedTaskVerificationIdentities.add(identity);
+  return identity;
 };
 
 export const transitionTaskVerificationAttempt = (
@@ -531,7 +581,7 @@ export const transitionTaskVerificationAttempt = (
     });
   }
 
-  return Object.freeze({
+  const transition = Object.freeze({
     bindingEnabled,
     diagnosticCodes,
     evidence,
@@ -541,8 +591,25 @@ export const transitionTaskVerificationAttempt = (
     terminal: isTaskVerificationTerminalStatus(targetStatus),
     traceId: validatedTraceId,
     transportExecuted,
-  });
+  }) as TaskVerificationTransition;
+
+  serverIssuedTaskVerificationTransitions.add(transition);
+  return transition;
 };
+
+export const isServerIssuedTaskVerificationIdentity = (
+  value: unknown,
+): value is TaskVerificationIdentity =>
+  typeof value === "object"
+  && value !== null
+  && serverIssuedTaskVerificationIdentities.has(value);
+
+export const isServerIssuedTaskVerificationTransition = (
+  value: unknown,
+): value is TaskVerificationTransition =>
+  typeof value === "object"
+  && value !== null
+  && serverIssuedTaskVerificationTransitions.has(value);
 
 export const resolveTaskVerificationExecutionPosture = (
   verificationType: unknown,
@@ -622,40 +689,15 @@ function canonicalizeSafeEvidence(
 }
 
 function assertCanonicalTask(value: unknown, traceId: string): CanonicalTaskVerificationRevision {
-  const record = assertExactRecord(value, [
-    "campaignId",
-    "evidenceRule",
-    "evidenceRuleDigest",
-    "points",
-    "required",
-    "revision",
-    "taskId",
-    "taskRevisionDigest",
-    "updatedAt",
-    "verificationType",
-    "walletPolicy",
-  ], "task", traceId);
-  const canonical = createCanonicalTaskVerificationRevision({
-    campaignId: record.campaignId,
-    evidenceRule: record.evidenceRule,
-    points: record.points,
-    required: record.required,
-    revision: record.revision,
-    taskId: record.taskId,
-    traceId,
-    updatedAt: record.updatedAt,
-    verificationType: record.verificationType,
-    walletPolicy: record.walletPolicy,
-  });
-
   if (
-    record.evidenceRuleDigest !== canonical.evidenceRuleDigest
-    || record.taskRevisionDigest !== canonical.taskRevisionDigest
+    typeof value !== "object"
+    || value === null
+    || !canonicalTaskVerificationRevisions.has(value)
   ) {
     return fail("TASK_VERIFICATION_INVALID_IDENTITY", { field: "task", traceId });
   }
 
-  return canonical;
+  return value as CanonicalTaskVerificationRevision;
 }
 
 function canonicalizeRuleValue(

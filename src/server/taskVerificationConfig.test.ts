@@ -29,7 +29,10 @@ import {
   type TaskVerificationConfigInput,
   type TaskVerificationEnvironment,
 } from "./taskVerificationConfig";
-import { validateProviderHttpVerificationBindingCompatibility } from "./providerHttpRuntimeRegistry";
+import {
+  providerHttpRuntimeProductionPreconditions,
+  validateProviderHttpVerificationBindingCompatibility,
+} from "./providerHttpRuntimeRegistry";
 import { TASK_VERIFICATION_MAX_REVISION } from "./taskVerification";
 
 const materialEnv = {
@@ -37,6 +40,22 @@ const materialEnv = {
   [TASK_VERIFICATION_HEADER_ENV_KEY]: "{\"x-provider\":\"local\"}",
   [TASK_VERIFICATION_REQUEST_BODY_ENV_KEY]: "{\"walletRef\":\"wallet-ref:test\"}",
   [TASK_VERIFICATION_CREDENTIAL_ENV_KEY]: "local-credential-material",
+} satisfies Record<string, string>;
+
+const productionReadyProviderHttpEnv = {
+  CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:provider-http-endpoint",
+  CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF: "config-ref:provider-http-registry",
+  CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF: "header-ref:provider-http-auth",
+  CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF: "idem-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF: "lease-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF: "config-ref:provider-http-worker",
+  CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY: "policy-ref:provider-http-redaction",
+  CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY: "policy-ref:provider-http-response-map",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF: "runbook-ref:provider-http",
+  CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT: "explicitly-enabled",
+  CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:2500ms",
+  CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:provider-http-transport",
 } satisfies Record<string, string>;
 
 const binding = (
@@ -93,6 +112,7 @@ const resolve = ({
   env = materialEnv,
   environment = "local",
   jsonParser,
+  providerHttpTransportProvided,
 }: {
   bindings?: unknown;
   bindingsJson?: string;
@@ -100,12 +120,14 @@ const resolve = ({
   env?: Readonly<Record<string, string | undefined>>;
   environment?: TaskVerificationEnvironment;
   jsonParser?: (source: string) => unknown;
+  providerHttpTransportProvided?: boolean;
 } = {}) => resolveTaskVerificationConfig({
   bindingsJson: bindingsJson ?? JSON.stringify(bindings),
   enablement,
   env,
   environment,
   jsonParser,
+  providerHttpTransportProvided,
 });
 
 const diagnosticCodes = (result: ReturnType<typeof resolveTaskVerificationConfig>) =>
@@ -714,10 +736,15 @@ describe("task verification binding config", () => {
   it("requires a non-loopback HTTPS endpoint descriptor in production", () => {
     const productionEnv = {
       ...materialEnv,
+      ...productionReadyProviderHttpEnv,
       [TASK_VERIFICATION_ENDPOINT_ENV_KEY]: "https://provider.example/verify",
     };
 
-    expect(resolve({ env: productionEnv, environment: "production" }).status).toBe("ready");
+    expect(resolve({
+      env: productionEnv,
+      environment: "production",
+      providerHttpTransportProvided: true,
+    }).status).toBe("ready");
 
     for (const endpoint of [
       "http://provider.example/verify",
@@ -730,10 +757,46 @@ describe("task verification binding config", () => {
       const config = resolve({
         env: { ...productionEnv, [TASK_VERIFICATION_ENDPOINT_ENV_KEY]: endpoint },
         environment: "production",
+        providerHttpTransportProvided: true,
       });
 
       expect(config.enabled).toBe(false);
       expect(diagnosticCodes(config)).toEqual(["TASK_VERIFICATION_ENDPOINT_POLICY_INVALID"]);
+    }
+  });
+
+  it("keeps production no-live until every existing Provider HTTP precondition passes", () => {
+    const productionEnv = {
+      ...materialEnv,
+      ...productionReadyProviderHttpEnv,
+      [TASK_VERIFICATION_ENDPOINT_ENV_KEY]: "https://provider.example/verify",
+    };
+    const withoutInjectedTransport = resolve({
+      env: productionEnv,
+      environment: "production",
+      providerHttpTransportProvided: false,
+    });
+
+    expect(diagnosticCodes(withoutInjectedTransport)).toEqual([
+      "TASK_VERIFICATION_PRODUCTION_RUNTIME_NOT_READY",
+    ]);
+
+    for (const precondition of providerHttpRuntimeProductionPreconditions) {
+      const env: Record<string, string | undefined> = { ...productionEnv };
+
+      for (const key of precondition.requiredConfigKeys) {
+        delete env[key];
+      }
+
+      const config = resolve({
+        env,
+        environment: "production",
+        providerHttpTransportProvided: true,
+      });
+
+      expect(diagnosticCodes(config), precondition.id).toEqual([
+        "TASK_VERIFICATION_PRODUCTION_RUNTIME_NOT_READY",
+      ]);
     }
   });
 
@@ -833,6 +896,30 @@ describe("task verification binding config", () => {
       }
     }
   });
+
+  it.each([
+    ["id", "TASK_VERIFICATION_ID_INVALID"],
+    ["endpointId", "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["providerGroupId", "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["requestMappingId", "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+    ["responseMappingId", "TASK_VERIFICATION_PROVIDER_REFERENCE_INVALID"],
+  ] as const)(
+    "rejects secret-like material in disabled %s before it reaches a safe summary",
+    (field, expectedCode) => {
+      const secretLikeId = "raw-secret-token-243";
+      const config = resolve({
+        bindings: [binding({ enabled: false, [field]: secretLikeId })],
+        env: {},
+      });
+      const serialized = JSON.stringify({
+        config,
+        summary: createTaskVerificationConfigSummary(config),
+      });
+
+      expect(diagnosticCodes(config)).toEqual([expectedCode]);
+      expect(serialized).not.toContain(secretLikeId);
+    },
+  );
 
   it("defensively copies and deeply freezes parsed descriptors", () => {
     const parsed = [binding()];

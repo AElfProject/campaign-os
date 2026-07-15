@@ -9,12 +9,17 @@ import {
   canonicalizeTaskVerificationRule,
   createCanonicalTaskVerificationRevision,
   deriveTaskVerificationIdentity,
+  isServerIssuedTaskVerificationIdentity,
+  isServerIssuedTaskVerificationTransition,
   isTaskVerificationAttemptStatus,
   isTaskVerificationOutcomeStatus,
   isTaskVerificationTerminalStatus,
+  issueTrustedTaskVerificationIdentityInput,
   resolveTaskVerificationExecutionPosture,
   transitionTaskVerificationAttempt,
+  type TaskVerificationTransition,
   type TaskVerificationRevisionInput,
+  type TrustedTaskVerificationIdentityInput,
 } from "./taskVerification";
 
 const TRACE_ID = "trace-wp01-domain";
@@ -228,7 +233,7 @@ describe("task verification evidence-rule safety", () => {
 });
 
 describe("task verification server-derived identity", () => {
-  const trustedInput = () => ({
+  const trustedInputValues = () => ({
     binding: {
       bindingId: "binding-on-chain-default",
       bindingRevision: 1,
@@ -242,6 +247,9 @@ describe("task verification server-derived identity", () => {
     task: canonicalTask(),
     traceId: TRACE_ID,
   });
+  const trustedInput = () => issueTrustedTaskVerificationIdentityInput(
+    trustedInputValues(),
+  );
 
   it("is stable and ignores untrusted client provider, binding, identity, and lease claims", () => {
     const first = deriveTaskVerificationIdentity(trustedInput(), {
@@ -261,50 +269,68 @@ describe("task verification server-derived identity", () => {
     expect(first).toEqual(second);
     expect(first.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(first)).not.toContain("client-");
+    expect(isServerIssuedTaskVerificationIdentity(first)).toBe(true);
+    expect(isServerIssuedTaskVerificationIdentity({ ...first })).toBe(false);
+  });
+
+  it("rejects a structurally forged trusted input at compile time and runtime", () => {
+    const rawInput = trustedInputValues();
+
+    // @ts-expect-error Trusted inputs must come from the server issuance factory.
+    const compileTimeForgery: TrustedTaskVerificationIdentityInput = rawInput;
+
+    expect(() => deriveTaskVerificationIdentity(
+      rawInput as unknown as TrustedTaskVerificationIdentityInput,
+    )).toThrow(TaskVerificationDomainError);
+    expect(compileTimeForgery).toBe(rawInput);
   });
 
   it.each([
-    ["campaign", (input: ReturnType<typeof trustedInput>) => ({
+    ["campaign", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       task: createCanonicalTaskVerificationRevision(revisionInput({ campaignId: "campaign-other" })),
     })],
-    ["task", (input: ReturnType<typeof trustedInput>) => ({
+    ["task", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       task: createCanonicalTaskVerificationRevision(revisionInput({ taskId: "task-other" })),
     })],
-    ["revision", (input: ReturnType<typeof trustedInput>) => ({
+    ["revision", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       task: createCanonicalTaskVerificationRevision(revisionInput({ revision: 2 })),
     })],
-    ["wallet", (input: ReturnType<typeof trustedInput>) => ({
+    ["wallet", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       issuedSubject: { ...input.issuedSubject, walletAddress: "ELF_OtherWallet_AELF" },
     })],
-    ["account", (input: ReturnType<typeof trustedInput>) => ({
+    ["account", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       issuedSubject: { ...input.issuedSubject, accountType: "EOA" as const },
     })],
-    ["source", (input: ReturnType<typeof trustedInput>) => ({
+    ["source", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       issuedSubject: { ...input.issuedSubject, walletSource: "NIGHTELF" as const },
     })],
-    ["binding", (input: ReturnType<typeof trustedInput>) => ({
+    ["binding", (input: ReturnType<typeof trustedInputValues>) => ({
       ...input,
       binding: { ...input.binding, bindingId: "binding-other" },
     })],
   ])("changes when trusted %s identity changes", (_label, change) => {
     const baseline = deriveTaskVerificationIdentity(trustedInput());
-    const changed = deriveTaskVerificationIdentity(change(trustedInput()));
+    const changed = deriveTaskVerificationIdentity(
+      issueTrustedTaskVerificationIdentityInput(change(trustedInputValues())),
+    );
 
     expect(changed.idempotencyKey).not.toBe(baseline.idempotencyKey);
   });
 
   it("does not make session rotation a second provider identity", () => {
     const first = deriveTaskVerificationIdentity(trustedInput());
-    const rotated = trustedInput();
+    const rotated = trustedInputValues();
     rotated.issuedSubject.sessionRef = "session-issued-rotated";
 
-    expect(deriveTaskVerificationIdentity(rotated).idempotencyKey).toBe(first.idempotencyKey);
+    expect(deriveTaskVerificationIdentity(
+      issueTrustedTaskVerificationIdentityInput(rotated),
+    ).idempotencyKey).toBe(first.idempotencyKey);
   });
 });
 
@@ -394,6 +420,31 @@ describe("task verification attempt state machine", () => {
     expect(isTaskVerificationTerminalStatus("manual_review")).toBe(true);
     expect(isTaskVerificationTerminalStatus("pending")).toBe(false);
   });
+
+  it("brands completed transition projections as server-issued only", () => {
+    const issued = transitionTaskVerificationAttempt(completedTransition());
+    const structuralClone = {
+      bindingEnabled: issued.bindingEnabled,
+      diagnosticCodes: [...issued.diagnosticCodes],
+      evidence: issued.evidence && {
+        ...issued.evidence,
+        diagnosticCodes: [...issued.evidence.diagnosticCodes],
+      },
+      positiveMatch: issued.positiveMatch,
+      previousStatus: issued.previousStatus,
+      status: issued.status,
+      terminal: issued.terminal,
+      traceId: issued.traceId,
+      transportExecuted: issued.transportExecuted,
+    };
+
+    // @ts-expect-error Transition projections must come from the invariant helper.
+    const compileTimeForgery: TaskVerificationTransition = structuralClone;
+
+    expect(isServerIssuedTaskVerificationTransition(issued)).toBe(true);
+    expect(isServerIssuedTaskVerificationTransition(structuralClone)).toBe(false);
+    expect(compileTimeForgery.status).toBe("completed");
+  });
 });
 
 describe("task verification safe evidence bounds", () => {
@@ -480,17 +531,19 @@ describe("task verification immutable projections", () => {
       evidenceRule: { source: "AELFSCAN", tags },
     });
     const task = createCanonicalTaskVerificationRevision(input);
-    const identity = deriveTaskVerificationIdentity({
-      binding: { bindingId: "binding-on-chain-default", bindingRevision: 1 },
-      issuedSubject: {
-        accountType: "AA",
-        sessionRef: "session-issued-123",
-        walletAddress: "ELF_2M7wIssuedWallet_AELF",
-        walletSource: "PORTKEY_AA",
-      },
-      task,
-      traceId: TRACE_ID,
-    });
+    const identity = deriveTaskVerificationIdentity(
+      issueTrustedTaskVerificationIdentityInput({
+        binding: { bindingId: "binding-on-chain-default", bindingRevision: 1 },
+        issuedSubject: {
+          accountType: "AA",
+          sessionRef: "session-issued-123",
+          walletAddress: "ELF_2M7wIssuedWallet_AELF",
+          walletSource: "PORTKEY_AA",
+        },
+        task,
+        traceId: TRACE_ID,
+      }),
+    );
     const transition = transitionTaskVerificationAttempt(completedTransition());
 
     tags.push("mutated-after-call");

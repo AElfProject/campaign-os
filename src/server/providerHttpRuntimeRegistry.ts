@@ -171,7 +171,7 @@ export const providerHttpRuntimeProductionPreconditions: ProviderHttpProductionP
   ),
 ];
 
-export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
+export const providerHttpEndpointRegistry: readonly ProviderHttpEndpointEntry[] = Object.freeze([
   endpoint({
     category: "indexer",
     credentialRef: "credential-ref:provider-http-indexer",
@@ -296,7 +296,7 @@ export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
     timeoutPolicyRef: "timeout-policy:provider-http-ai-2500ms",
     urlTemplateRef: "provider.endpoint.ai_provider.verification_status.url",
   }),
-];
+]);
 
 export const providerHttpVerificationBindingExamples = {
   "aefinder-aelfscan": {
@@ -395,10 +395,7 @@ interface ProviderHttpEndpointIndex {
   endpointsById: ReadonlyMap<string, IndexedProviderHttpEndpoint>;
 }
 
-const providerHttpEndpointIndexCache = new WeakMap<
-  readonly ProviderHttpEndpointEntry[],
-  ProviderHttpEndpointIndex
->();
+let defaultProviderHttpEndpointIndex: ProviderHttpEndpointIndex | undefined;
 
 export const listProviderHttpEndpointEntries = (): ProviderHttpEndpointEntry[] =>
   providerHttpEndpointRegistry.map(cloneEndpointEntry);
@@ -542,10 +539,8 @@ type ProviderHttpCompatibilitySummaryIds = Omit<
 function getProviderHttpEndpointIndex(
   registry: readonly ProviderHttpEndpointEntry[],
 ): ProviderHttpEndpointIndex {
-  const cachedIndex = providerHttpEndpointIndexCache.get(registry);
-
-  if (cachedIndex) {
-    return cachedIndex;
+  if (registry === providerHttpEndpointRegistry && defaultProviderHttpEndpointIndex) {
+    return defaultProviderHttpEndpointIndex;
   }
 
   const duplicateEndpointIds = new Set<string>();
@@ -564,7 +559,11 @@ function getProviderHttpEndpointIndex(
   });
 
   const index = { duplicateEndpointIds, endpointsById };
-  providerHttpEndpointIndexCache.set(registry, index);
+
+  if (registry === providerHttpEndpointRegistry) {
+    defaultProviderHttpEndpointIndex = index;
+  }
+
   return index;
 }
 
@@ -602,12 +601,12 @@ function compatibilitySummary(
   status: ProviderHttpBindingCompatibilitySummary["status"],
   diagnosticCodes: ReadonlySet<ProviderHttpBindingCompatibilityDiagnosticCode>,
 ): ProviderHttpBindingCompatibilitySummary {
-  return {
+  return Object.freeze({
     ...ids,
-    diagnosticCodes: [...diagnosticCodes],
+    diagnosticCodes: Object.freeze([...diagnosticCodes]),
     diagnosticCount: diagnosticCodes.size,
     status,
-  };
+  });
 }
 
 function hasSafeProviderHttpBindingCompatibilityInputShape(
@@ -698,11 +697,15 @@ function endpoint(
     rolloutStatus?: ProviderEndpointRolloutStatus;
   },
 ): ProviderHttpEndpointEntry {
-  return {
+  return Object.freeze({
     ...entry,
-    requiredConfigKeys: entry.requiredConfigKeys ?? endpointRequiredConfigKeys(entry.providerFamily),
+    headerRefs: Object.freeze([...entry.headerRefs]),
+    requiredConfigKeys: Object.freeze([
+      ...(entry.requiredConfigKeys ?? endpointRequiredConfigKeys(entry.providerFamily)),
+    ]),
     rolloutStatus: entry.rolloutStatus ?? "enabled",
-  };
+    supportedVerificationTypes: Object.freeze([...entry.supportedVerificationTypes]),
+  }) as ProviderHttpEndpointEntry;
 }
 
 function precondition(
