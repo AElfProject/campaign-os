@@ -1,15 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createCampaignOsLocalService, type CampaignOsLocalService } from "../domain/campaignService";
 import {
   CampaignOsCampaignDbConfigError,
+  CampaignOsAdminReviewConfigError,
   CampaignOsParticipantPreviewConfigError,
+  resolveCampaignOsAdminReviewConfig,
   resolveCampaignOsCampaignDbConfig,
   resolveCampaignOsParticipantPreviewConfig,
   resolveCampaignOsRuntimeConfig,
   type CampaignOsCampaignDbConfig,
   type CampaignOsCampaignDbPoolConfig,
+  type CampaignOsAdminReviewConfig,
+  type CampaignOsAdminReviewConfigOptions,
   type CampaignOsParticipantPreviewConfig,
   type CampaignOsParticipantPreviewConfigOptions,
   type CampaignOsRuntimeConfig,
@@ -34,7 +39,10 @@ import {
   toApiRuntimeErrorBody,
 } from "./errors";
 import type { ApiRuntimeRouteContract } from "./contracts";
-import { apiRuntimeContractRoutes } from "./routes";
+import {
+  apiRuntimeRouteCatalog as apiRuntimeContractRoutes,
+  resolveAdminApiRoute,
+} from "./routes";
 import { createApiRuntimeHandlers } from "./handlers";
 import {
   createBackendDatabaseAdapterRuntimeSummary,
@@ -66,11 +74,27 @@ import {
   type CampaignOsRepository,
 } from "./persistence";
 import {
+  evaluateAdminOperatorEnforcement,
   evaluateIssuedAuthEnforcement,
+  getAdminOperatorRoutePolicy,
+  type AuthorizedAdminOperatorContext,
   type AuthEnforcementDecision,
   type ParticipantCompatibilitySubject,
 } from "./authEnforcement";
 import { getProtectedRouteAuth } from "./authSession";
+import {
+  createAdminOperatorMembershipRegistry,
+  type AdminOperatorMembershipRegistry,
+} from "./adminOperatorMembership";
+import {
+  ADMIN_REVIEW_MAX_LIST_LIMIT,
+  ADMIN_REVIEW_MIGRATION_ID,
+  type AdminReviewStore,
+} from "./adminReviewStore";
+import {
+  createPostgresAdminReviewStore,
+  type PostgresAdminReviewStorePool,
+} from "./postgresAdminReviewStore";
 import {
   createExportArtifactRegistry,
   type ExportArtifactRegistry,
@@ -88,6 +112,15 @@ export interface ApiRuntimeRequest {
 export interface ApiRuntimeResponse<TPayload = unknown> {
   body: ApiRuntimeEnvelope<TPayload>;
   headers: Record<string, string>;
+  rawBody?: string;
+  status: number;
+}
+
+export interface ApiRuntimeHandlerTransportResult {
+  data: unknown;
+  headers?: Record<string, string>;
+  kind: "api_runtime_transport_result";
+  rawBody?: string;
   status: number;
 }
 
@@ -96,6 +129,7 @@ export interface ApiRuntimeHandlerContext {
   body: unknown;
   campaignDbRepository: CampaignDbRepository;
   exportArtifactRegistry: ExportArtifactRegistry;
+  headers: ApiRuntimeHeaders;
   params: Record<string, string>;
   participantPreviewConfig: ParticipantPreviewConfigFactory;
   repository: CampaignOsRepository;
@@ -105,6 +139,8 @@ export interface ApiRuntimeHandlerContext {
   traceId: string;
   version: string;
   walletSessionRepository: WalletSessionRepository;
+  adminOperator?: AuthorizedAdminOperatorContext;
+  adminReviewStore?: AdminReviewStore;
   auth?: AuthEnforcementDecision;
 }
 
@@ -134,6 +170,12 @@ export interface CampaignDbRuntimePool extends PostgresCampaignStorePool {
 export type CampaignDbPoolFactory = (
   config: CampaignOsCampaignDbPoolConfig,
 ) => CampaignDbRuntimePool;
+
+export type AdminReviewPoolFactory = (
+  config: CampaignOsCampaignDbPoolConfig,
+) => PostgresAdminReviewStorePool;
+
+export type AdminReviewStoreOwnership = "external" | "runtime";
 
 const campaignDbRequire = createRequire(
   import.meta.url.startsWith("file:") ? import.meta.url : join(process.cwd(), "package.json"),
@@ -203,6 +245,16 @@ interface ApiRuntimeRouteMatcher {
 }
 
 export interface CreateCampaignOsApiRuntimeOptions {
+  adminOperatorMembershipRegistry?: AdminOperatorMembershipRegistry;
+  adminReviewConfig?: CampaignOsAdminReviewConfig;
+  adminReviewConfigOptions?: CampaignOsAdminReviewConfigOptions;
+  adminReviewExpectedMigration?: {
+    checksum: string;
+    id: typeof ADMIN_REVIEW_MIGRATION_ID;
+  };
+  adminReviewPoolFactory?: AdminReviewPoolFactory;
+  adminReviewStore?: AdminReviewStore;
+  adminReviewStoreOwnership?: AdminReviewStoreOwnership;
   backendServiceReadiness?: BackendServiceReadinessFactory;
   campaignDbConfig?: CampaignOsCampaignDbConfig;
   campaignDbPoolFactory?: CampaignDbPoolFactory;
@@ -254,6 +306,51 @@ const createPgCampaignPool: CampaignDbPoolFactory = (config) => {
     },
   };
 };
+
+const resolveAdminReviewExpectedMigration = () => {
+  const migrationPath = resolve(
+    process.cwd(),
+    "db/migrations",
+    `${ADMIN_REVIEW_MIGRATION_ID}.up.sql`,
+  );
+  const normalizedSql = `${readFileSync(migrationPath, "utf8")
+    .replace(/\r\n?/g, "\n")
+    .trimEnd()}\n`;
+
+  return Object.freeze({
+    checksum: createHash("sha256").update(normalizedSql, "utf8").digest("hex"),
+    id: ADMIN_REVIEW_MIGRATION_ID,
+  });
+};
+
+const adminRuntimeUnavailable = (
+  diagnosticCode: string,
+  operation = "adminReview.initialize",
+) => new ApiRuntimeError({
+  code: "PERSISTENCE_UNAVAILABLE",
+  details: {
+    diagnosticCode,
+    operation,
+  },
+  message: {
+    "en-US": "The durable Admin review runtime is unavailable.",
+    "zh-CN": "持久化 Admin review runtime 当前不可用。",
+    "zh-TW": "持久化 Admin review runtime 當前不可用。",
+  },
+  status: 503,
+});
+
+const isHandlerTransportResult = (
+  value: unknown,
+): value is ApiRuntimeHandlerTransportResult => isRecord(value)
+  && value.kind === "api_runtime_transport_result"
+  && typeof value.status === "number"
+  && Number.isInteger(value.status)
+  && value.status >= 200
+  && value.status <= 299;
+
+const createPgAdminReviewPool: AdminReviewPoolFactory = (config) =>
+  createPgCampaignPool(config) as PostgresAdminReviewStorePool;
 
 let generatedTraceSequence = 0;
 
@@ -632,6 +729,42 @@ const evaluateRuntimeIssuedAuth = async ({
   return authDecision;
 };
 
+const evaluateRuntimeAdminAuth = ({
+  activeWalletSessionIds,
+  campaignId,
+  headers,
+  membershipRegistry,
+  routeId,
+  traceId,
+  walletSessionActivationPolicy,
+  walletSessionRepository,
+}: {
+  activeWalletSessionIds: ReadonlySet<string>;
+  campaignId?: string;
+  headers?: ApiRuntimeHeaders;
+  membershipRegistry: AdminOperatorMembershipRegistry;
+  routeId: string;
+  traceId: string;
+  walletSessionActivationPolicy: WalletSessionActivationPolicy;
+  walletSessionRepository: WalletSessionRepository;
+}) => evaluateAdminOperatorEnforcement({
+  campaignId,
+  headers,
+  issuedSessionLookup: async (sessionId, context) => {
+    if (
+      walletSessionActivationPolicy === "runtime_issued_only"
+      && !activeWalletSessionIds.has(sessionId)
+    ) {
+      return undefined;
+    }
+
+    return walletSessionRepository.getBySessionId(sessionId, context);
+  },
+  membershipRegistry,
+  routeId,
+  traceId,
+});
+
 const createParticipantPreviewConfigFactory = (
   options: CampaignOsParticipantPreviewConfigOptions | undefined,
   runtimeConfigOptions: CampaignOsRuntimeConfigOptions | undefined,
@@ -1001,6 +1134,45 @@ const findMatchingRoute = (
   throw routeNotFound(method, pathname);
 };
 
+const findMatchingRequestRoute = (
+  matchers: readonly ApiRuntimeRouteMatcher[],
+  method: string,
+  requestTarget: string,
+  pathname: string,
+  query: Record<string, string>,
+) => {
+  if (!pathname.startsWith("/api/admin/")) {
+    return { ...findMatchingRoute(matchers, method, pathname), query };
+  }
+
+  const resolution = resolveAdminApiRoute(method, requestTarget);
+
+  if (!resolution.matched) {
+    if (resolution.reason === "method_not_allowed") {
+      throw methodNotAllowed(method, pathname, resolution.allowedMethods);
+    }
+    if (
+      resolution.reason === "duplicate_query_parameter"
+      || resolution.reason === "query_not_allowed"
+    ) {
+      throw invalidRequest("query", "Admin route query parameters are invalid.");
+    }
+
+    throw routeNotFound(method, pathname);
+  }
+
+  const matcher = matchers.find(({ route }) => route.id === resolution.route.id);
+  if (!matcher) {
+    throw routeNotFound(method, pathname);
+  }
+
+  return {
+    matcher,
+    params: resolution.params,
+    query: resolution.query,
+  };
+};
+
 const createSafeRepository = (repository: CampaignOsRepository): CampaignOsRepository => {
   let initializePromise: Promise<void> | undefined;
 
@@ -1223,6 +1395,13 @@ const createSafeWalletSessionRepository = (
 };
 
 export const createCampaignOsApiRuntime = ({
+  adminOperatorMembershipRegistry,
+  adminReviewConfig,
+  adminReviewConfigOptions,
+  adminReviewExpectedMigration,
+  adminReviewPoolFactory = createPgAdminReviewPool,
+  adminReviewStore,
+  adminReviewStoreOwnership = "runtime",
   backendServiceReadiness,
   campaignDbConfig,
   campaignDbPoolFactory = createPgCampaignPool,
@@ -1277,6 +1456,25 @@ export const createCampaignOsApiRuntime = ({
       return resolveCampaignOsCampaignDbConfig({ env: {} });
     }
   })();
+  const resolveAdminReviewConfig = () => adminReviewConfig
+    ?? resolveCampaignOsAdminReviewConfig({
+      ...adminReviewConfigOptions,
+      env: adminReviewConfigOptions?.env ?? runtimeConfigOptions?.env,
+    });
+  let adminReviewConfigError: unknown;
+  const initialAdminReviewConfig = (() => {
+    try {
+      return resolveAdminReviewConfig();
+    } catch (error) {
+      adminReviewConfigError = error;
+
+      return Object.freeze({
+        enabled: false,
+        memberships: Object.freeze([]),
+        sourceRevision: "admin-membership-config-invalid",
+      }) satisfies CampaignOsAdminReviewConfig;
+    }
+  })();
   const safeRepository = createSafeRepository(
     repository ?? createCampaignOsRepository(resolvedConfig.persistence),
   );
@@ -1314,6 +1512,57 @@ export const createCampaignOsApiRuntime = ({
     walletSessionRepository ?? createWalletSessionRepository(walletSessionRepositoryOptions),
     (sessionId) => activeWalletSessionIds.add(sessionId),
   );
+  let adminReviewInitializationError: unknown;
+  let adminReviewPartialCleanup: Promise<void> | undefined;
+  const composedAdminReviewStore = (() => {
+    if (!initialAdminReviewConfig.enabled || adminReviewConfigError) {
+      return undefined;
+    }
+
+    if (adminReviewStore) {
+      return adminReviewStore;
+    }
+
+    if (
+      resolvedCampaignDbConfig.mode !== "postgres"
+      || configError instanceof CampaignOsCampaignDbConfigError
+    ) {
+      return undefined;
+    }
+
+    let pool: PostgresAdminReviewStorePool | undefined;
+
+    try {
+      const expectedMigration = adminReviewExpectedMigration
+        ?? resolveAdminReviewExpectedMigration();
+      pool = adminReviewPoolFactory(resolvedCampaignDbConfig.pool);
+      const onError = (pool as PostgresAdminReviewStorePool & {
+        onError?: (listener: (error: unknown) => void) => void;
+      }).onError;
+
+      onError?.(() => {
+        if (logger) {
+          logger.error(
+            `[campaign-os-api-runtime] admin_review_pool_error code=ADMIN_REVIEW_POOL_BACKGROUND_ERROR traceId=${randomUUID()}`,
+          );
+        }
+      });
+
+      return createPostgresAdminReviewStore({
+        boundedListLimit: ADMIN_REVIEW_MAX_LIST_LIMIT,
+        expectedMigration,
+        ownsPool: true,
+        pool,
+      });
+    } catch (error) {
+      adminReviewInitializationError = error;
+      if (pool) {
+        adminReviewPartialCleanup = pool.end().catch(() => undefined);
+      }
+
+      return undefined;
+    }
+  })();
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeContractRoutes.map(compileRouteMatcher);
   const runtimeVersion = version ?? resolvedConfig.version;
@@ -1333,12 +1582,34 @@ export const createCampaignOsApiRuntime = ({
   const activeService = resolvedCampaignDbConfig.mode === "postgres"
     ? createCampaignDbAuthoritativeService(service)
     : service;
+  let acceptingRequests = true;
+  let activeRequestCount = 0;
+  const drainWaiters = new Set<() => void>();
+  const waitForRequestDrain = () => activeRequestCount === 0
+    ? Promise.resolve()
+    : new Promise<void>((resolveDrain) => drainWaiters.add(resolveDrain));
+  const releaseRequest = () => {
+    activeRequestCount = Math.max(0, activeRequestCount - 1);
+    if (activeRequestCount === 0) {
+      for (const resolveDrain of drainWaiters) {
+        resolveDrain();
+      }
+      drainWaiters.clear();
+    }
+  };
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
-    closePromise ??= Promise.allSettled([
+    acceptingRequests = false;
+    closePromise ??= waitForRequestDrain().then(() => Promise.allSettled([
       safeCampaignDbRepository.close?.() ?? Promise.resolve(),
       safeWalletSessionRepository.close(),
-    ]).then((results) => {
+      ...(composedAdminReviewStore && adminReviewStoreOwnership === "runtime"
+        ? [composedAdminReviewStore.close({
+          traceId: `admin-runtime-close-${randomUUID()}`,
+        })]
+        : []),
+      ...(adminReviewPartialCleanup ? [adminReviewPartialCleanup] : []),
+    ])).then((results) => {
       activeWalletSessionIds.clear();
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -1361,17 +1632,92 @@ export const createCampaignOsApiRuntime = ({
     handle: async (request) => {
       const traceId = createTraceId(request.headers);
 
+      if (!acceptingRequests) {
+        const runtimeError = persistenceUnavailable("runtime.close").body;
+
+        return {
+          body: createFailureEnvelope({
+            error: runtimeError,
+            routeCount: apiRuntimeContractRoutes.length,
+            traceId,
+            version: runtimeVersion,
+          }),
+          headers: responseHeaders(traceId),
+          status: runtimeError.status,
+        };
+      }
+
+      activeRequestCount += 1;
+
       try {
-        if (configError) {
-          throw createRuntimeConfigBlockedError(configError);
+        const method = normalizeMethod(request.method);
+        const { pathname, query: parsedQuery } = parseRequestTarget(request.path);
+        const { matcher, params, query } = findMatchingRequestRoute(
+          matchers,
+          method,
+          request.path,
+          pathname,
+          parsedQuery,
+        );
+        const adminPolicy = getAdminOperatorRoutePolicy(matcher.route.id);
+        let body: unknown;
+        let authDecision: AuthEnforcementDecision | undefined;
+
+        if (adminPolicy) {
+          let currentAdminReviewConfig: CampaignOsAdminReviewConfig;
+
+          try {
+            currentAdminReviewConfig = resolveAdminReviewConfig();
+          } catch (error) {
+            const diagnosticCode = error instanceof CampaignOsAdminReviewConfigError
+              ? error.code
+              : "ADMIN_REVIEW_CONFIG_INVALID";
+            throw adminRuntimeUnavailable(diagnosticCode);
+          }
+
+          if (!currentAdminReviewConfig.enabled) {
+            throw routeNotFound(method, pathname);
+          }
+          if (configError instanceof CampaignOsCampaignDbConfigError) {
+            throw adminRuntimeUnavailable(configError.code);
+          }
+          if (resolvedCampaignDbConfig.mode !== "postgres") {
+            throw adminRuntimeUnavailable("ADMIN_REVIEW_POSTGRES_REQUIRED");
+          }
+          if (adminReviewConfigError) {
+            throw adminRuntimeUnavailable("ADMIN_REVIEW_CONFIG_INVALID");
+          }
+          if (adminReviewInitializationError || !composedAdminReviewStore) {
+            throw adminRuntimeUnavailable("ADMIN_REVIEW_STORE_UNAVAILABLE");
+          }
+
+          const membershipRegistry = adminOperatorMembershipRegistry
+            ?? createAdminOperatorMembershipRegistry(currentAdminReviewConfig);
+          authDecision = await evaluateRuntimeAdminAuth({
+            activeWalletSessionIds,
+            campaignId: params.campaignId,
+            headers: request.headers,
+            membershipRegistry,
+            routeId: matcher.route.id,
+            traceId,
+            walletSessionActivationPolicy,
+            walletSessionRepository: safeWalletSessionRepository,
+          });
+
+          if (!authDecision.allowed) {
+            throw authErrorFromDecision(authDecision);
+          }
+
+          body = parseBody(request, method);
+        } else {
+          if (configError) {
+            throw createRuntimeConfigBlockedError(configError);
+          }
+
+          body = parseBody(request, method);
         }
 
-        const method = normalizeMethod(request.method);
-        const { pathname, query } = parseRequestTarget(request.path);
-        const { matcher, params } = findMatchingRoute(matchers, method, pathname);
-        const body = parseBody(request, method);
-        let authDecision: AuthEnforcementDecision | undefined;
-        if (shouldEvaluateLocalAuth(matcher.route.id)) {
+        if (!adminPolicy && shouldEvaluateLocalAuth(matcher.route.id)) {
           authDecision = await evaluateRuntimeIssuedAuth({
             activeWalletSessionIds,
             compatibilitySubject: participantCompatibilitySubjectFromRequest(
@@ -1423,11 +1769,12 @@ export const createCampaignOsApiRuntime = ({
 
           return requestReadiness;
         };
-        const data = await handler({
+        const handlerResult = await handler({
           backendServiceReadiness: requestBackendServiceReadiness,
           body,
           campaignDbRepository: safeCampaignDbRepository,
           exportArtifactRegistry,
+          headers: request.headers ?? {},
           params,
           participantPreviewConfig,
           repository: safeRepository,
@@ -1437,8 +1784,18 @@ export const createCampaignOsApiRuntime = ({
           traceId,
           version: runtimeVersion,
           walletSessionRepository: safeWalletSessionRepository,
+          ...(authDecision?.adminOperator
+            ? { adminOperator: authDecision.adminOperator }
+            : {}),
+          ...(composedAdminReviewStore
+            ? { adminReviewStore: composedAdminReviewStore }
+            : {}),
           auth: authDecision,
         });
+        const transport = isHandlerTransportResult(handlerResult)
+          ? handlerResult
+          : undefined;
+        const data = transport?.data ?? handlerResult;
         const attachDatabaseReadiness = shouldAttachDatabaseReadiness(matcher.route.id);
         const campaignDatabase = attachDatabaseReadiness
           ? await safeCampaignDbRepository.health({ traceId })
@@ -1459,8 +1816,12 @@ export const createCampaignOsApiRuntime = ({
             traceId,
             version: runtimeVersion,
           }),
-          headers: responseHeaders(traceId),
-          status: 200,
+          headers: {
+            ...responseHeaders(traceId),
+            ...transport?.headers,
+          },
+          ...(transport?.rawBody === undefined ? {} : { rawBody: transport.rawBody }),
+          status: transport?.status ?? 200,
         };
       } catch (error) {
         const runtimeError = toApiRuntimeErrorBody(error);
@@ -1475,6 +1836,8 @@ export const createCampaignOsApiRuntime = ({
           headers: responseHeaders(traceId),
           status: runtimeError.status,
         };
+      } finally {
+        releaseRequest();
       }
     },
   };

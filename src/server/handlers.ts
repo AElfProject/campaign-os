@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   apiSkillContractRegistry,
   createApiSkillContractSurface,
@@ -82,7 +82,8 @@ import type {
   LocalExportFileHandoff,
 } from "../domain/types";
 import {
-  apiRuntimeContractRoutes,
+  apiRuntimeContractRoutes as legacyApiRuntimeContractRoutes,
+  apiRuntimeRouteCatalog as apiRuntimeContractRoutes,
   createApiRuntimeContractCoverage,
   type ApiRuntimeContractRouteId,
 } from "./routes";
@@ -122,7 +123,33 @@ import {
   unsupportedExportMode,
   unsupportedLocale,
 } from "./errors";
-import type { ApiRuntimeHandler, ApiRuntimeHandlerContext } from "./apiRuntime";
+import type {
+  ApiRuntimeHandler,
+  ApiRuntimeHandlerContext,
+  ApiRuntimeHandlerTransportResult,
+} from "./apiRuntime";
+import {
+  AdminReviewDomainError,
+  projectAdminReviewCampaignFeed,
+  readAdminReviewDetail,
+  readAdminReviewQueue,
+  readAdminReviewWinnerSource,
+  submitAdminReviewDecision,
+  type AdminReviewState,
+  type TrustedAdminReviewOperatorContext,
+} from "./adminReview";
+import {
+  ADMIN_REVIEW_MAX_ARTIFACT_ROWS,
+  ADMIN_REVIEW_MAX_LIST_LIMIT,
+  AdminReviewStoreError,
+  type AdminExportArtifactContent,
+  type AdminExportArtifactFormat,
+  type AdminReviewStore,
+} from "./adminReviewStore";
+import {
+  AdminExportArtifactError,
+  generateAdminExportArtifact,
+} from "./adminExportArtifact";
 import {
   apiRuntimeServiceGroups,
   createApiRuntimeCapabilityCatalog,
@@ -2201,6 +2228,331 @@ const createCombinedApiRuntimeContractCoverage = () => ({
   routeIds: apiRuntimeContractRoutes.map((route) => route.id),
 });
 
+const ADMIN_ROUTE_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
+const ADMIN_SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const ADMIN_SAFE_FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$/;
+const ADMIN_REVIEW_STATES = new Set<AdminReviewState>([
+  "approved_current",
+  "needs_review_current",
+  "pending_review",
+  "rejected_current",
+  "stale",
+]);
+
+const adminTransport = (
+  data: unknown,
+  status: number,
+  options: {
+    headers?: Record<string, string>;
+    rawBody?: string;
+  } = {},
+): ApiRuntimeHandlerTransportResult => ({
+  data,
+  kind: "api_runtime_transport_result",
+  status,
+  ...options,
+});
+
+const adminHttpFailure = (
+  status: number,
+  diagnosticCode: string,
+  field: string,
+  operation: string,
+) => new ApiRuntimeError({
+  code: status === 503 ? "PERSISTENCE_UNAVAILABLE" : "INVALID_REQUEST",
+  details: {
+    diagnosticCode,
+    field,
+    operation,
+  },
+  message: {
+    "en-US": "The Admin review request could not be completed.",
+    "zh-CN": "Admin review 请求无法完成。",
+    "zh-TW": "Admin review 請求無法完成。",
+  },
+  status,
+});
+
+const normalizeAdminHandlerError = (error: unknown): ApiRuntimeError => {
+  if (error instanceof ApiRuntimeError) {
+    return error;
+  }
+
+  if (error instanceof AdminReviewDomainError) {
+    const status = error.code === "ADMIN_REVIEW_DOMAIN_NOT_FOUND"
+      ? 404
+      : error.code === "ADMIN_REVIEW_DOMAIN_STALE"
+        || error.code === "ADMIN_REVIEW_DOMAIN_CONFLICT"
+        ? 409
+        : error.code === "ADMIN_REVIEW_DOMAIN_BOUND_EXCEEDED"
+          ? 422
+          : error.code === "ADMIN_REVIEW_DOMAIN_UNAVAILABLE"
+            ? 503
+            : 400;
+
+    return adminHttpFailure(status, error.code, error.field, "adminReview.domain");
+  }
+
+  if (error instanceof AdminExportArtifactError) {
+    const status = error.code === "ADMIN_EXPORT_ARTIFACT_NOT_FOUND"
+      ? 404
+      : error.code === "ADMIN_EXPORT_ARTIFACT_STALE"
+        || error.code === "ADMIN_EXPORT_ARTIFACT_CONFLICT"
+        ? 409
+        : error.code === "ADMIN_EXPORT_ARTIFACT_BOUND_EXCEEDED"
+          ? 413
+          : error.code === "ADMIN_EXPORT_ARTIFACT_INVALID_SOURCE"
+            || error.code === "ADMIN_EXPORT_ARTIFACT_INTEGRITY_FAILED"
+            || error.code === "ADMIN_EXPORT_ARTIFACT_SERIALIZATION_FAILED"
+            ? 422
+            : error.code === "ADMIN_EXPORT_ARTIFACT_UNAVAILABLE"
+              ? 503
+              : 400;
+
+    return adminHttpFailure(status, error.code, error.field, "adminArtifact.generate");
+  }
+
+  if (error instanceof AdminReviewStoreError) {
+    const status = error.code === "ADMIN_REVIEW_STORE_NOT_FOUND"
+      ? 404
+      : error.code === "ADMIN_REVIEW_STORE_STALE"
+        || error.code === "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT"
+        || error.code === "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED"
+        ? 409
+        : error.code === "ADMIN_REVIEW_STORE_BOUND_EXCEEDED"
+          ? 413
+          : error.code === "ADMIN_REVIEW_STORE_CONTENT_INTEGRITY_FAILED"
+            || error.code === "ADMIN_REVIEW_STORE_ROW_CORRUPTION"
+            ? 422
+            : error.code === "ADMIN_REVIEW_STORE_ARGUMENT_INVALID"
+              ? 400
+              : 503;
+
+    return adminHttpFailure(status, error.code, error.field, `adminReview.${error.operation}`);
+  }
+
+  return adminHttpFailure(503, "ADMIN_REVIEW_UNAVAILABLE", "runtime", "adminReview.handler");
+};
+
+const runAdminHandler = async <T>(run: () => Promise<T> | T): Promise<T> => {
+  try {
+    return await run();
+  } catch (error) {
+    throw normalizeAdminHandlerError(error);
+  }
+};
+
+const requireAdminStore = (context: ApiRuntimeHandlerContext): AdminReviewStore => {
+  if (!context.adminReviewStore) {
+    throw adminHttpFailure(
+      503,
+      "ADMIN_REVIEW_STORE_UNAVAILABLE",
+      "store",
+      "adminReview.initialize",
+    );
+  }
+
+  return context.adminReviewStore;
+};
+
+const requireTrustedAdminContext = (
+  context: ApiRuntimeHandlerContext,
+): TrustedAdminReviewOperatorContext => {
+  if (!context.adminOperator) {
+    throw adminHttpFailure(
+      403,
+      "ADMIN_REVIEW_OPERATOR_FORBIDDEN",
+      "operator",
+      "adminReview.authorize",
+    );
+  }
+
+  return {
+    operatorRole: context.adminOperator.requestedRole,
+    operatorSubject: context.adminOperator.subjectAddress,
+    traceId: context.traceId,
+  };
+};
+
+const adminRouteParam = (context: ApiRuntimeHandlerContext, name: string) => {
+  const value = requiredRouteParam(context.params, name);
+
+  if (!ADMIN_ROUTE_VALUE_PATTERN.test(value)) {
+    throw invalidRequest(name, `Admin route parameter '${name}' is invalid.`);
+  }
+
+  return value;
+};
+
+const assertAdminQuery = (
+  context: ApiRuntimeHandlerContext,
+  allowedNames: readonly string[],
+) => {
+  const allowed = new Set(allowedNames);
+  const unknown = Object.keys(context.query).find((name) => !allowed.has(name));
+
+  if (unknown) {
+    throw invalidRequest("query", "Admin route query parameter is not allowed.");
+  }
+};
+
+const adminLimit = (context: ApiRuntimeHandlerContext): number | undefined => {
+  const value = context.query.limit;
+
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw invalidRequest("limit", "Admin list limit must be a positive integer.");
+  }
+
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit > ADMIN_REVIEW_MAX_LIST_LIMIT) {
+    throw invalidRequest("limit", "Admin list limit is outside the supported bound.");
+  }
+
+  return limit;
+};
+
+const adminReviewState = (context: ApiRuntimeHandlerContext): AdminReviewState | undefined => {
+  const state = context.query.state;
+
+  if (state === undefined) {
+    return undefined;
+  }
+  if (!ADMIN_REVIEW_STATES.has(state as AdminReviewState)) {
+    throw invalidRequest("state", "Admin review state is invalid.");
+  }
+
+  return state as AdminReviewState;
+};
+
+const adminArtifactFormat = (
+  value: unknown,
+  field = "format",
+): AdminExportArtifactFormat => {
+  if (value !== "csv" && value !== "json") {
+    throw invalidRequest(field, "Admin artifact format must be csv or json.");
+  }
+
+  return value;
+};
+
+const adminBody = (
+  context: ApiRuntimeHandlerContext,
+  allowedFields: readonly string[],
+): Record<string, unknown> => {
+  if (!isJsonRecord(context.body)) {
+    throw invalidRequest("body", "Admin request body must be a JSON object.");
+  }
+  const allowed = new Set(allowedFields);
+  if (Object.keys(context.body).some((field) => !allowed.has(field))) {
+    throw invalidRequest("body", "Admin request body contains an unknown field.");
+  }
+
+  return context.body;
+};
+
+const adminHeader = (
+  context: ApiRuntimeHandlerContext,
+  name: string,
+): string | undefined => {
+  const matches = Object.entries(context.headers)
+    .filter(([headerName]) => headerName.toLowerCase() === name.toLowerCase())
+    .map(([, value]) => value);
+
+  if (matches.length > 1 || Array.isArray(matches[0])) {
+    throw invalidRequest(name, "Admin request header must have one value.");
+  }
+
+  return typeof matches[0] === "string" ? matches[0].trim() : undefined;
+};
+
+const requiredAdminHeader = (
+  context: ApiRuntimeHandlerContext,
+  name: string,
+): string => {
+  const value = adminHeader(context, name);
+
+  if (!value) {
+    throw invalidRequest(name, `Admin request header '${name}' is required.`);
+  }
+
+  return value;
+};
+
+const currentAdminTimestamp = () => new Date().toISOString();
+
+const safeAdminArtifactDetail = (detail: AdminExportArtifactContent) => ({
+  artifact: detail.artifact,
+  sourceManifest: detail.sourceManifest,
+});
+
+const validateAdminArtifactDownload = (
+  detail: AdminExportArtifactContent,
+  campaignId: string,
+  artifactId: string,
+  traceId: string,
+) => {
+  const { artifact, content, sourceManifest } = detail;
+  const expectedMimeType = artifact.format === "csv"
+    ? "text/csv;charset=utf-8"
+    : artifact.format === "json"
+      ? "application/json;charset=utf-8"
+      : undefined;
+  const contentBytes = typeof content === "string" ? Buffer.byteLength(content, "utf8") : -1;
+  const contentHash = typeof content === "string"
+    ? createHash("sha256").update(content, "utf8").digest("hex")
+    : "";
+  const sourceRows = isJsonRecord(sourceManifest) && Array.isArray(sourceManifest.rows)
+    ? sourceManifest.rows
+    : undefined;
+  const expectedHash = typeof artifact.contentHash === "string"
+    && ADMIN_SHA256_PATTERN.test(artifact.contentHash)
+    ? Buffer.from(artifact.contentHash, "hex")
+    : undefined;
+  const actualHash = ADMIN_SHA256_PATTERN.test(contentHash)
+    ? Buffer.from(contentHash, "hex")
+    : undefined;
+  const hashMatches = Boolean(
+    expectedHash
+    && actualHash
+    && expectedHash.length === actualHash.length
+    && timingSafeEqual(expectedHash, actualHash),
+  );
+  const integrityValid = artifact.campaignId === campaignId
+    && artifact.id === artifactId
+    && contentBytes === artifact.contentBytes
+    && hashMatches
+    && expectedMimeType !== undefined
+    && artifact.mimeType === expectedMimeType
+    && Number.isSafeInteger(artifact.rowCount)
+    && artifact.rowCount >= 0
+    && artifact.rowCount <= ADMIN_REVIEW_MAX_ARTIFACT_ROWS
+    && sourceRows?.length === artifact.rowCount
+    && typeof artifact.fileName === "string"
+    && ADMIN_SAFE_FILE_NAME_PATTERN.test(artifact.fileName)
+    && artifact.fileName.endsWith(`.${artifact.format}`);
+
+  if (!integrityValid) {
+    throw new AdminExportArtifactError({
+      code: "ADMIN_EXPORT_ARTIFACT_INTEGRITY_FAILED",
+      field: "artifact",
+      traceId,
+    });
+  }
+
+  return {
+    content,
+    headers: {
+      "content-disposition": `attachment; filename="${artifact.fileName}"`,
+      "content-length": String(contentBytes),
+      "content-type": expectedMimeType,
+      "x-campaign-os-content-sha256": artifact.contentHash,
+    },
+  };
+};
+
 export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, ApiRuntimeHandler> => ({
   "runtime.health": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
@@ -2210,7 +2562,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     const services = createServiceDegradationGovernance();
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
-      knownRouteIds: apiRuntimeContractRoutes.map((route) => route.id),
+      knownRouteIds: legacyApiRuntimeContractRoutes.map((route) => route.id),
     });
 
     return {
@@ -2249,7 +2601,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     const productionBackendReadiness = createProductionBackendReadinessMetadata(backendService);
     const persistence = await context.repository.health();
     const topology = createBackendTopologyReport({
-      knownRouteIds: apiRuntimeContractRoutes.map((route) => route.id),
+      knownRouteIds: legacyApiRuntimeContractRoutes.map((route) => route.id),
     });
 
     return {
@@ -2286,6 +2638,232 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       summary: governance.summary,
     };
   },
+  "admin.campaigns.list": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, ["limit"]);
+    const limit = adminLimit(context);
+    const operator = requireTrustedAdminContext(context);
+    const allowedCampaignIds = context.adminOperator?.campaignIds === null
+      ? null
+      : new Set(context.adminOperator?.campaignIds ?? []);
+    const campaigns = await context.campaignDbRepository.list(
+      { limit: ADMIN_REVIEW_MAX_LIST_LIMIT },
+      { traceId: context.traceId },
+    );
+    const visibleCampaigns = campaigns
+      .filter((campaign) => allowedCampaignIds === null || allowedCampaignIds.has(campaign.id))
+      .map((campaign) => ({
+        campaignId: campaign.id,
+        ownerAddress: campaign.ownerAddress,
+        participantCount: campaign.participants.length,
+        projectId: campaign.projectId,
+        status: campaign.status,
+        taskCount: campaign.tasks.length,
+      }));
+
+    return projectAdminReviewCampaignFeed(visibleCampaigns, {
+      ...(limit === undefined ? {} : { limit }),
+      traceId: operator.traceId,
+    });
+  }),
+  "admin.reviews.list": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, ["limit", "state"]);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const limit = adminLimit(context);
+    const state = adminReviewState(context);
+
+    requireTrustedAdminContext(context);
+
+    return readAdminReviewQueue(requireAdminStore(context), {
+      campaignId,
+      generatedAt: currentAdminTimestamp(),
+      ...(limit === undefined ? {} : { limit }),
+      ...(state === undefined ? {} : { state }),
+      traceId: context.traceId,
+    });
+  }),
+  "admin.reviews.detail": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, []);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const participantId = adminRouteParam(context, "participantId");
+
+    requireTrustedAdminContext(context);
+
+    return readAdminReviewDetail(requireAdminStore(context), {
+      campaignId,
+      generatedAt: currentAdminTimestamp(),
+      participantId,
+      traceId: context.traceId,
+    });
+  }),
+  "admin.reviews.decide": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, []);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const participantId = adminRouteParam(context, "participantId");
+    const body = adminBody(context, [
+      "decision",
+      "note",
+      "reasonCode",
+      "snapshotFingerprint",
+    ]);
+    const idempotencyKey = requiredAdminHeader(
+      context,
+      "x-campaign-os-idempotency-key",
+    );
+    const note = optionalString(body.note);
+
+    if (Object.prototype.hasOwnProperty.call(body, "note") && note === undefined) {
+      throw invalidRequest("note", "Admin decision note must be a string.");
+    }
+
+    if (
+      idempotencyKey.length < 8
+      || idempotencyKey.length > 128
+      || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey)
+    ) {
+      throw invalidRequest(
+        "x-campaign-os-idempotency-key",
+        "Admin decision idempotency key is invalid.",
+      );
+    }
+
+    const receipt = await submitAdminReviewDecision(requireAdminStore(context), {
+      campaignId,
+      decision: requiredString(body, "decision") as "approved" | "rejected" | "needs_review",
+      expectedSnapshotFingerprint: requiredString(body, "snapshotFingerprint"),
+      idempotencyKey,
+      ...(note === undefined ? {} : { note }),
+      participantId,
+      reasonCode: requiredString(body, "reasonCode"),
+    }, requireTrustedAdminContext(context));
+
+    return adminTransport(receipt, receipt.created ? 201 : 200);
+  }),
+  "admin.winners.list": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, ["limit"]);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const limit = adminLimit(context) ?? ADMIN_REVIEW_MAX_LIST_LIMIT;
+
+    requireTrustedAdminContext(context);
+
+    const source = await readAdminReviewWinnerSource(requireAdminStore(context), {
+      campaignId,
+      generatedAt: currentAdminTimestamp(),
+      traceId: context.traceId,
+    });
+
+    return {
+      items: source.rows.slice(0, limit),
+      rowCount: Math.min(source.rowCount, limit),
+      sourceFingerprint: source.fingerprint,
+      sourceVersion: source.sourceVersion,
+    };
+  }),
+  "admin.artifacts.list": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, ["format", "limit"]);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const limit = adminLimit(context) ?? ADMIN_REVIEW_MAX_LIST_LIMIT;
+    const format = context.query.format === undefined
+      ? undefined
+      : adminArtifactFormat(context.query.format);
+
+    requireTrustedAdminContext(context);
+
+    const artifacts = await requireAdminStore(context).listArtifacts({
+      campaignId,
+      limit: ADMIN_REVIEW_MAX_LIST_LIMIT,
+    }, { traceId: context.traceId });
+
+    return artifacts
+      .filter((artifact) => format === undefined || artifact.format === format)
+      .slice(0, limit);
+  }),
+  "admin.artifacts.generate": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, []);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const body = adminBody(context, ["expectedSourceFingerprint", "format"]);
+    const expectedSourceFingerprint = optionalString(body.expectedSourceFingerprint);
+
+    if (
+      (Object.prototype.hasOwnProperty.call(body, "expectedSourceFingerprint")
+        && expectedSourceFingerprint === undefined)
+      || (expectedSourceFingerprint !== undefined
+        && !ADMIN_SHA256_PATTERN.test(expectedSourceFingerprint))
+    ) {
+      throw invalidRequest(
+        "expectedSourceFingerprint",
+        "Expected source fingerprint must be a lowercase SHA-256 value.",
+      );
+    }
+
+    const result = await generateAdminExportArtifact(requireAdminStore(context), {
+      campaignId,
+      ...(expectedSourceFingerprint === undefined ? {} : { expectedSourceFingerprint }),
+      format: adminArtifactFormat(body.format),
+    }, requireTrustedAdminContext(context));
+    const receipt = {
+      artifactId: result.artifact.id,
+      campaignId: result.artifact.campaignId,
+      contentBytes: result.artifact.contentBytes,
+      contentHash: result.artifact.contentHash,
+      created: result.created,
+      format: result.artifact.format,
+      replayed: !result.created,
+      rowCount: result.artifact.rowCount,
+      sourceFingerprint: result.artifact.sourceFingerprint,
+    };
+
+    return adminTransport(receipt, result.created ? 201 : 200);
+  }),
+  "admin.artifacts.detail": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, []);
+    const campaignId = adminRouteParam(context, "campaignId");
+    const artifactId = adminRouteParam(context, "artifactId");
+
+    requireTrustedAdminContext(context);
+
+    const detail = await requireAdminStore(context).getArtifact(
+      { artifactId, campaignId },
+      { traceId: context.traceId },
+    );
+
+    if (!detail) {
+      throw adminHttpFailure(
+        404,
+        "ADMIN_REVIEW_STORE_NOT_FOUND",
+        "artifactId",
+        "adminReview.getArtifact",
+      );
+    }
+
+    return detail;
+  }),
+  "admin.artifacts.download": (context) => runAdminHandler(async () => {
+    assertAdminQuery(context, []);
+    if (adminHeader(context, "range") !== undefined) {
+      throw invalidRequest("range", "Admin artifact download does not support ranges.");
+    }
+    const campaignId = adminRouteParam(context, "campaignId");
+    const artifactId = adminRouteParam(context, "artifactId");
+
+    requireTrustedAdminContext(context);
+
+    const detail = await requireAdminStore(context).readArtifactContent(
+      { artifactId, campaignId },
+      { traceId: context.traceId },
+    );
+    const download = validateAdminArtifactDownload(
+      detail,
+      campaignId,
+      artifactId,
+      context.traceId,
+    );
+
+    return adminTransport(
+      safeAdminArtifactDetail(detail),
+      200,
+      { headers: download.headers, rawBody: download.content },
+    );
+  }),
   "agent.wallet.action.review": (context) =>
     unwrapLocalResult(context.service.requestAgentWalletAction(agentWalletActionRequest(context)), context),
   "wallet.session.create": async (context) => {
