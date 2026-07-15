@@ -5,8 +5,14 @@ import {
   findProviderHttpEndpointById,
   findProviderHttpEndpointForVerification,
   listProviderHttpEndpointEntries,
+  providerHttpVerificationBindingExamples,
   providerHttpRuntimeProductionPreconditions,
+  validateProviderHttpVerificationBindingCompatibility,
 } from "./providerHttpRuntimeRegistry";
+import type {
+  ProviderHttpBindingCompatibilityInput,
+  ProviderHttpEndpointEntry,
+} from "./providerHttpRuntimeTypes";
 
 const productionReadyProviderHttpEnv = {
   CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:provider-http",
@@ -23,6 +29,23 @@ const productionReadyProviderHttpEnv = {
   CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:2500ms",
   CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:provider-http-transport",
 } satisfies Record<string, unknown>;
+
+const enabledExample = (
+  exampleId: keyof typeof providerHttpVerificationBindingExamples,
+  endpointOverrides: Partial<ProviderHttpBindingCompatibilityInput["endpoint"]> = {},
+  bindingOverrides: Partial<ProviderHttpBindingCompatibilityInput["binding"]> = {},
+): ProviderHttpBindingCompatibilityInput => ({
+  ...providerHttpVerificationBindingExamples[exampleId],
+  binding: {
+    ...providerHttpVerificationBindingExamples[exampleId].binding,
+    ...bindingOverrides,
+  },
+  enabled: true,
+  endpoint: {
+    ...providerHttpVerificationBindingExamples[exampleId].endpoint,
+    ...endpointOverrides,
+  },
+});
 
 describe("provider HTTP runtime registry", () => {
   it("keeps local review and staging scaffold deterministic and no-live", () => {
@@ -221,6 +244,196 @@ describe("provider HTTP runtime registry", () => {
     expect(matchingEndpoint?.endpointId).toBe("aefinder-aelfscan-indexer-query");
     expect(mismatchedEndpoint).toBeUndefined();
   });
+
+  it("publishes provider binding examples as disabled shape-only metadata", () => {
+    const examples = providerHttpVerificationBindingExamples;
+    const serialized = JSON.stringify(examples);
+
+    expect(Object.keys(examples)).toEqual(
+      expect.arrayContaining([
+        "aefinder-aelfscan",
+        "ebridge",
+        "awaken",
+        "forest-schrodinger",
+        "tmrwdao",
+        "daipp",
+      ]),
+    );
+    expect(Object.values(examples).every((input) => input.enabled === false)).toBe(true);
+    expect(examples["aefinder-aelfscan"]).toMatchObject({
+      binding: {
+        id: "aefinder-aelfscan-on-chain",
+        verificationType: "ON_CHAIN",
+      },
+      endpoint: {
+        endpointId: "aefinder-aelfscan-indexer-query",
+        providerGroupId: "aefinder-aelfscan-indexers",
+        requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+        responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+      },
+    });
+    expect(examples.ebridge).toMatchObject({
+      binding: {
+        id: "ebridge-dapp-api",
+        verificationType: "DAPP_API",
+      },
+      endpoint: {
+        endpointId: "dapp-api-verification-status",
+        providerFamily: "ebridge",
+        requestMappingId: "provider-http-request-map:dapp-api-status-v1",
+        responseMappingId: "provider-http-response-map:dapp-api-status-v1",
+      },
+    });
+    expect(examples["forest-schrodinger"].binding.id).toContain("nft");
+    expect(serialized).not.toContain("https://");
+    expect(serialized).not.toContain("credential");
+    expect(serialized).not.toContain("api-key");
+    expect(serialized).not.toContain("Bearer ");
+  });
+
+  it("enables compatibility only for exact normalizer-supported bindings", () => {
+    const onChain = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("aefinder-aelfscan"),
+    );
+    const dappApi = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("ebridge"),
+    );
+
+    expect(onChain).toEqual({
+      bindingId: "aefinder-aelfscan-on-chain",
+      diagnosticCodes: [],
+      diagnosticCount: 0,
+      endpointId: "aefinder-aelfscan-indexer-query",
+      providerFamily: "aefinder",
+      providerGroupId: "aefinder-aelfscan-indexers",
+      requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+      responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+      status: "compatible",
+      verificationType: "ON_CHAIN",
+    });
+    expect(dappApi.status).toBe("compatible");
+    expect(dappApi.diagnosticCodes).toEqual([]);
+    expect("downstreamLiveFlags" in onChain).toBe(false);
+    expect("productionReady" in onChain).toBe(false);
+    expect("liveHttpCallsAttempted" in onChain).toBe(false);
+  });
+
+  it("accepts the safe structural projection of a task verification config binding", () => {
+    const taskVerificationConfigBinding = {
+      bodyEnvKey: "CAMPAIGN_OS_TASK_VERIFICATION_BODY",
+      credentialEnvKey: "CAMPAIGN_OS_TASK_VERIFICATION_CREDENTIAL",
+      endpointEnvKey: "CAMPAIGN_OS_TASK_VERIFICATION_ENDPOINT",
+      headerEnvKey: "CAMPAIGN_OS_TASK_VERIFICATION_HEADERS",
+      id: "aefinder-aelfscan-on-chain",
+      maxAttempts: 3,
+      maxResponseBytes: 65_536,
+      timeoutMs: 2_500,
+      verificationType: "ON_CHAIN" as const,
+    };
+    const result = validateProviderHttpVerificationBindingCompatibility({
+      binding: taskVerificationConfigBinding,
+      enabled: true,
+      endpoint: providerHttpVerificationBindingExamples["aefinder-aelfscan"].endpoint,
+    });
+
+    expect(result).toMatchObject({
+      bindingId: "aefinder-aelfscan-on-chain",
+      diagnosticCodes: [],
+      status: "compatible",
+    });
+    expect(JSON.stringify(result)).not.toContain("EnvKey");
+    expect(JSON.stringify(result)).not.toContain("CAMPAIGN_OS_TASK_VERIFICATION");
+  });
+
+  it("fails closed for disabled bindings and unsupported request or response mappings", () => {
+    const disabled = validateProviderHttpVerificationBindingCompatibility(
+      providerHttpVerificationBindingExamples.awaken,
+    );
+    const unsupported = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("ebridge", {
+        requestMappingId: "provider-http-request-map:unknown-v1",
+        responseMappingId: "provider-http-response-map:unknown-v1",
+      }),
+    );
+    const providerSpecific = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("awaken"),
+    );
+
+    expect(disabled).toMatchObject({
+      diagnosticCodes: ["PROVIDER_HTTP_BINDING_DISABLED"],
+      diagnosticCount: 1,
+      status: "disabled",
+    });
+    expect(unsupported.status).toBe("incompatible");
+    expect(unsupported.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_HTTP_BINDING_REQUEST_MAPPING_UNSUPPORTED",
+        "PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_UNSUPPORTED",
+      ]),
+    );
+    expect(providerSpecific.status).toBe("incompatible");
+    expect(providerSpecific.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_HTTP_BINDING_REQUEST_MAPPING_UNSUPPORTED",
+        "PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_UNSUPPORTED",
+      ]),
+    );
+  });
+
+  it("fails closed for family, group, endpoint, mapping, and verification type mismatches", () => {
+    const family = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("aefinder-aelfscan", { providerFamily: "aelfscan" }),
+    );
+    const group = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("aefinder-aelfscan", { providerGroupId: "dapp-api-adapters" }),
+    );
+    const endpoint = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("aefinder-aelfscan", { endpointId: "missing-endpoint" }),
+    );
+    const mappings = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("aefinder-aelfscan", {
+        requestMappingId: "provider-http-request-map:dapp-api-status-v1",
+        responseMappingId: "provider-http-response-map:dapp-api-status-v1",
+      }),
+    );
+    const verificationType = validateProviderHttpVerificationBindingCompatibility(
+      enabledExample("aefinder-aelfscan", {}, { verificationType: "DAPP_API" }),
+    );
+
+    expect(family.diagnosticCodes).toContain("PROVIDER_HTTP_BINDING_FAMILY_MISMATCH");
+    expect(group.diagnosticCodes).toContain("PROVIDER_HTTP_BINDING_GROUP_MISMATCH");
+    expect(endpoint.diagnosticCodes).toContain("PROVIDER_HTTP_BINDING_ENDPOINT_NOT_FOUND");
+    expect(mappings.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_HTTP_BINDING_REQUEST_MAPPING_MISMATCH",
+        "PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_MISMATCH",
+        "PROVIDER_HTTP_BINDING_TYPE_MAPPING_MISMATCH",
+      ]),
+    );
+    expect(verificationType.diagnosticCodes).toEqual(
+      expect.arrayContaining([
+        "PROVIDER_HTTP_BINDING_VERIFICATION_TYPE_MISMATCH",
+        "PROVIDER_HTTP_BINDING_TYPE_MAPPING_MISMATCH",
+      ]),
+    );
+  });
+
+  it.each(["disabled", "deferred", "blocked"] as const)(
+    "fails closed when a compatible endpoint is %s",
+    (rolloutStatus) => {
+      const endpoint = findProviderHttpEndpointById("aefinder-aelfscan-indexer-query")!;
+      const registry: ProviderHttpEndpointEntry[] = [{ ...endpoint, rolloutStatus }];
+      const result = validateProviderHttpVerificationBindingCompatibility(
+        enabledExample("aefinder-aelfscan"),
+        registry,
+      );
+
+      expect(result.status).toBe("incompatible");
+      expect(result.diagnosticCodes).toContain(
+        `PROVIDER_HTTP_BINDING_ENDPOINT_${rolloutStatus.toUpperCase()}`,
+      );
+    },
+  );
 
   it("blocks unsafe provider HTTP config without serializing raw material", () => {
     const summary = createProviderHttpRuntimeSummary({

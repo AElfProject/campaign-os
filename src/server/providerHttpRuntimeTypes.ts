@@ -29,6 +29,28 @@ export type ProviderHttpVerificationType =
   | "DAPP_API"
   | "SOCIAL"
   | "MANUAL";
+export type ProviderHttpBindingCompatibilityStatus =
+  | "compatible"
+  | "disabled"
+  | "incompatible";
+export type ProviderHttpBindingCompatibilityDiagnosticCode =
+  | "PROVIDER_HTTP_BINDING_DISABLED"
+  | "PROVIDER_HTTP_BINDING_ENDPOINT_BLOCKED"
+  | "PROVIDER_HTTP_BINDING_ENDPOINT_DEFERRED"
+  | "PROVIDER_HTTP_BINDING_ENDPOINT_DISABLED"
+  | "PROVIDER_HTTP_BINDING_ENDPOINT_DUPLICATED"
+  | "PROVIDER_HTTP_BINDING_ENDPOINT_NOT_FOUND"
+  | "PROVIDER_HTTP_BINDING_ENDPOINT_CATEGORY_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_FAMILY_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_GROUP_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_INVALID_SHAPE"
+  | "PROVIDER_HTTP_BINDING_MAPPING_PAIR_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_REQUEST_MAPPING_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_REQUEST_MAPPING_UNSUPPORTED"
+  | "PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_UNSUPPORTED"
+  | "PROVIDER_HTTP_BINDING_TYPE_MAPPING_MISMATCH"
+  | "PROVIDER_HTTP_BINDING_VERIFICATION_TYPE_MISMATCH";
 export type ProviderHttpOutcome =
   | "blocked"
   | "completed"
@@ -122,6 +144,38 @@ export interface ProviderHttpEndpointEntry {
   supportedVerificationTypes: ProviderHttpVerificationType[];
   timeoutPolicyRef: string;
   urlTemplateRef: string;
+}
+
+export interface ProviderHttpVerificationBinding {
+  readonly id: string;
+  readonly verificationType: Extract<ProviderHttpVerificationType, "ON_CHAIN" | "DAPP_API">;
+}
+
+export interface ProviderHttpVerificationEndpointBinding {
+  readonly endpointId: string;
+  readonly providerFamily: ProviderHttpProviderFamily;
+  readonly providerGroupId: string;
+  readonly requestMappingId: string;
+  readonly responseMappingId: string;
+}
+
+export interface ProviderHttpBindingCompatibilityInput {
+  readonly binding: ProviderHttpVerificationBinding;
+  readonly enabled: boolean;
+  readonly endpoint: ProviderHttpVerificationEndpointBinding;
+}
+
+export interface ProviderHttpBindingCompatibilitySummary {
+  readonly bindingId: string;
+  readonly diagnosticCodes: readonly ProviderHttpBindingCompatibilityDiagnosticCode[];
+  readonly diagnosticCount: number;
+  readonly endpointId: string;
+  readonly providerFamily: string;
+  readonly providerGroupId: string;
+  readonly requestMappingId: string;
+  readonly responseMappingId: string;
+  readonly status: ProviderHttpBindingCompatibilityStatus;
+  readonly verificationType: string;
 }
 
 export interface ProviderEndpointRolloutDiagnostic {
