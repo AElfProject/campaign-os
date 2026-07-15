@@ -408,12 +408,14 @@ export const App = ({
     useState<NormalizedWalletSession | null>(null);
   const [selectedStageReviewIdentity, setSelectedStageReviewIdentity] =
     useState<StageReviewIdentity>("owner");
+  const [connectedStageReviewIdentity, setConnectedStageReviewIdentity] =
+    useState<StageReviewIdentity | null>(null);
   const activeHeaderWalletRequestId = useRef(0);
   const latestHeaderWalletProofEvaluatedAt = useRef(0);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [activeCampaignSessionKey, setActiveCampaignSessionKey] = useState<string | null>(null);
   const apiBaseUrl = walletSessionApiBaseUrl();
-  const participantJourneyMode: ParticipantJourneyMode = apiBaseUrl?.trim()
+  const participantJourneyMode: ParticipantJourneyMode = stageReviewMode || apiBaseUrl?.trim()
     ? "durable"
     : "seeded_preview";
   const resolvedParticipantJourneyBridge = useMemo(
@@ -434,13 +436,34 @@ export const App = ({
     }),
     [adminDurableReviewBridge, apiBaseUrl],
   );
-  const ownerSessionReady = isIssuedOwnerSessionReady(
+  const issuedOwnerSessionReady = isIssuedOwnerSessionReady(
     headerWalletSessionBridgeState,
     headerWalletSession,
   );
-  const participantSessionReady = isIssuedParticipantSessionReady(
+  const issuedParticipantSessionReady = isIssuedParticipantSessionReady(
     headerWalletSessionBridgeState,
     headerWalletSession,
+  );
+  const connectedStageSessionReady = connectedStageReviewIdentity !== null
+    && isStageReviewIdentitySessionReady(
+      headerWalletSessionBridgeState,
+      connectedStageReviewIdentity,
+    );
+  const ownerSessionReady = issuedOwnerSessionReady && (
+    !stageReviewMode
+    || (connectedStageReviewIdentity === "owner" && connectedStageSessionReady)
+  );
+  const participantSessionReady = issuedParticipantSessionReady && (
+    !stageReviewMode
+    || (
+      (connectedStageReviewIdentity === "participant-a"
+        || connectedStageReviewIdentity === "participant-b")
+      && connectedStageSessionReady
+    )
+  );
+  const adminSessionReady = issuedOwnerSessionReady && (
+    !stageReviewMode
+    || (connectedStageReviewIdentity === "admin" && connectedStageSessionReady)
   );
   const ownerSessionKey = createOwnerSessionKey(
     ownerSessionReady ? headerWalletSession : null,
@@ -533,6 +556,7 @@ export const App = ({
 
     activeHeaderWalletRequestId.current += 1;
     setSelectedStageReviewIdentity(nextIdentity);
+    setConnectedStageReviewIdentity(null);
     setHeaderWalletSession(null);
     setHeaderWalletSessionBridgeState(createWalletSessionApiSeededFallbackState(
       stageReviewFixtureRequests[nextIdentity],
@@ -555,6 +579,7 @@ export const App = ({
 
     latestHeaderWalletProofEvaluatedAt.current = proofEvaluatedAt;
     activeHeaderWalletRequestId.current = requestId;
+    setConnectedStageReviewIdentity(null);
     setHeaderWalletSession(null);
     setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(request));
 
@@ -578,6 +603,7 @@ export const App = ({
     if (nextState.session && stageSessionReady) {
       setHeaderWalletSession(nextState.session);
       if (stageReviewMode) {
+        setConnectedStageReviewIdentity(reviewIdentity);
         setActiveSurface(stageReviewSurfaceByIdentity[reviewIdentity]);
       }
       setHeaderWalletModalOpen(false);
@@ -627,7 +653,7 @@ export const App = ({
             onOwnerReconnect={openHeaderWalletModal}
             onWorkspaceChange={selectProjectWorkspace}
             ownerCampaignBridge={ownerCampaignBridge}
-            ownerSession={headerWalletSession}
+            ownerSession={ownerSessionReady ? headerWalletSession : null}
             ownerSessionReady={ownerSessionReady}
           />
         ) : activeSurface === "user" ? (
@@ -636,7 +662,7 @@ export const App = ({
             locale={contentLocale}
             mode={participantJourneyMode}
             onReconnect={openHeaderWalletModal}
-            session={headerWalletSession}
+            session={participantSessionReady ? headerWalletSession : null}
             sessionReady={participantSessionReady}
             shareLocale={locale}
             walletModalLocale={walletModalLocale}
@@ -647,7 +673,7 @@ export const App = ({
             durableReviewBridge={resolvedAdminDurableReviewBridge}
             locale={locale}
             onDurableReviewReconnect={openHeaderWalletModal}
-            session={ownerSessionReady ? headerWalletSession : null}
+            session={adminSessionReady ? headerWalletSession : null}
           />
         )}
       </AppLayout>

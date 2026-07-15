@@ -179,6 +179,25 @@ describe("Campaign OS app shell", () => {
     ...overrides,
   });
 
+  const participantWalletSessionBridgeState = (): WalletSessionApiBridgeState => {
+    const session = issuedWalletSession("sess-eoa-app-001");
+
+    return walletSessionBridgeState({
+      repository: {
+        recordId: `wallet-session:${session.sessionId}`,
+        repositoryId: "wallet-session-repository-runtime",
+        sessionId: session.sessionId,
+        upserted: true,
+      },
+      request: {
+        adapterName: "PortkeyDiscoverWallet",
+        fixtureId: "sess-eoa-app-001",
+      },
+      session,
+      traceId: "trace-participant-a",
+    });
+  };
+
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "0";
@@ -278,6 +297,129 @@ describe("Campaign OS app shell", () => {
     expect(within(dialog).getByRole("region", { name: "Wallet session API review" })).toBeInTheDocument();
     expect(within(getHeader()).queryByRole("button", { name: /Manage wallet connection/ })).not.toBeInTheDocument();
     expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+  });
+
+  it("keeps the stage User App durable and blocked when the API runtime is unavailable", () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    const participantBridge = appParticipantBridge();
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    expect(document.querySelector('[data-participant-mode="durable"]')).toBeInTheDocument();
+    expect(screen.getByText("An API-issued wallet session is required.")).toBeInTheDocument();
+    expect(screen.queryByText("Eligibility checker")).not.toBeInTheDocument();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("binds an Owner stage session to Project Console only", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(walletSessionBridgeState());
+    const ownerBridge = appOwnerBridge();
+    const participantBridge = appParticipantBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Owner" }));
+    });
+
+    await waitFor(() => expect(ownerBridge.recoverCampaigns).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect(screen.getByText("An API-issued wallet session is required.")).toBeInTheDocument();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
+    expect(await screen.findByText("Reconnect required")).toBeInTheDocument();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("binds a Participant stage session to User App only", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const participantState = participantWalletSessionBridgeState();
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(participantState);
+    const ownerBridge = appOwnerBridge();
+    const participantBridge = appParticipantBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+      target: { value: "participant-a" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Participant A" }));
+    });
+
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(participantBridge.listCampaigns).toHaveBeenCalledWith(expect.objectContaining({
+      session: participantState.session,
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Project Console" }));
+    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Admin/Ops" }));
+    expect(await screen.findByText("Reconnect required")).toBeInTheDocument();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("starts the Admin bridge only after an explicit Admin stage connection", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(walletSessionBridgeState({
+      traceId: "trace-admin-wallet",
+    }));
+    const ownerBridge = appOwnerBridge();
+    const participantBridge = appParticipantBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+      target: { value: "admin" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect as Admin" }));
+    });
+
+    await waitFor(() => expect(adminBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(adminBridge.listCampaigns).toHaveBeenCalledWith(
+      expect.objectContaining({ session: walletSessionBridgeState().session }),
+      { limit: 100 },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Project Console" }));
+    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect(screen.getByText("An API-issued wallet session is required.")).toBeInTheDocument();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
   it("accepts an API-issued opaque session only when its wallet projection matches the selected fixture", async () => {
@@ -390,21 +532,7 @@ describe("Campaign OS app shell", () => {
     const ownerResponse = new Promise<WalletSessionApiBridgeState>((resolve) => {
       resolveOwnerResponse = resolve;
     });
-    const participantSession = issuedWalletSession("sess-eoa-app-001");
-    const participantState = walletSessionBridgeState({
-      repository: {
-        recordId: "wallet-session:issued-participant-a",
-        repositoryId: "wallet-session-repository-runtime",
-        sessionId: participantSession.sessionId,
-        upserted: true,
-      },
-      request: {
-        adapterName: "PortkeyDiscoverWallet",
-        fixtureId: "sess-eoa-app-001",
-      },
-      session: participantSession,
-      traceId: "trace-participant-a",
-    });
+    const participantState = participantWalletSessionBridgeState();
     mockedSubmitWalletSessionApiPreview
       .mockImplementationOnce(async () => ownerResponse)
       .mockResolvedValueOnce(participantState);
