@@ -3,11 +3,14 @@ import pg, { type Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   ADMIN_ARTIFACT_SOURCE_VERSION,
+  ADMIN_REVIEW_MAX_SOURCE_MANIFEST_BYTES,
   ADMIN_REVIEW_MIGRATION_ID,
   ADMIN_REVIEW_SNAPSHOT_VERSION,
   AdminReviewStoreError,
   deriveAdminReviewDecisionPayloadHash,
   type AdminExportArtifactInput,
+  type AdminExportArtifactProjection,
+  type AdminExportArtifactProjectionInput,
   type AdminReviewDecisionInput,
   type AdminReviewDecisionPayload,
   type AdminReviewSnapshotProjection,
@@ -225,8 +228,8 @@ const snapshotQueryResponse = (
   }
   if (
     call.text.includes("FROM campaign_os.campaign_participants")
-    && call.text.includes("id = $2")
     && !call.text.includes("FROM campaign_os.campaign_review_decisions")
+    && !call.text.includes("AS participant_id")
   ) {
     return { rows: [participantRow()] };
   }
@@ -432,6 +435,34 @@ const artifactInput = (
   };
 };
 
+const artifactProjectionInput = (
+  overrides: Partial<AdminExportArtifactProjectionInput> = {},
+): AdminExportArtifactProjectionInput => ({
+  campaignId: "campaign-admin-0001",
+  creatorRole: "internal_operator",
+  creatorSubject: "2F4ReviewOperator",
+  format: "csv",
+  ...overrides,
+});
+
+const artifactProjection = (
+  overrides: Partial<AdminExportArtifactProjection> = {},
+): AdminExportArtifactProjection => {
+  const input = artifactInput();
+
+  return {
+    content: input.content,
+    contentHash: input.contentHash,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    rowCount: input.rowCount,
+    sourceFingerprint: input.sourceFingerprint,
+    sourceManifest: input.sourceManifest,
+    sourceVersion: input.sourceVersion,
+    ...overrides,
+  };
+};
+
 const artifactRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> => {
   const input = artifactInput();
 
@@ -522,7 +553,7 @@ class StatefulArtifactPool implements PostgresAdminReviewStorePool {
     const call = { text: normalizeSql(text), values };
     this.calls.push(call);
 
-    if (call.text === "BEGIN") {
+    if (call.text.startsWith("BEGIN")) {
       return { rows: [] };
     }
     if (call.text === "COMMIT") {
@@ -544,6 +575,13 @@ class StatefulArtifactPool implements PostgresAdminReviewStorePool {
     if (call.text.includes("pg_advisory_xact_lock")) {
       await this.acquireLock(transaction, JSON.stringify(values));
       return { rows: [] };
+    }
+    const snapshotResult = snapshotQueryResponse(call);
+    if (snapshotResult) {
+      return snapshotResult;
+    }
+    if (call.text.includes("FROM campaign_os.campaign_review_decisions")) {
+      return { rows: [decisionRow()] };
     }
     if (call.text.startsWith("INSERT INTO campaign_os.campaign_export_artifacts")) {
       const existing = this.committed.find((row) =>
@@ -662,6 +700,7 @@ describe("PostgreSQL Admin review store contract", () => {
       listArtifacts: expect.any(Function),
       listDecisions: expect.any(Function),
       putArtifact: expect.any(Function),
+      putArtifactFromSnapshot: expect.any(Function),
       readArtifactContent: expect.any(Function),
       readSnapshot: expect.any(Function),
     });
@@ -1360,6 +1399,162 @@ describe("PostgreSQL Admin review decisions", () => {
 });
 
 describe("PostgreSQL Admin export artifacts", () => {
+  it("projects facts and latest decisions inside the artifact insert transaction", async () => {
+    const sequence: string[] = [];
+    const pool = new TranscriptPool((call) => {
+      sequence.push(call.text);
+      const snapshotResult = snapshotQueryResponse(call);
+      if (snapshotResult) {
+        return snapshotResult;
+      }
+      if (call.text.includes("FROM campaign_os.campaign_review_decisions")) {
+        return { rows: [decisionRow()] };
+      }
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_export_artifacts")) {
+        return { rows: [artifactRow({ trace_id: "trace-artifact-project" })] };
+      }
+
+      return { rows: [] };
+    });
+    const store = createStore(pool);
+    const projector = vi.fn(async (source) => {
+      sequence.push("PROJECT_ARTIFACT");
+      expect(source.rows).toEqual({
+        campaign: expect.objectContaining({ id: "campaign-admin-0001" }),
+        completions: [expect.objectContaining({ id: "completion-admin-0001" })],
+        evidence: [expect.objectContaining({ id: "evidence-admin-0001" })],
+        participants: [expect.objectContaining({ id: "participant-admin-0001" })],
+        ranking: [expect.objectContaining({ participantId: "participant-admin-0001" })],
+        tasks: [expect.objectContaining({ id: "task-admin-0001" })],
+      });
+      expect(source.latestDecisions).toEqual([
+        expect.objectContaining({ id: "decision-admin-0001", version: 1 }),
+      ]);
+
+      return artifactProjection();
+    });
+
+    await expect(store.putArtifactFromSnapshot(
+      artifactProjectionInput(),
+      projector,
+      { traceId: "trace-artifact-project" },
+    )).resolves.toEqual({
+      artifact: expect.objectContaining({
+        campaignId: "campaign-admin-0001",
+        sourceFingerprint: "4".repeat(64),
+      }),
+      created: true,
+    });
+
+    expect(projector).toHaveBeenCalledOnce();
+    expect(pool.directCalls).toEqual([]);
+    expect(pool.calls[0]?.text).toBe("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+    const decisionReadIndex = sequence.findIndex((value) =>
+      value.includes("FROM campaign_os.campaign_review_decisions"));
+    const projectorIndex = sequence.indexOf("PROJECT_ARTIFACT");
+    const insertIndex = sequence.findIndex((value) =>
+      value.startsWith("INSERT INTO campaign_os.campaign_export_artifacts"));
+    expect(decisionReadIndex).toBeGreaterThan(0);
+    expect(projectorIndex).toBeGreaterThan(decisionReadIndex);
+    expect(insertIndex).toBeGreaterThan(projectorIndex);
+    expect(pool.calls[pool.calls.length - 1]?.text).toBe("COMMIT");
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["projector failure", async () => { throw new Error("postgresql://secret /Users/private"); }, "ADMIN_REVIEW_STORE_ARGUMENT_INVALID", "projectArtifact"],
+    ["content hash mismatch", async () => artifactProjection({ contentHash: "0".repeat(64) }), "ADMIN_REVIEW_STORE_CONTENT_INTEGRITY_FAILED", "contentHash"],
+  ])("rolls back %s without a partial artifact", async (
+    _caseName,
+    projector,
+    expectedCode,
+    expectedField,
+  ) => {
+    const pool = new TranscriptPool((call) => {
+      const snapshotResult = snapshotQueryResponse(call);
+      if (snapshotResult) {
+        return snapshotResult;
+      }
+      if (call.text.includes("FROM campaign_os.campaign_review_decisions")) {
+        return { rows: [decisionRow()] };
+      }
+      return { rows: [] };
+    });
+    const store = createStore(pool);
+
+    await expect(store.putArtifactFromSnapshot(
+      artifactProjectionInput(),
+      projector,
+      { traceId: "trace-artifact-project-failure" },
+    )).rejects.toMatchObject({
+      code: expectedCode,
+      field: expectedField,
+      operation: "putArtifactFromSnapshot",
+      traceId: "trace-artifact-project-failure",
+    });
+    expect(pool.calls.some(({ text }) =>
+      text.startsWith("INSERT INTO campaign_os.campaign_export_artifacts"))).toBe(false);
+    expect(pool.calls[pool.calls.length - 1]?.text).toBe("ROLLBACK");
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("exports the exact source-manifest persistence bound", () => {
+    expect(ADMIN_REVIEW_MAX_SOURCE_MANIFEST_BYTES).toBe(2 * 1024 * 1024);
+  });
+
+  it("serializes twenty transactional same-source projections into one artifact", async () => {
+    const pool = new StatefulArtifactPool();
+    const store = createStore(pool);
+    const projector = vi.fn(async () => artifactProjection());
+
+    const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      store.putArtifactFromSnapshot(
+        artifactProjectionInput(),
+        projector,
+        { traceId: `trace-artifact-project-race-${index}` },
+      )));
+
+    expect(projector).toHaveBeenCalledTimes(20);
+    expect(pool.committed).toHaveLength(1);
+    expect(pool.insertCount).toBe(1);
+    expect(new Set(results.map(({ artifact }) => artifact.id)).size).toBe(1);
+    expect(new Set(results.map(({ artifact }) => artifact.contentHash)).size).toBe(1);
+    expect(results.filter(({ created }) => created)).toHaveLength(1);
+    expect(pool.maxActiveLockHolders).toBe(1);
+    expect(pool.release).toHaveBeenCalledTimes(20);
+  });
+
+  it("rolls back an insert fault after projection without committing partial content", async () => {
+    const pool = new TranscriptPool((call) => {
+      const snapshotResult = snapshotQueryResponse(call);
+      if (snapshotResult) {
+        return snapshotResult;
+      }
+      if (call.text.includes("FROM campaign_os.campaign_review_decisions")) {
+        return { rows: [decisionRow()] };
+      }
+      if (call.text.startsWith("INSERT INTO campaign_os.campaign_export_artifacts")) {
+        throw new Error("database insert failed at postgresql://secret /Users/private");
+      }
+      return { rows: [] };
+    });
+    const store = createStore(pool);
+
+    await expect(store.putArtifactFromSnapshot(
+      artifactProjectionInput(),
+      async () => artifactProjection(),
+      { traceId: "trace-artifact-project-insert-fault" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_QUERY_FAILED",
+      field: "database",
+      operation: "putArtifactFromSnapshot",
+      traceId: "trace-artifact-project-insert-fault",
+    });
+    expect(pool.calls.some(({ text }) => text === "COMMIT")).toBe(false);
+    expect(pool.calls[pool.calls.length - 1]?.text).toBe("ROLLBACK");
+    expect(pool.release).toHaveBeenCalledOnce();
+  });
+
   it("atomically inserts a validated exact-content artifact", async () => {
     const pool = new TranscriptPool((call) => {
       if (call.text.includes("FROM campaign_os.schema_migrations")) {
@@ -2445,6 +2640,55 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
 
   it("persists one real artifact race winner and fails closed on stored corruption", async () => {
     const input = artifactInput();
+    const projectedSource = artifactProjection({
+      sourceFingerprint: "5".repeat(64),
+      sourceManifest: {
+        campaignId: campaignA.campaignId,
+        transactionMode: "repeatable-read",
+        version: ADMIN_ARTIFACT_SOURCE_VERSION,
+      },
+    });
+    const projectedResults = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      store.putArtifactFromSnapshot(
+        artifactProjectionInput({ campaignId: campaignA.campaignId }),
+        async (source) => {
+          expect(source.rows).toMatchObject({
+            campaign: { id: campaignA.campaignId },
+            participants: [{ id: campaignA.participantId }],
+          });
+          expect(source.latestDecisions).toEqual([
+            expect.objectContaining({
+              campaignId: campaignA.campaignId,
+              participantId: campaignA.participantId,
+            }),
+          ]);
+          return projectedSource;
+        },
+        { traceId: `trace-real-artifact-project-${index}` },
+      )));
+    expect(projectedResults.filter(({ created }) => created)).toHaveLength(1);
+    expect(new Set(projectedResults.map(({ artifact }) => artifact.id)).size).toBe(1);
+
+    const countBeforeProjectorFault = await databasePool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM campaign_os.campaign_export_artifacts",
+    );
+    await expect(store.putArtifactFromSnapshot(
+      artifactProjectionInput({ campaignId: campaignA.campaignId }),
+      async () => {
+        throw new Error("postgresql://secret /Users/private");
+      },
+      { traceId: "trace-real-artifact-project-fault" },
+    )).rejects.toMatchObject({
+      code: "ADMIN_REVIEW_STORE_ARGUMENT_INVALID",
+      field: "projectArtifact",
+      operation: "putArtifactFromSnapshot",
+      traceId: "trace-real-artifact-project-fault",
+    });
+    const countAfterProjectorFault = await databasePool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM campaign_os.campaign_export_artifacts",
+    );
+    expect(countAfterProjectorFault.rows).toEqual(countBeforeProjectorFault.rows);
+
     const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
       store.putArtifact(input, { traceId: `trace-real-artifact-${index}` })));
     expect(results.filter(({ created }) => created)).toHaveLength(1);

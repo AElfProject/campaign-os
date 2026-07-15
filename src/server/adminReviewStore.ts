@@ -6,6 +6,7 @@ export const ADMIN_REVIEW_DECISION_PAYLOAD_VERSION = "review-decision-payload-v1
 export const ADMIN_ARTIFACT_SOURCE_VERSION = "artifact-source-v1";
 export const ADMIN_REVIEW_MAX_ARTIFACT_ROWS = 5_000;
 export const ADMIN_REVIEW_MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
+export const ADMIN_REVIEW_MAX_SOURCE_MANIFEST_BYTES = 2 * 1024 * 1024;
 export const ADMIN_REVIEW_MAX_LIST_LIMIT = 100;
 
 export type AdminOperatorRole = "internal_operator" | "review_operator";
@@ -211,6 +212,34 @@ export interface AdminExportArtifactInput {
   sourceVersion: typeof ADMIN_ARTIFACT_SOURCE_VERSION;
 }
 
+export interface AdminExportArtifactProjectionInput {
+  campaignId: string;
+  creatorRole: AdminOperatorRole;
+  creatorSubject: string;
+  expectedSourceFingerprint?: string;
+  format: AdminExportArtifactFormat;
+}
+
+export interface AdminExportArtifactProjection {
+  content: string;
+  contentHash: string;
+  fileName: string;
+  mimeType: AdminExportArtifactInput["mimeType"];
+  rowCount: number;
+  sourceFingerprint: string;
+  sourceManifest: AdminReviewJsonObject;
+  sourceVersion: typeof ADMIN_ARTIFACT_SOURCE_VERSION;
+}
+
+export interface AdminExportArtifactProjectionSource {
+  latestDecisions: readonly AdminReviewDecisionRecord[];
+  rows: AdminReviewSnapshotRows;
+}
+
+export type AdminExportArtifactProjector = (
+  source: AdminExportArtifactProjectionSource,
+) => AdminExportArtifactProjection | Promise<AdminExportArtifactProjection>;
+
 export interface AdminExportArtifactMetadata {
   campaignId: string;
   contentBytes: number;
@@ -260,6 +289,7 @@ export type AdminReviewStoreOperation =
   | "listArtifacts"
   | "listDecisions"
   | "putArtifact"
+  | "putArtifactFromSnapshot"
   | "readArtifactContent"
   | "readSnapshot";
 
@@ -340,6 +370,11 @@ export interface AdminReviewStore {
   ): Promise<readonly AdminReviewDecisionRecord[]>;
   putArtifact(
     input: AdminExportArtifactInput,
+    context: AdminReviewOperationContext,
+  ): Promise<AdminExportArtifactResult>;
+  putArtifactFromSnapshot(
+    input: AdminExportArtifactProjectionInput,
+    projectArtifact: AdminExportArtifactProjector,
     context: AdminReviewOperationContext,
   ): Promise<AdminExportArtifactResult>;
   readArtifactContent(

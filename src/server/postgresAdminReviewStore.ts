@@ -4,6 +4,7 @@ import {
   ADMIN_REVIEW_MAX_ARTIFACT_BYTES,
   ADMIN_REVIEW_MAX_ARTIFACT_ROWS,
   ADMIN_REVIEW_MAX_LIST_LIMIT,
+  ADMIN_REVIEW_MAX_SOURCE_MANIFEST_BYTES,
   ADMIN_REVIEW_MIGRATION_ID,
   AdminReviewStoreError,
   deriveAdminReviewDecisionPayloadHash,
@@ -12,6 +13,9 @@ import {
   type AdminExportArtifactInput,
   type AdminExportArtifactListInput,
   type AdminExportArtifactMetadata,
+  type AdminExportArtifactProjection,
+  type AdminExportArtifactProjectionInput,
+  type AdminExportArtifactProjector,
   type AdminExportArtifactResult,
   type AdminExportArtifactScope,
   type AdminReviewCampaignRow,
@@ -42,7 +46,7 @@ const SAFE_FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
 const IDENTIFIER_MAX_LENGTH = 160;
 const SUBJECT_MAX_LENGTH = 256;
 const SNAPSHOT_PAGE_SIZE = 100;
-const MAX_DECISION_WRITE_ATTEMPTS = 64;
+const MAX_TRANSACTION_WRITE_ATTEMPTS = 64;
 
 const CAMPAIGN_STATUSES = [
   "draft",
@@ -1046,6 +1050,35 @@ const validateArtifactInput = (
   }
 };
 
+const validateArtifactProjectionInput = (
+  input: AdminExportArtifactProjectionInput,
+  operation: AdminReviewStoreOperation,
+  traceId: string,
+) => {
+  validateBoundedString(input?.campaignId, "campaignId", IDENTIFIER_MAX_LENGTH, operation, traceId);
+  validateBoundedString(
+    input?.creatorSubject,
+    "creatorSubject",
+    SUBJECT_MAX_LENGTH,
+    operation,
+    traceId,
+  );
+  if (!(["csv", "json"] as const).includes(input.format)) {
+    throw storeError("ADMIN_REVIEW_STORE_ARGUMENT_INVALID", "format", operation, traceId);
+  }
+  if (!(["internal_operator", "review_operator"] as const).includes(input.creatorRole)) {
+    throw storeError("ADMIN_REVIEW_STORE_ARGUMENT_INVALID", "creatorRole", operation, traceId);
+  }
+  if (input.expectedSourceFingerprint !== undefined) {
+    validateSha256(
+      input.expectedSourceFingerprint,
+      "expectedSourceFingerprint",
+      operation,
+      traceId,
+    );
+  }
+};
+
 export const createPostgresAdminReviewStore = (
   options: CreatePostgresAdminReviewStoreOptions,
 ): AdminReviewStore => {
@@ -1168,7 +1201,7 @@ export const createPostgresAdminReviewStore = (
     }
   };
 
-  const queryDecisionInsert = async (
+  const querySerializableInsert = async (
     client: PostgresAdminReviewStoreClient,
     operation: AdminReviewStoreOperation,
     traceId: string,
@@ -1649,6 +1682,49 @@ export const createPostgresAdminReviewStore = (
     return decodeDecisionForScope(row, scope);
   };
 
+  const readLatestDecisionsWithClient = async (
+    client: PostgresAdminReviewStoreClient,
+    campaignId: string,
+    operation: AdminReviewStoreOperation,
+    traceId: string,
+  ): Promise<AdminReviewDecisionRecord[]> => {
+    const result = await queryWith(
+      client,
+      operation,
+      traceId,
+      `SELECT DISTINCT ON (decision_record.participant_id COLLATE "C")
+         ${DECISION_READ_COLUMNS}
+       FROM campaign_os.campaign_review_decisions AS decision_record
+       WHERE decision_record.campaign_id = $1
+       ORDER BY decision_record.participant_id COLLATE "C" ASC,
+         decision_record.version DESC,
+         decision_record.decided_at DESC,
+         decision_record.id COLLATE "C" ASC`,
+      [campaignId],
+    );
+
+    try {
+      const participantIds = new Set<string>();
+      return mapRows(result.rows, (value) => {
+        const row = decodeRow(value);
+        if (!decodeBoolean(row, "ownership_valid")) {
+          throw new RowDecodeError("wallet_address");
+        }
+        const record = mapDecisionRow(row);
+        if (record.campaignId !== campaignId) {
+          throw new RowDecodeError("campaign_id");
+        }
+        if (participantIds.has(record.participantId)) {
+          throw new RowDecodeError("participant_id");
+        }
+        participantIds.add(record.participantId);
+        return record;
+      });
+    } catch (error) {
+      throw normalizeFailure(error, operation, traceId);
+    }
+  };
+
   const assertReplayMatchesInput = (
     record: AdminReviewDecisionRecord,
     input: AdminReviewDecisionInput,
@@ -1745,7 +1821,7 @@ export const createPostgresAdminReviewStore = (
       );
       for (
         let writeAttempt = 0;
-        writeAttempt < MAX_DECISION_WRITE_ATTEMPTS;
+        writeAttempt < MAX_TRANSACTION_WRITE_ATTEMPTS;
         writeAttempt += 1
       ) {
         const existing = await readDecisionByIdempotency(client, input, operation, traceId);
@@ -1927,7 +2003,7 @@ export const createPostgresAdminReviewStore = (
         );
       }
 
-      const insertResult = await queryDecisionInsert(
+      const insertResult = await querySerializableInsert(
         client,
         operation,
         traceId,
@@ -1978,7 +2054,7 @@ export const createPostgresAdminReviewStore = (
       if (insertResult === undefined || insertResult.rows.length === 0) {
         await queryWith(client, operation, traceId, "ROLLBACK");
         transactionStarted = false;
-        if (writeAttempt === MAX_DECISION_WRITE_ATTEMPTS - 1) {
+        if (writeAttempt === MAX_TRANSACTION_WRITE_ATTEMPTS - 1) {
           throw storeError(
             "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED",
             "version",
@@ -2135,22 +2211,176 @@ export const createPostgresAdminReviewStore = (
     }
   };
 
+  interface PreparedArtifactPersistence {
+    contentBytes: number;
+    encodedManifest: string;
+    lockScope: string;
+  }
+
+  const prepareArtifactPersistence = (
+    input: AdminExportArtifactInput,
+    operation: AdminReviewStoreOperation,
+    traceId: string,
+  ): PreparedArtifactPersistence => {
+    validateArtifactInput(input, operation, traceId);
+    const encodedManifest = encodeJsonObject(
+      input.sourceManifest,
+      "sourceManifest",
+      ADMIN_REVIEW_MAX_SOURCE_MANIFEST_BYTES,
+      operation,
+      traceId,
+    );
+
+    return {
+      contentBytes: Buffer.byteLength(input.content, "utf8"),
+      encodedManifest,
+      lockScope: JSON.stringify([input.sourceFingerprint, input.format]),
+    };
+  };
+
+  const persistArtifactWithClient = async (
+    client: PostgresAdminReviewStoreClient,
+    input: AdminExportArtifactInput,
+    prepared: PreparedArtifactPersistence,
+    operation: AdminReviewStoreOperation,
+    traceId: string,
+  ): Promise<AdminExportArtifactResult | undefined> => {
+    await queryWith(
+      client,
+      operation,
+      traceId,
+      `SELECT pg_advisory_xact_lock(
+           hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0)
+         )`,
+      [input.campaignId, prepared.lockScope],
+    );
+    const insertResult = await querySerializableInsert(
+      client,
+      operation,
+      traceId,
+      `INSERT INTO campaign_os.campaign_export_artifacts (
+         id,
+         campaign_id,
+         source_version,
+         source_fingerprint,
+         source_manifest,
+         format,
+         row_count,
+         content_hash,
+         content,
+         content_bytes,
+         file_name,
+         mime_type,
+         creator_subject,
+         creator_role,
+         trace_id,
+         created_at
+       ) VALUES (
+         $1, $2, $3, $4, $5::jsonb, $6, $7, $8,
+         $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP
+       )
+       ON CONFLICT (campaign_id, source_fingerprint, format) DO NOTHING
+       RETURNING ${ARTIFACT_CONTENT_COLUMNS}`,
+      [
+        randomUUID(),
+        input.campaignId,
+        input.sourceVersion,
+        input.sourceFingerprint,
+        prepared.encodedManifest,
+        input.format,
+        input.rowCount,
+        input.contentHash,
+        input.content,
+        prepared.contentBytes,
+        input.fileName,
+        input.mimeType,
+        input.creatorSubject,
+        input.creatorRole,
+        traceId,
+      ],
+    );
+    if (insertResult === undefined) {
+      return undefined;
+    }
+    const created = insertResult.rows.length === 1;
+    let row: unknown;
+
+    if (insertResult.rows.length > 1) {
+      throw new RowDecodeError("artifactInsert");
+    }
+    if (created) {
+      row = insertResult.rows[0];
+    } else {
+      const existingResult = await queryWith(
+        client,
+        operation,
+        traceId,
+        `SELECT ${ARTIFACT_CONTENT_COLUMNS}
+         FROM campaign_os.campaign_export_artifacts
+         WHERE campaign_id = $1
+           AND source_fingerprint = $2
+           AND format = $3
+         LIMIT 1`,
+        [input.campaignId, input.sourceFingerprint, input.format],
+      );
+      if (existingResult.rows.length !== 1) {
+        throw new RowDecodeError("artifactConflict");
+      }
+      row = existingResult.rows[0];
+    }
+
+    let stored: AdminExportArtifactContent;
+    try {
+      stored = mapArtifactContentRow(row);
+      validateArtifactScopeRow(stored.artifact, input.campaignId);
+    } catch (error) {
+      throw normalizeFailure(error, operation, traceId);
+    }
+    const immutableInputMatches =
+      stored.artifact.sourceVersion === input.sourceVersion
+      && stored.artifact.sourceFingerprint === input.sourceFingerprint
+      && stored.artifact.format === input.format
+      && stored.artifact.rowCount === input.rowCount
+      && stored.artifact.contentHash === input.contentHash
+      && stored.artifact.contentBytes === prepared.contentBytes
+      && stored.artifact.fileName === input.fileName
+      && stored.artifact.mimeType === input.mimeType
+      && stored.content === input.content
+      && canonicalJson(stored.sourceManifest) === canonicalJson(input.sourceManifest);
+    if (!immutableInputMatches) {
+      throw storeError(
+        "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
+        "sourceFingerprint",
+        operation,
+        traceId,
+      );
+    }
+    if (
+      created
+      && (
+        stored.artifact.creatorSubject !== input.creatorSubject
+        || stored.artifact.creatorRole !== input.creatorRole
+        || stored.artifact.traceId !== traceId
+      )
+    ) {
+      throw storeError(
+        "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
+        "artifact",
+        operation,
+        traceId,
+      );
+    }
+
+    return { artifact: stored.artifact, created };
+  };
+
   const putArtifact = async (
     input: AdminExportArtifactInput,
     context: AdminReviewOperationContext,
   ): Promise<AdminExportArtifactResult> => {
     const operation = "putArtifact" as const;
     const traceId = prepare(operation, context);
-    validateArtifactInput(input, operation, traceId);
-    const encodedManifest = encodeJsonObject(
-      input.sourceManifest,
-      "sourceManifest",
-      2_097_152,
-      operation,
-      traceId,
-    );
-    const contentBytes = Buffer.byteLength(input.content, "utf8");
-    const lockScope = JSON.stringify([input.sourceFingerprint, input.format]);
+    const prepared = prepareArtifactPersistence(input, operation, traceId);
     const client = await connect(operation, traceId);
     let transactionStarted = false;
 
@@ -2158,124 +2388,17 @@ export const createPostgresAdminReviewStore = (
       await queryWith(client, operation, traceId, "BEGIN");
       transactionStarted = true;
       await assertSchemaReady(client, operation, traceId);
-      await queryWith(
+      const result = await persistArtifactWithClient(
         client,
+        input,
+        prepared,
         operation,
         traceId,
-        `SELECT pg_advisory_xact_lock(
-           hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0)
-         )`,
-        [input.campaignId, lockScope],
       );
-      const insertResult = await queryWith(
-        client,
-        operation,
-        traceId,
-        `INSERT INTO campaign_os.campaign_export_artifacts (
-           id,
-           campaign_id,
-           source_version,
-           source_fingerprint,
-           source_manifest,
-           format,
-           row_count,
-           content_hash,
-           content,
-           content_bytes,
-           file_name,
-           mime_type,
-           creator_subject,
-           creator_role,
-           trace_id,
-           created_at
-         ) VALUES (
-           $1, $2, $3, $4, $5::jsonb, $6, $7, $8,
-           $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP
-         )
-         ON CONFLICT (campaign_id, source_fingerprint, format) DO NOTHING
-         RETURNING ${ARTIFACT_CONTENT_COLUMNS}`,
-        [
-          randomUUID(),
-          input.campaignId,
-          input.sourceVersion,
-          input.sourceFingerprint,
-          encodedManifest,
-          input.format,
-          input.rowCount,
-          input.contentHash,
-          input.content,
-          contentBytes,
-          input.fileName,
-          input.mimeType,
-          input.creatorSubject,
-          input.creatorRole,
-          traceId,
-        ],
-      );
-      let created = insertResult.rows.length === 1;
-      let row: unknown;
-
-      if (insertResult.rows.length > 1) {
-        throw new RowDecodeError("artifactInsert");
-      }
-      if (created) {
-        row = insertResult.rows[0];
-      } else {
-        const existingResult = await queryWith(
-          client,
-          operation,
-          traceId,
-          `SELECT ${ARTIFACT_CONTENT_COLUMNS}
-           FROM campaign_os.campaign_export_artifacts
-           WHERE campaign_id = $1
-             AND source_fingerprint = $2
-             AND format = $3
-           LIMIT 1`,
-          [input.campaignId, input.sourceFingerprint, input.format],
-        );
-        if (existingResult.rows.length !== 1) {
-          throw new RowDecodeError("artifactConflict");
-        }
-        row = existingResult.rows[0];
-      }
-
-      let stored: AdminExportArtifactContent;
-      try {
-        stored = mapArtifactContentRow(row);
-        validateArtifactScopeRow(stored.artifact, input.campaignId);
-      } catch (error) {
-        throw normalizeFailure(error, operation, traceId);
-      }
-      const immutableInputMatches =
-        stored.artifact.sourceVersion === input.sourceVersion
-        && stored.artifact.sourceFingerprint === input.sourceFingerprint
-        && stored.artifact.format === input.format
-        && stored.artifact.rowCount === input.rowCount
-        && stored.artifact.contentHash === input.contentHash
-        && stored.artifact.contentBytes === contentBytes
-        && stored.artifact.fileName === input.fileName
-        && stored.artifact.mimeType === input.mimeType
-        && stored.content === input.content
-        && canonicalJson(stored.sourceManifest) === canonicalJson(input.sourceManifest);
-      if (!immutableInputMatches) {
+      if (result === undefined) {
         throw storeError(
-          "ADMIN_REVIEW_STORE_IDEMPOTENCY_CONFLICT",
+          "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED",
           "sourceFingerprint",
-          operation,
-          traceId,
-        );
-      }
-      if (
-        created
-        && (
-          stored.artifact.creatorSubject !== input.creatorSubject
-          || stored.artifact.creatorRole !== input.creatorRole
-          || stored.artifact.traceId !== traceId
-        )
-      ) {
-        throw storeError(
-          "ADMIN_REVIEW_STORE_ROW_CORRUPTION",
-          "artifact",
           operation,
           traceId,
         );
@@ -2284,7 +2407,156 @@ export const createPostgresAdminReviewStore = (
       await queryWith(client, operation, traceId, "COMMIT");
       transactionStarted = false;
 
-      return { artifact: stored.artifact, created };
+      return result;
+    } catch (error) {
+      const failure = normalizeFailure(error, operation, traceId);
+
+      if (transactionStarted) {
+        try {
+          await queryWith(client, operation, traceId, "ROLLBACK");
+          transactionStarted = false;
+        } catch {
+          throw cleanupError(operation, traceId);
+        }
+      }
+
+      throw failure;
+    } finally {
+      try {
+        client.release();
+      } catch {
+        throw cleanupError(operation, traceId, "client");
+      }
+    }
+  };
+
+  const putArtifactFromSnapshot = async (
+    input: AdminExportArtifactProjectionInput,
+    projectArtifact: AdminExportArtifactProjector,
+    context: AdminReviewOperationContext,
+  ): Promise<AdminExportArtifactResult> => {
+    const operation = "putArtifactFromSnapshot" as const;
+    const traceId = prepare(operation, context);
+    validateArtifactProjectionInput(input, operation, traceId);
+    if (typeof projectArtifact !== "function") {
+      throw storeError(
+        "ADMIN_REVIEW_STORE_ARGUMENT_INVALID",
+        "projectArtifact",
+        operation,
+        traceId,
+      );
+    }
+    const client = await connect(operation, traceId);
+    let transactionStarted = false;
+
+    try {
+      for (
+        let writeAttempt = 0;
+        writeAttempt < MAX_TRANSACTION_WRITE_ATTEMPTS;
+        writeAttempt += 1
+      ) {
+        await queryWith(
+          client,
+          operation,
+          traceId,
+          "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+        );
+        transactionStarted = true;
+        await assertSchemaReady(client, operation, traceId);
+        const rows = await readSnapshotWithClient(
+          client,
+          { campaignId: input.campaignId },
+          operation,
+          traceId,
+        );
+        if (!rows.campaign) {
+          throw storeError(
+            "ADMIN_REVIEW_STORE_NOT_FOUND",
+            "campaignId",
+            operation,
+            traceId,
+          );
+        }
+        const latestDecisions = await readLatestDecisionsWithClient(
+          client,
+          input.campaignId,
+          operation,
+          traceId,
+        );
+
+        let projection: AdminExportArtifactProjection;
+        try {
+          projection = await projectArtifact({ latestDecisions, rows });
+          if (!projection || typeof projection !== "object") {
+            throw new Error("invalid projection");
+          }
+        } catch {
+          throw storeError(
+            "ADMIN_REVIEW_STORE_ARGUMENT_INVALID",
+            "projectArtifact",
+            operation,
+            traceId,
+          );
+        }
+        const artifactInput: AdminExportArtifactInput = {
+          campaignId: input.campaignId,
+          content: projection.content,
+          contentHash: projection.contentHash,
+          creatorRole: input.creatorRole,
+          creatorSubject: input.creatorSubject,
+          fileName: projection.fileName,
+          format: input.format,
+          mimeType: projection.mimeType,
+          rowCount: projection.rowCount,
+          sourceFingerprint: projection.sourceFingerprint,
+          sourceManifest: projection.sourceManifest,
+          sourceVersion: projection.sourceVersion,
+        };
+        const prepared = prepareArtifactPersistence(artifactInput, operation, traceId);
+        if (
+          input.expectedSourceFingerprint !== undefined
+          && input.expectedSourceFingerprint !== artifactInput.sourceFingerprint
+        ) {
+          throw storeError(
+            "ADMIN_REVIEW_STORE_STALE",
+            "expectedSourceFingerprint",
+            operation,
+            traceId,
+          );
+        }
+        const result = await persistArtifactWithClient(
+          client,
+          artifactInput,
+          prepared,
+          operation,
+          traceId,
+        );
+        if (result === undefined) {
+          await queryWith(client, operation, traceId, "ROLLBACK");
+          transactionStarted = false;
+          if (writeAttempt === MAX_TRANSACTION_WRITE_ATTEMPTS - 1) {
+            throw storeError(
+              "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED",
+              "sourceFingerprint",
+              operation,
+              traceId,
+            );
+          }
+          continue;
+        }
+
+        await queryWith(client, operation, traceId, "COMMIT");
+        transactionStarted = false;
+
+        return result;
+      }
+
+      throw storeError(
+        "ADMIN_REVIEW_STORE_CONSTRAINT_FAILED",
+        "sourceFingerprint",
+        operation,
+        traceId,
+      );
     } catch (error) {
       const failure = normalizeFailure(error, operation, traceId);
 
@@ -2450,6 +2722,7 @@ export const createPostgresAdminReviewStore = (
     listArtifacts,
     listDecisions,
     putArtifact,
+    putArtifactFromSnapshot,
     readArtifactContent,
     readSnapshot,
   };
