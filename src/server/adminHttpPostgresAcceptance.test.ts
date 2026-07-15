@@ -80,6 +80,71 @@ const migrationPoolAdapter = (pool: pg.Pool): PostgresMigrationPool => ({
   end: async () => pool.end(),
 });
 
+const endPoolAndWaitForClients = async (pool: pg.Pool) => {
+  let remainingClients = pool.totalCount;
+  const clientsDisconnected = remainingClients === 0
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+        const handleRemove = () => {
+          remainingClients -= 1;
+          if (remainingClients === 0) {
+            pool.off("remove", handleRemove);
+            resolve();
+          }
+        };
+        pool.on("remove", handleRemove);
+      });
+
+  await pool.end();
+  await clientsDisconnected;
+};
+
+const settleWithin = async <T>(promise: Promise<T>, timeoutMs: number, label: string) => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${label} did not complete within ${timeoutMs} ms.`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+};
+
+const waitForDatabaseConnectionsToClose = async (
+  adminPool: pg.Pool,
+  databaseName: string,
+  timeoutMs = 10_000,
+) => {
+  const startedAt = performance.now();
+  let remainingConnections = Number.POSITIVE_INFINITY;
+
+  while (performance.now() - startedAt <= timeoutMs) {
+    const result = await adminPool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM pg_stat_activity WHERE datname = $1",
+      [databaseName],
+    );
+    remainingConnections = Number(result.rows[0]?.count ?? Number.POSITIVE_INFINITY);
+    if (remainingConnections === 0) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error(
+    `Admin HTTP PostgreSQL runtime retained ${remainingConnections} database connection(s).`,
+  );
+};
+
 const seedCampaign = async (pool: pg.Pool) => {
   const taskId = "task-admin-http";
   const walletAddress = "2F4AdminHttpParticipant";
@@ -344,23 +409,38 @@ realPostgresSuite("Admin Node HTTP and PostgreSQL acceptance", () => {
 
   afterAll(async () => {
     const failures: unknown[] = [];
+    let connectionsClosed = false;
     if (server) {
       try {
-        await server.stop();
+        await settleWithin(server.stop(), 10_000, "Admin HTTP server shutdown");
       } catch (error) {
         failures.push(error);
       }
     }
     if (databasePool) {
       try {
-        await databasePool.end();
+        await settleWithin(
+          endPoolAndWaitForClients(databasePool),
+          10_000,
+          "Admin HTTP fixture pool shutdown",
+        );
       } catch (error) {
         failures.push(error);
       }
     }
     if (adminPool) {
       try {
-        await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+        await waitForDatabaseConnectionsToClose(adminPool, databaseName);
+        connectionsClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await adminPool.query(
+          connectionsClosed
+            ? `DROP DATABASE IF EXISTS "${databaseName}"`
+            : `DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`,
+        );
       } catch (error) {
         failures.push(error);
       }
