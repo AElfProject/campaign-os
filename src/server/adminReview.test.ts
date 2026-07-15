@@ -1663,6 +1663,25 @@ describe("Admin review winner and artifact source policy", () => {
     expect(Object.isFrozen(empty)).toBe(true);
     expect(Object.isFrozen(empty.rows)).toBe(true);
 
+    const zeroParticipantRows = createRows();
+    zeroParticipantRows.completions = [];
+    zeroParticipantRows.evidence = [];
+    zeroParticipantRows.participants = [];
+    zeroParticipantRows.ranking = [];
+    const zeroParticipantSource = projectAdminReviewWinnerSourceFromStoreSnapshot({
+      latestDecisions: [],
+      rows: zeroParticipantRows,
+    }, {
+      generatedAt,
+      traceId: "trace-review-winner-zero-participants",
+    });
+    expect(zeroParticipantSource).toMatchObject({
+      rowCount: 0,
+      rows: [],
+      sourceVersion: "artifact-source-v1",
+    });
+    expect(zeroParticipantSource.manifest.campaign.id).toBe("campaign-review-0001");
+
     expect(() => projectAdminReviewWinnerSource(
       Array.from({ length: 5_001 }, () => snapshot),
       [],

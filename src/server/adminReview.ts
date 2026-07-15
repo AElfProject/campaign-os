@@ -1576,6 +1576,7 @@ export interface AdminReviewWinnerSource {
 }
 
 export interface ProjectAdminReviewWinnerSourceOptions {
+  campaign?: AdminReviewCampaignRow;
   traceId: string;
 }
 
@@ -1636,15 +1637,29 @@ export const projectAdminReviewWinnerSource = (
   if (snapshots.length > ADMIN_REVIEW_MAX_ARTIFACT_ROWS) {
     return fail("ADMIN_REVIEW_DOMAIN_BOUND_EXCEEDED", { field: "snapshots", traceId });
   }
-  if (snapshots.length === 0) {
+  const requestedCampaign = options.campaign === undefined
+    ? undefined
+    : validateCampaign(options.campaign, traceId);
+  if (snapshots.length === 0 && !requestedCampaign) {
     return fail("ADMIN_REVIEW_DOMAIN_NOT_FOUND", { field: "campaignId", traceId });
   }
 
-  const campaignId = snapshots[0]!.manifest.campaign.id;
+  const campaign = requestedCampaign ?? snapshots[0]!.manifest.campaign;
+  const campaignCanonicalJson = canonicalizeAdminReviewJson(
+    campaign as unknown as AdminReviewJsonObject,
+    { field: "campaign", traceId },
+  );
+  const campaignId = campaign.id;
   const participantIds = new Set<string>();
   for (const snapshot of snapshots) {
     validateSnapshotIntegrity(snapshot, traceId);
-    if (snapshot.manifest.campaign.id !== campaignId) {
+    if (
+      snapshot.manifest.campaign.id !== campaignId
+      || canonicalizeAdminReviewJson(
+        snapshot.manifest.campaign as unknown as AdminReviewJsonObject,
+        { field: "campaign", traceId },
+      ) !== campaignCanonicalJson
+    ) {
       return fail("ADMIN_REVIEW_DOMAIN_INVALID_FACTS", { field: "campaignId", traceId });
     }
     const participantId = snapshot.manifest.participant.id;
@@ -1697,9 +1712,9 @@ export const projectAdminReviewWinnerSource = (
     ...row,
     evidenceHashes: Object.freeze([...row.evidenceHashes]),
   })));
-  const campaign = Object.freeze({ ...snapshots[0]!.manifest.campaign });
+  const frozenCampaign = Object.freeze({ ...campaign });
   const manifest: AdminReviewArtifactSourceManifest = Object.freeze({
-    campaign,
+    campaign: frozenCampaign,
     rows: frozenRows,
     version: ADMIN_ARTIFACT_SOURCE_VERSION,
   });
@@ -1730,12 +1745,19 @@ export const projectAdminReviewWinnerSourceFromStoreSnapshot = (
   source: AdminExportArtifactProjectionSource,
   options: ProjectAdminReviewWinnerSourceFromStoreSnapshotOptions,
 ): AdminReviewWinnerSource => {
+  if (!source?.rows?.campaign) {
+    return fail("ADMIN_REVIEW_DOMAIN_NOT_FOUND", {
+      field: "campaignId",
+      traceId: safeContextValue(options.traceId, "trace-unavailable"),
+    });
+  }
   const snapshots = projectAdminReviewSnapshots(source.rows, {
     generatedAt: options.generatedAt,
     traceId: options.traceId,
   });
 
   return projectAdminReviewWinnerSource(snapshots, source.latestDecisions, {
+    campaign: source.rows.campaign,
     traceId: options.traceId,
   });
 };
@@ -1897,7 +1919,10 @@ export const readAdminReviewWinnerSource = async (
       snapshots,
       traceId,
     );
-    return projectAdminReviewWinnerSource(snapshots, decisions, { traceId });
+    return projectAdminReviewWinnerSource(snapshots, decisions, {
+      campaign: rows.campaign!,
+      traceId,
+    });
   } catch (error) {
     if (error instanceof AdminReviewDomainError) {
       throw error;
