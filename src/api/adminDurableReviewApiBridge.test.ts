@@ -638,6 +638,25 @@ describe("Admin durable review API bridge", () => {
     }
   });
 
+  it("rejects winner rows that omit required evidence identifiers", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(successEnvelope({
+      campaignId,
+      rows: [{ ...winner, evidenceHashes: undefined }],
+      sourceFingerprint,
+      sourceVersion: "artifact-source-v1",
+    })));
+    const bridge = createBridge(fetchImpl);
+
+    const result = await bridge.listWinners(campaignId, context());
+
+    expect(result).toMatchObject({
+      bridgeCode: "BRIDGE_RESPONSE_INVALID",
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+  });
+
   it("rejects command receipt and artifact manifest identities that disagree with the request", async () => {
     const responses = [
       jsonResponse(successEnvelope({

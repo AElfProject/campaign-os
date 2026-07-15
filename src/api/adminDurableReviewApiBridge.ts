@@ -963,6 +963,7 @@ const normalizeWinner = (value: unknown): AdminWinnerRow | undefined => {
     "campaignId",
     "decisionId",
     "decisionVersion",
+    "evidenceHashes",
     "participantId",
     "rank",
     "snapshotFingerprint",
@@ -984,12 +985,10 @@ const normalizeWinner = (value: unknown): AdminWinnerRow | undefined => {
   const campaignId = identity(value.campaignId);
   const decisionId = identity(value.decisionId);
   const decisionVersion = positiveInteger(value.decisionVersion);
-  const evidenceHashes = value.evidenceHashes === undefined
-    ? Object.freeze([] as string[])
-    : Array.isArray(value.evidenceHashes)
-      && value.evidenceHashes.length <= 1_000
-      ? value.evidenceHashes.map(normalizeEvidenceHash)
-      : undefined;
+  const evidenceHashes = Array.isArray(value.evidenceHashes)
+    && value.evidenceHashes.length <= 1_000
+    ? value.evidenceHashes.map(normalizeEvidenceHash)
+    : undefined;
   const normalizedEvidenceHashes = evidenceHashes
     && evidenceHashes.every((hash): hash is string => hash !== undefined)
       ? Object.freeze(evidenceHashes)
