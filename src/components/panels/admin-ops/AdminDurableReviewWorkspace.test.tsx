@@ -261,6 +261,29 @@ describe("AdminDurableReviewWorkspace", () => {
 
   it("runs queue, decision, winner, artifact, and exact-download workflows with one refresh each", async () => {
     const bridge = createBridge();
+    const currentWinners: AdminWinnerListData = {
+      campaignId: campaign.campaignId,
+      rows: [{
+        campaignId: campaign.campaignId,
+        decisionId: "decision-admin-01",
+        decisionVersion: 1,
+        evidenceHashes: [SHA_B],
+        participantId: queueItem.participantId,
+        rank: 1,
+        snapshotFingerprint: SHA_A,
+        totalPoints: 200,
+        walletAddress: queueItem.walletAddress,
+      }],
+      sourceFingerprint: SHA_C,
+      sourceVersion: "artifact-source-v1",
+    };
+    bridge.listWinners = vi.fn<AdminDurableReviewApiBridge["listWinners"]>()
+      .mockResolvedValueOnce(success({
+        ...currentWinners,
+        rows: [],
+        sourceFingerprint: SHA_A,
+      }))
+      .mockResolvedValue(success(currentWinners));
     const createObjectURL = vi.fn(() => "blob:admin-artifact");
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
@@ -299,7 +322,8 @@ describe("AdminDurableReviewWorkspace", () => {
     expect(screen.getByText("diagnosticCodes: SAFE_CODE")).toBeInTheDocument();
     expect(screen.queryByText(/UNSAFE_/)).not.toBeInTheDocument();
     expect(screen.queryByText(/unsafe-x{20}/)).not.toBeInTheDocument();
-    expect(await screen.findByText("#1")).toBeInTheDocument();
+    expect(await screen.findByText("Approved winners: 0")).toBeInTheDocument();
+    expect(screen.queryByText("#1")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Evidence verified." } });
@@ -316,11 +340,19 @@ describe("AdminDurableReviewWorkspace", () => {
     await waitFor(() => expect(bridge.submitDecision).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(bridge.listReviews).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(bridge.getReviewDetail).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.listWinners).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Approved winners: 1")).toBeInTheDocument();
+    expect(await screen.findByText("#1")).toBeInTheDocument();
+    expect(screen.getAllByText(SHA_C).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Generate artifact" }));
     await waitFor(() => expect(bridge.generateArtifact).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(bridge.generateArtifact).mock.calls[0]?.[1]).toEqual({
+      expectedSourceFingerprint: SHA_C,
+      format: "csv",
+    });
     await waitFor(() => expect(bridge.listArtifacts).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(bridge.listWinners).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.listWinners).toHaveBeenCalledTimes(3));
 
     fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
     await waitFor(() => expect(bridge.getArtifactDetail).toHaveBeenCalledTimes(1));

@@ -425,7 +425,7 @@ const idempotencyKeyPattern = /^[A-Za-z0-9._:-]{8,128}$/u;
 const reasonCodePattern = /^[a-z0-9_:-]{1,64}$/u;
 const isoDateTimePattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u;
 const unsafeJsonKeyPattern = /(?:authorization|cookie|database.?url|password|private.?key|proof|secret|signature|sql|stack|token)/iu;
-const unsafeJsonTextPattern = /(?:\b(?:postgres|postgresql|redis):\/\/|\/(?:Users|home|private|tmp|var\/folders)\/|[A-Za-z]:\\(?:Users|Windows\\Temp|Temp)\\|\bBearer\s+\S+|\b(?:token|password|api[_-]?key)\s*[=:])/iu;
+const unsafeJsonTextPattern = /(?:\b(?:postgres|postgresql|redis):\/\/|\/(?:Users|home|private|tmp|var\/folders)\/|[A-Za-z]:\\(?:Users|Windows\\Temp|Temp)\\|\bBearer\s+\S+|\b(?:access[_-]?token|token|password|api[_-]?key|signature|proof|private[ _-]?key)\s*[=:])/iu;
 const safeDetailTextPattern = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,127}$/u;
 const reviewStates = new Set<AdminReviewState>([
   "approved_current",
@@ -949,6 +949,15 @@ const normalizeSnapshot = (value: unknown): AdminReviewSnapshot | undefined => {
     : undefined;
 };
 
+const normalizeEvidenceHash = (value: unknown): string | undefined =>
+  typeof value === "string"
+  && value.length > 0
+  && value.length <= maxGeneralTextLength
+  && !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
+  && !unsafeJsonTextPattern.test(value)
+    ? value
+    : undefined;
+
 const normalizeWinner = (value: unknown): AdminWinnerRow | undefined => {
   if (!exactRecord(value, [
     "campaignId",
@@ -979,8 +988,11 @@ const normalizeWinner = (value: unknown): AdminWinnerRow | undefined => {
     ? Object.freeze([] as string[])
     : Array.isArray(value.evidenceHashes)
       && value.evidenceHashes.length <= 1_000
-      && value.evidenceHashes.every((hash) => Boolean(sha256(hash)))
-      ? Object.freeze(value.evidenceHashes as string[])
+      ? value.evidenceHashes.map(normalizeEvidenceHash)
+      : undefined;
+  const normalizedEvidenceHashes = evidenceHashes
+    && evidenceHashes.every((hash): hash is string => hash !== undefined)
+      ? Object.freeze(evidenceHashes)
       : undefined;
   const participantId = identity(value.participantId);
   const rank = value.rank === null ? null : positiveInteger(value.rank);
@@ -990,7 +1002,7 @@ const normalizeWinner = (value: unknown): AdminWinnerRow | undefined => {
   return campaignId
     && decisionId
     && decisionVersion !== undefined
-    && evidenceHashes
+    && normalizedEvidenceHashes
     && participantId
     && (value.rank === null || rank !== undefined)
     && snapshotFingerprint
@@ -1000,7 +1012,7 @@ const normalizeWinner = (value: unknown): AdminWinnerRow | undefined => {
         campaignId,
         decisionId,
         decisionVersion,
-        evidenceHashes,
+        evidenceHashes: normalizedEvidenceHashes,
         participantId,
         rank: rank ?? null,
         snapshotFingerprint,

@@ -127,7 +127,7 @@ const winner = {
   campaignId,
   decisionId: decisionRecord.decisionId,
   decisionVersion: 1,
-  evidenceHashes: [payloadHash],
+  evidenceHashes: ["evidence-hash:task-review-1"],
   participantId,
   rank: 1,
   snapshotFingerprint: fingerprint,
@@ -606,6 +606,36 @@ describe("Admin durable review API bridge", () => {
       ok: false,
       phase: "identity",
     });
+  });
+
+  it.each([
+    ["empty", ""],
+    ["control character", "evidence-hash:task-review-1\nunsafe"],
+    ["token value", "token=secret-value"],
+    ["proof value", "proof=raw-private-payload"],
+    ["signature value", "signature:raw-private-payload"],
+    ["private key value", "private_key=raw-private-payload"],
+    ["oversize", "x".repeat(4_097)],
+  ])("rejects %s winner evidence identifiers", async (_case, evidenceHash) => {
+    const fetchImpl = vi.fn(async () => jsonResponse(successEnvelope({
+      campaignId,
+      rows: [{ ...winner, evidenceHashes: [evidenceHash] }],
+      sourceFingerprint,
+      sourceVersion: "artifact-source-v1",
+    })));
+    const bridge = createBridge(fetchImpl);
+
+    const result = await bridge.listWinners(campaignId, context());
+
+    expect(result).toMatchObject({
+      bridgeCode: "BRIDGE_RESPONSE_INVALID",
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+    if (evidenceHash) {
+      expect(JSON.stringify(result)).not.toContain(evidenceHash);
+    }
   });
 
   it("rejects command receipt and artifact manifest identities that disagree with the request", async () => {

@@ -716,6 +716,10 @@ export const adminDurableReviewWorkflowReducer = (
             ...state.refresh.queue,
             requested: state.refresh.queue.requested + 1,
           },
+          winners: {
+            ...state.refresh.winners,
+            requested: state.refresh.winners.requested + 1,
+          },
         },
         status: outcome.status,
       };

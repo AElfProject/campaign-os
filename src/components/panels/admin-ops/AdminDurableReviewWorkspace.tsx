@@ -688,6 +688,7 @@ export const AdminDurableReviewWorkspace = ({
         ambiguousDecisionAttemptRef.current = null;
         consumeRefresh("queue", loadQueue);
         consumeRefresh("detail", loadDetail);
+        consumeRefresh("winners", loadWinners);
       }
     } finally {
       finishRequest("decision", controller);

@@ -637,6 +637,12 @@ h1 {
   white-space: nowrap;
 }
 
+.admin-durable-fingerprint code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .admin-durable-artifact-grid {
   min-width: 0;
   display: grid;

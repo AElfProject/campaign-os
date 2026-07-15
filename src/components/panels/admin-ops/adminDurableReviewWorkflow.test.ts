@@ -521,7 +521,7 @@ describe("admin durable review workflow", () => {
     expect(Object.values(state.reads).every((slot) => slot.current === null)).toBe(true);
   });
 
-  it("turns one decision receipt into exactly one queue and detail refresh intent", () => {
+  it("turns one decision receipt into exactly one queue, detail, and winners refresh intent", () => {
     let state = createAdminDurableReviewWorkflowState(sessionA);
     state = adminDurableReviewWorkflowReducer(state, {
       campaignId: "campaign-a",
@@ -547,6 +547,7 @@ describe("admin durable review workflow", () => {
     expect(succeeded.refresh).toMatchObject({
       detail: { consumed: 0, requested: 1 },
       queue: { consumed: 0, requested: 1 },
+      winners: { consumed: 0, requested: 1 },
     });
     expect(duplicate).toBe(succeeded);
     expect(succeeded.reads.queue.current).toBeNull();
