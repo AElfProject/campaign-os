@@ -1426,16 +1426,13 @@ export const createPostgresAdminReviewStore = (
       rankingIds.add(ranking.participantId);
       const participant = participantsById.get(ranking.participantId);
       if (
-        participant
-        && (
+        !participant
+        || (
           participant.walletAddress !== ranking.walletAddress
           || participant.totalPoints !== ranking.totalPoints
           || participant.rank !== ranking.rank
         )
       ) {
-        throw new RowDecodeError("participant_id");
-      }
-      if (input.participantId === undefined && !participant) {
         throw new RowDecodeError("participant_id");
       }
     }
@@ -1562,8 +1559,33 @@ export const createPostgresAdminReviewStore = (
         },
         mapEvidenceRow,
       );
-    const ranking = await readPages(
-      (limit, offset) => queryWith(
+    const ranking = input.participantId === undefined
+      ? await readPages(
+        (limit, offset) => queryWith(
+          client,
+          operation,
+          traceId,
+          `SELECT
+             campaign_id,
+             id AS participant_id,
+             wallet_address,
+             total_points,
+             rank,
+             created_at
+           FROM campaign_os.campaign_participants
+           WHERE campaign_id = $1
+           ORDER BY
+             total_points DESC,
+             rank ASC NULLS LAST,
+             created_at ASC,
+             wallet_address COLLATE "C" ASC,
+             id COLLATE "C" ASC
+           LIMIT $2 OFFSET $3`,
+          [input.campaignId, limit, offset],
+        ),
+        mapRankingRow,
+      )
+      : await queryWith(
         client,
         operation,
         traceId,
@@ -1575,18 +1597,10 @@ export const createPostgresAdminReviewStore = (
            rank,
            created_at
          FROM campaign_os.campaign_participants
-         WHERE campaign_id = $1
-         ORDER BY
-           total_points DESC,
-           rank ASC NULLS LAST,
-           created_at ASC,
-           wallet_address COLLATE "C" ASC,
-           id COLLATE "C" ASC
-         LIMIT $2 OFFSET $3`,
-        [input.campaignId, limit, offset],
-      ),
-      mapRankingRow,
-    );
+         WHERE campaign_id = $1 AND id = $2
+         LIMIT 1`,
+        [input.campaignId, input.participantId],
+      ).then((result) => mapRows(result.rows, mapRankingRow));
     const rows: AdminReviewSnapshotRows = {
       campaign,
       completions,

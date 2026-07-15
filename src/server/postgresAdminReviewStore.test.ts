@@ -838,6 +838,7 @@ describe("PostgreSQL Admin review snapshots", () => {
       if (
         call.text.includes("FROM campaign_os.campaign_participants")
         && call.text.includes("id = $2")
+        && !call.text.includes("AS participant_id")
       ) {
         return { rows: [participantRow()] };
       }
@@ -954,6 +955,11 @@ describe("PostgreSQL Admin review snapshots", () => {
       "campaign-admin-0001",
       "2F4ParticipantWallet",
     ]);
+    expect(pool.calls[7]?.text).toContain("WHERE campaign_id = $1 AND id = $2");
+    expect(pool.calls[7]?.values).toEqual([
+      "campaign-admin-0001",
+      "participant-admin-0001",
+    ]);
     expect(pool.calls.every(({ text }) => !/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/i.test(text))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
   });
@@ -964,11 +970,15 @@ describe("PostgreSQL Admin review snapshots", () => {
         ? { rows: [taskRow({ campaign_id: "campaign-admin-other" })] }
         : undefined],
     ["malformed Participant count", "total_points", (call: QueryCall) =>
-      call.text.includes("FROM campaign_os.campaign_participants") && call.text.includes("id = $2")
+      call.text.includes("FROM campaign_os.campaign_participants")
+        && call.text.includes("id = $2")
+        && !call.text.includes("AS participant_id")
         ? { rows: [participantRow({ total_points: "120" })] }
         : undefined],
     ["malformed Participant JSONB", "risk_flags", (call: QueryCall) =>
-      call.text.includes("FROM campaign_os.campaign_participants") && call.text.includes("id = $2")
+      call.text.includes("FROM campaign_os.campaign_participants")
+        && call.text.includes("id = $2")
+        && !call.text.includes("AS participant_id")
         ? { rows: [participantRow({ risk_flags: ["safe", 7] })] }
         : undefined],
     ["malformed Evidence timestamp", "captured_at", (call: QueryCall) =>
@@ -982,6 +992,19 @@ describe("PostgreSQL Admin review snapshots", () => {
     ["cross-Completion Evidence", "completion_id", (call: QueryCall) =>
       call.text.includes("FROM campaign_os.campaign_task_evidence")
         ? { rows: [evidenceRow({ completion_id: "completion-other" })] }
+        : undefined],
+    ["unscoped ranking row", "participant_id", (call: QueryCall) =>
+      call.text.includes("AS participant_id")
+        ? {
+            rows: [
+              rankingRow(),
+              rankingRow({
+                participant_id: "participant-admin-0002",
+                rank: 2,
+                wallet_address: "2F4OtherParticipantWallet",
+              }),
+            ],
+          }
         : undefined],
   ])("rolls back and fails closed for %s", async (_caseName, field, override) => {
     const pool = new TranscriptPool((call) => {
@@ -998,7 +1021,11 @@ describe("PostgreSQL Admin review snapshots", () => {
       if (call.text.includes("FROM campaign_os.campaign_tasks")) {
         return { rows: [taskRow()] };
       }
-      if (call.text.includes("FROM campaign_os.campaign_participants") && call.text.includes("id = $2")) {
+      if (
+        call.text.includes("FROM campaign_os.campaign_participants")
+        && call.text.includes("id = $2")
+        && !call.text.includes("AS participant_id")
+      ) {
         return { rows: [participantRow()] };
       }
       if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
@@ -1123,6 +1150,7 @@ describe("PostgreSQL Admin review decisions", () => {
           call.text.includes("FROM campaign_os.campaign_participants")
           && call.text.includes("id = $2")
           && !call.text.includes("FROM campaign_os.campaign_review_decisions")
+          && !call.text.includes("AS participant_id")
         ) {
           return { rows: options.participant ? [options.participant] : [] };
         }
@@ -1982,6 +2010,15 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     taskId: "task-admin-0002",
     walletAddress: "2F4OtherCampaignWallet",
   };
+  const multiParticipantCampaign = {
+    campaignId: "campaign-admin-multi",
+    completionId: "completion-admin-multi-a",
+    evidenceId: "evidence-admin-multi-a",
+    participantId: "participant-admin-multi-a",
+    suffix: "multi",
+    taskId: "task-admin-multi",
+    walletAddress: "2F4MultiParticipantA",
+  };
   let adminPool: pg.Pool;
   let databasePool: pg.Pool;
   let databaseUrl = "";
@@ -2464,6 +2501,93 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       "DELETE FROM campaign_os.campaign_review_decisions WHERE id = $1",
       [decisionId],
     )).rejects.toMatchObject({ code: "55000" });
+  }, 60_000);
+
+  it("scopes real ranking rows and decision projection to one Participant", async () => {
+    await seedRealCampaign(databasePool, multiParticipantCampaign);
+    await databasePool.query(
+      `INSERT INTO campaign_os.campaign_participants (
+         id, campaign_id, wallet_address, account_type, wallet_source,
+         wallet_type_verified, wallet_signature_status, wallet_verified_at,
+         locale_preference, total_points, rank, risk_flags, created_at, updated_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14
+       )`,
+      [
+        "participant-admin-multi-b",
+        multiParticipantCampaign.campaignId,
+        "2F4MultiParticipantB",
+        "EOA",
+        "PORTKEY_EOA_EXTENSION",
+        true,
+        "signed",
+        "2026-07-15T01:00:00.000Z",
+        "en-US",
+        0,
+        2,
+        JSON.stringify([]),
+        "2026-07-15T01:00:00.000Z",
+        "2026-07-15T01:00:01.000Z",
+      ],
+    );
+    const beforeFacts = await factSnapshot();
+
+    const snapshot = await store.readSnapshot({
+      campaignId: multiParticipantCampaign.campaignId,
+      participantId: multiParticipantCampaign.participantId,
+    }, { traceId: "trace-real-multi-participant-snapshot" });
+    expect(snapshot.participants.map(({ id }) => id)).toEqual([
+      multiParticipantCampaign.participantId,
+    ]);
+    expect(snapshot.ranking.map(({ participantId }) => participantId)).toEqual([
+      multiParticipantCampaign.participantId,
+    ]);
+    expect(snapshot.completions.map(({ walletAddress }) => walletAddress)).toEqual([
+      multiParticipantCampaign.walletAddress,
+    ]);
+    expect(snapshot.evidence.map(({ walletAddress }) => walletAddress)).toEqual([
+      multiParticipantCampaign.walletAddress,
+    ]);
+
+    const expectedFingerprint = "6".repeat(64);
+    const input = decisionInput({
+      campaignId: multiParticipantCampaign.campaignId,
+      expectedSnapshotFingerprint: expectedFingerprint,
+      idempotencyKeyHash: sha256("real-multi-participant-decision"),
+      participantId: multiParticipantCampaign.participantId,
+    });
+    await expect(store.appendDecision(input, async (rows) => {
+      expect(rows.participants.map(({ id }) => id)).toEqual([
+        multiParticipantCampaign.participantId,
+      ]);
+      expect(rows.ranking.map(({ participantId }) => participantId)).toEqual([
+        multiParticipantCampaign.participantId,
+      ]);
+
+      return snapshotProjection({
+        fingerprint: expectedFingerprint,
+        manifest: {
+          campaignId: multiParticipantCampaign.campaignId,
+          participantId: multiParticipantCampaign.participantId,
+          version: ADMIN_REVIEW_SNAPSHOT_VERSION,
+        },
+        walletAddress: multiParticipantCampaign.walletAddress,
+      });
+    }, { traceId: "trace-real-multi-participant-decision" })).resolves.toMatchObject({
+      created: true,
+      record: {
+        campaignId: multiParticipantCampaign.campaignId,
+        participantId: multiParticipantCampaign.participantId,
+      },
+    });
+    const persisted = await databasePool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM campaign_os.campaign_review_decisions
+       WHERE campaign_id = $1 AND participant_id = $2`,
+      [multiParticipantCampaign.campaignId, multiParticipantCampaign.participantId],
+    );
+    expect(persisted.rows).toEqual([{ count: "1" }]);
+    expect(await factSnapshot()).toEqual(beforeFacts);
   }, 60_000);
 
   it("locks canonical ownership and replays the exact command after fact drift", async () => {
