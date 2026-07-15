@@ -977,6 +977,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expect(migrations.map(({ id }) => id)).toEqual([
         "0001_campaign_runtime",
         "0002_admin_review_export",
+        "0003_admin_review_rank_projection",
       ]);
       const migration = await runPostgresMigrations({
         approved: true,
@@ -990,6 +991,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expect(migration.appliedMigrationIds).toEqual([
         "0001_campaign_runtime",
         "0002_admin_review_export",
+        "0003_admin_review_rank_projection",
       ]);
       expect(migration.pendingMigrationIds).toEqual([]);
     } finally {

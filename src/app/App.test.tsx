@@ -21,6 +21,7 @@ import type {
   ParticipantJourneyResult,
   ParticipantVerifyResult,
 } from "../api/participantJourneyApiBridge";
+import type { StageReviewIdentity } from "../components/wallet/WalletConnectModal";
 import {
   EXPORT_CSV_COLUMNS,
   walletSessions,
@@ -179,14 +180,32 @@ describe("Campaign OS app shell", () => {
     ...overrides,
   });
 
-  const participantWalletSessionBridgeState = ({
+  const stageReviewFixtures = {
+    admin: { adapterName: "PortkeyAAWallet", fixtureId: "sess-aa-001" },
+    owner: { adapterName: "PortkeyAAWallet", fixtureId: "sess-aa-001" },
+    "participant-a": { adapterName: "PortkeyDiscoverWallet", fixtureId: "sess-eoa-app-001" },
+    "participant-b": { adapterName: "PortkeyExtensionWallet", fixtureId: "sess-eoa-001" },
+  } as const satisfies Readonly<Record<StageReviewIdentity, {
+    adapterName: string;
+    fixtureId: string;
+  }>>;
+  const stageReviewIdentityLabels = {
+    admin: "Admin",
+    owner: "Owner",
+    "participant-a": "Participant A",
+    "participant-b": "Participant B",
+  } as const satisfies Readonly<Record<StageReviewIdentity, string>>;
+  const stageReviewIdentities = ["owner", "participant-a", "participant-b", "admin"] as const;
+  const stageReviewBridgeIdentities = ["owner", "participant-a", "admin"] as const;
+
+  const fixtureWalletSessionBridgeState = ({
     adapterName = "PortkeyDiscoverWallet",
-    sessionId = "sess-eoa-app-001",
+    fixtureId = "sess-eoa-app-001",
   }: {
     adapterName?: string;
-    sessionId?: string;
+    fixtureId?: string;
   } = {}): WalletSessionApiBridgeState => {
-    const session = issuedWalletSession(sessionId);
+    const session = issuedWalletSession(fixtureId);
 
     return walletSessionBridgeState({
       repository: {
@@ -197,11 +216,101 @@ describe("Campaign OS app shell", () => {
       },
       request: {
         adapterName,
-        fixtureId: sessionId,
+        fixtureId,
       },
       session,
-      traceId: `trace-${sessionId}`,
+      traceId: `trace-${fixtureId}`,
     });
+  };
+
+  const withWalletSessionResponseProjection = (
+    requestState: WalletSessionApiBridgeState,
+    responseSession: NormalizedWalletSession,
+  ): WalletSessionApiBridgeState => ({
+    ...requestState,
+    repository: {
+      ...requestState.repository,
+      recordId: `wallet-session:${responseSession.sessionId}`,
+      sessionId: responseSession.sessionId,
+    },
+    session: responseSession,
+  });
+
+  const expectStageConnectionFailClosed = async ({
+    identity,
+    responseState,
+  }: {
+    identity: StageReviewIdentity;
+    responseState: WalletSessionApiBridgeState;
+  }) => {
+    const expectedFixture = stageReviewFixtures[identity];
+    const label = stageReviewIdentityLabels[identity];
+
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(responseState);
+    const ownerBridge = appOwnerBridge();
+    const participantBridge = appParticipantBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    if (identity !== "owner") {
+      fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+        target: { value: identity },
+      });
+    }
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
+    });
+
+    expect(responseState.request).toEqual(expectedFixture);
+    expect(responseState.repository).toMatchObject({
+      recordId: `wallet-session:${responseState.session!.sessionId}`,
+      sessionId: responseState.session!.sessionId,
+    });
+    expectFreshHeaderWalletPreviewRequest(
+      mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request,
+      expectedFixture,
+    );
+    expect(await screen.findByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
+  };
+
+  const stageReviewProjectionFields = [
+    "address",
+    "accountType",
+    "chainId",
+    "network",
+    "walletSource",
+  ] as const;
+  type StageReviewProjectionField = (typeof stageReviewProjectionFields)[number];
+  const mismatchStageReviewProjection = (
+    session: NormalizedWalletSession,
+    field: StageReviewProjectionField,
+  ): NormalizedWalletSession => {
+    switch (field) {
+      case "address":
+        return { ...session, address: `${session.address}-mismatch` };
+      case "accountType":
+        return { ...session, accountType: session.accountType === "AA" ? "EOA" : "AA" };
+      case "chainId":
+        return { ...session, chainId: `${session.chainId}-mismatch` };
+      case "network":
+        return { ...session, network: session.network === "mainnet" ? "testnet" : "mainnet" };
+      case "walletSource":
+        return { ...session, walletSource: "NIGHTELF" };
+    }
   };
 
   beforeEach(() => {
@@ -361,7 +470,10 @@ describe("Campaign OS app shell", () => {
   ) => {
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
-    const participantState = participantWalletSessionBridgeState({ adapterName, sessionId });
+    const participantState = fixtureWalletSessionBridgeState({
+      adapterName,
+      fixtureId: sessionId,
+    });
     mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(participantState);
     const ownerBridge = appOwnerBridge();
     const participantBridge = appParticipantBridge();
@@ -553,61 +665,58 @@ describe("Campaign OS app shell", () => {
   });
 
   it.each([
-    ["Owner", "owner", "participant-a"],
-    ["Participant A", "participant-a", "participant-b"],
-    ["Participant B", "participant-b", "participant-a"],
-    ["Admin", "admin", "participant-a"],
-  ])("rejects a %s Stage connection when the API returns the %s fixture", async (
-    label,
+    ["owner", "participant-a"],
+    ["participant-a", "participant-b"],
+    ["participant-b", "participant-a"],
+    ["admin", "participant-a"],
+  ] as const)("rejects the %s Stage connection when the API returns the %s fixture", async (
     identity,
     responseIdentity,
   ) => {
-    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
-    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
-    const responseState = responseIdentity === "participant-b"
-      ? participantWalletSessionBridgeState({
-          adapterName: "PortkeyExtensionWallet",
-          sessionId: "sess-eoa-001",
-        })
-      : participantWalletSessionBridgeState();
-    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(responseState);
-    const ownerBridge = appOwnerBridge();
-    const participantBridge = appParticipantBridge();
-    const adminBridge = appAdminBridge();
-
-    render(
-      <App
-        adminDurableReviewBridge={adminBridge}
-        ownerCampaignBridge={ownerBridge}
-        participantJourneyBridge={participantBridge}
-      />,
+    const requestState = fixtureWalletSessionBridgeState(stageReviewFixtures[identity]);
+    const responseFixtureId = stageReviewFixtures[responseIdentity].fixtureId;
+    const responseState = withWalletSessionResponseProjection(
+      requestState,
+      issuedWalletSession(responseFixtureId),
     );
 
-    fireEvent.click(getHeaderConnectWalletButton());
-    if (identity !== "owner") {
-      fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
-        target: { value: identity },
-      });
-    }
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
+    expect(responseState.session?.sessionId).toBe(responseFixtureId);
+    await expectStageConnectionFailClosed({
+      identity,
+      responseState,
     });
-
-    expect(await screen.findByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
-    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
-    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
-    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
-    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["Owner", "owner", "PortkeyAAWallet", "sess-aa-001"],
-    ["Participant A", "participant-a", "PortkeyDiscoverWallet", "sess-eoa-app-001"],
-    ["Participant B", "participant-b", "PortkeyExtensionWallet", "sess-eoa-001"],
-    ["Admin", "admin", "PortkeyAAWallet", "sess-aa-001"],
-  ])(
-    "maps the %s stage identity only to its approved fixture",
-    async (label, identity, adapterName, fixtureId) => {
+  it.each(
+    stageReviewBridgeIdentities.flatMap((identity) =>
+      stageReviewProjectionFields.map((field) => ({
+        field,
+        identity,
+      }))),
+  )("keeps the $identity Stage connection fail-closed when only $field mismatches", async ({
+    field,
+    identity,
+  }) => {
+    const requestState = fixtureWalletSessionBridgeState(stageReviewFixtures[identity]);
+    const expectedSession = requestState.session!;
+    const responseSession = mismatchStageReviewProjection(expectedSession, field);
+    const mismatchedFields = stageReviewProjectionFields.filter(
+      (projectionField) => responseSession[projectionField] !== expectedSession[projectionField],
+    );
+
+    expect(mismatchedFields).toEqual([field]);
+    await expectStageConnectionFailClosed({
+      identity,
+      responseState: withWalletSessionResponseProjection(requestState, responseSession),
+    });
+  });
+
+  it.each(stageReviewIdentities.map((identity) => ({
+    identity,
+    label: stageReviewIdentityLabels[identity],
+  })))(
+    "maps the $label stage identity only to its approved fixture",
+    async ({ identity, label }) => {
       import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
       render(<App />);
 
@@ -623,8 +732,9 @@ describe("Campaign OS app shell", () => {
       });
 
       const request = mockedSubmitWalletSessionApiPreview.mock.calls[0]?.[0].request;
+      const expectedFixture = stageReviewFixtures[identity];
 
-      expectFreshHeaderWalletPreviewRequest(request, { adapterName, fixtureId });
+      expectFreshHeaderWalletPreviewRequest(request, expectedFixture);
       expect(Object.keys(request ?? {}).sort()).toEqual([
         "adapterName",
         "fixtureId",
@@ -680,7 +790,7 @@ describe("Campaign OS app shell", () => {
     const ownerResponse = new Promise<WalletSessionApiBridgeState>((resolve) => {
       resolveOwnerResponse = resolve;
     });
-    const participantState = participantWalletSessionBridgeState();
+    const participantState = fixtureWalletSessionBridgeState();
     mockedSubmitWalletSessionApiPreview
       .mockImplementationOnce(async () => ownerResponse)
       .mockResolvedValueOnce(participantState);

@@ -228,15 +228,17 @@ const evidenceRow = (overrides: Record<string, unknown> = {}): Record<string, un
   ...overrides,
 });
 
-const rankingRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-  campaign_id: "campaign-admin-0001",
-  created_at: timestamp("2026-07-15T00:00:03.000Z"),
-  participant_id: "participant-admin-0001",
-  rank: 1,
-  total_points: 120,
-  wallet_address: "2F4ParticipantWallet",
-  ...overrides,
-});
+const rankedParticipantRow = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => {
+  const participant = participantRow(overrides);
+
+  return {
+    ...participant,
+    participant_id: participant.id,
+    ...overrides,
+  };
+};
 
 const readinessRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   checksum: expectedMigration.checksum,
@@ -281,9 +283,8 @@ const snapshotQueryResponse = (
   if (
     call.text.includes("FROM campaign_os.campaign_participants")
     && !call.text.includes("FROM campaign_os.campaign_review_decisions")
-    && !call.text.includes("AS participant_id")
   ) {
-    return { rows: [participantRow()] };
+    return { rows: [rankedParticipantRow()] };
   }
   if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
     return { rows: [completionRow()] };
@@ -291,10 +292,6 @@ const snapshotQueryResponse = (
   if (call.text.includes("FROM campaign_os.campaign_task_evidence")) {
     return { rows: [evidenceRow()] };
   }
-  if (call.text.includes("AS participant_id")) {
-    return { rows: [rankingRow()] };
-  }
-
   return undefined;
 };
 
@@ -890,9 +887,8 @@ describe("PostgreSQL Admin review snapshots", () => {
       if (
         call.text.includes("FROM campaign_os.campaign_participants")
         && call.text.includes("id = $2")
-        && !call.text.includes("AS participant_id")
       ) {
-        return { rows: [participantRow()] };
+        return { rows: [rankedParticipantRow()] };
       }
       if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
         return { rows: [completionRow()] };
@@ -900,10 +896,6 @@ describe("PostgreSQL Admin review snapshots", () => {
       if (call.text.includes("FROM campaign_os.campaign_task_evidence")) {
         return { rows: [evidenceRow()] };
       }
-      if (call.text.includes("AS participant_id")) {
-        return { rows: [rankingRow()] };
-      }
-
       return { rows: [] };
     });
     const store = createStore(pool);
@@ -990,7 +982,6 @@ describe("PostgreSQL Admin review snapshots", () => {
       expect.stringContaining("FROM campaign_os.campaign_participants"),
       expect.stringContaining("FROM campaign_os.campaign_task_completions"),
       expect.stringContaining("FROM campaign_os.campaign_task_evidence"),
-      expect.stringContaining("AS participant_id"),
       "COMMIT",
     ]);
     expect(pool.calls[1]?.values).toEqual([ADMIN_REVIEW_MIGRATION_ID]);
@@ -1007,19 +998,64 @@ describe("PostgreSQL Admin review snapshots", () => {
       "campaign-admin-0001",
       "2F4ParticipantWallet",
     ]);
-    expect(pool.calls[7]?.text).toContain(
+    expect(pool.calls[4]?.text).toContain(
       "WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2",
     );
-    expect(pool.calls[7]?.values).toEqual([
-      "campaign-admin-0001",
-      "participant-admin-0001",
-    ]);
     expect(pool.calls[4]?.text).toContain("ROW_NUMBER() OVER");
-    expect(pool.calls[7]?.text).toContain("ROW_NUMBER() OVER");
+    expect(pool.calls[4]?.text).toContain("id AS participant_id");
     expect(pool.calls[4]?.text).toContain("ranked_participant.id = $2");
-    expect(pool.calls[7]?.text).toContain("ranked_participant.id = $2");
+    expect(pool.calls.filter(({ text }) => text.includes("ROW_NUMBER() OVER"))).toHaveLength(1);
     expect(pool.calls.every(({ text }) => !/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/i.test(text))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("reads more than one page of ranked Participants once and derives both projections", async () => {
+    const rankedRows = Array.from({ length: 101 }, (_, index) => {
+      const suffix = String(index + 1).padStart(3, "0");
+
+      return rankedParticipantRow({
+        id: `participant-admin-${suffix}`,
+        rank: index + 1,
+        total_points: 101 - index,
+        wallet_address: `2F4ParticipantWallet${suffix}`,
+      });
+    });
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.schema_migrations")) {
+        return { rows: [readinessRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaigns")) {
+        return { rows: [campaignRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_participants")) {
+        const limit = typeof call.values[1] === "number" ? call.values[1] : rankedRows.length;
+        const offset = typeof call.values[2] === "number" ? call.values[2] : 0;
+
+        return { rows: rankedRows.slice(offset, offset + limit) };
+      }
+
+      return { rows: [] };
+    });
+
+    const snapshot = await createStore(pool).readSnapshot(
+      { campaignId: "campaign-admin-0001" },
+      { traceId: "trace-ranked-snapshot-single-query" },
+    );
+
+    expect(snapshot.participants).toHaveLength(101);
+    expect(snapshot.ranking).toHaveLength(101);
+    expect(snapshot.ranking.map(({ participantId, rank }) => ({ participantId, rank }))).toEqual(
+      snapshot.participants.map(({ id, rank }) => ({ participantId: id, rank })),
+    );
+    const rankedQueries = pool.calls.filter(({ text }) => text.includes("ROW_NUMBER() OVER"));
+    expect(rankedQueries).toHaveLength(1);
+    expect(rankedQueries[0]?.values).toEqual([
+      "campaign-admin-0001",
+      ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1,
+    ]);
+    expect(rankedQueries[0]?.text).toContain("id AS participant_id");
+    expect(rankedQueries[0]?.text).toContain("LIMIT $2");
+    expect(rankedQueries[0]?.text).not.toContain("OFFSET");
   });
 
   it.each([
@@ -1030,14 +1066,12 @@ describe("PostgreSQL Admin review snapshots", () => {
     ["malformed Participant count", "total_points", (call: QueryCall) =>
       call.text.includes("FROM campaign_os.campaign_participants")
         && call.text.includes("id = $2")
-        && !call.text.includes("AS participant_id")
-        ? { rows: [participantRow({ total_points: "120" })] }
+        ? { rows: [rankedParticipantRow({ total_points: "120" })] }
         : undefined],
     ["malformed Participant JSONB", "risk_flags", (call: QueryCall) =>
       call.text.includes("FROM campaign_os.campaign_participants")
         && call.text.includes("id = $2")
-        && !call.text.includes("AS participant_id")
-        ? { rows: [participantRow({ risk_flags: ["safe", 7] })] }
+        ? { rows: [rankedParticipantRow({ risk_flags: ["safe", 7] })] }
         : undefined],
     ["malformed Evidence timestamp", "captured_at", (call: QueryCall) =>
       call.text.includes("FROM campaign_os.campaign_task_evidence")
@@ -1055,9 +1089,9 @@ describe("PostgreSQL Admin review snapshots", () => {
       call.text.includes("AS participant_id")
         ? {
             rows: [
-              rankingRow(),
-              rankingRow({
-                participant_id: "participant-admin-0002",
+              rankedParticipantRow(),
+              rankedParticipantRow({
+                id: "participant-admin-0002",
                 rank: 2,
                 wallet_address: "2F4OtherParticipantWallet",
               }),
@@ -1082,9 +1116,8 @@ describe("PostgreSQL Admin review snapshots", () => {
       if (
         call.text.includes("FROM campaign_os.campaign_participants")
         && call.text.includes("id = $2")
-        && !call.text.includes("AS participant_id")
       ) {
-        return { rows: [participantRow()] };
+        return { rows: [rankedParticipantRow()] };
       }
       if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
         return { rows: [completionRow()] };
@@ -1092,10 +1125,6 @@ describe("PostgreSQL Admin review snapshots", () => {
       if (call.text.includes("FROM campaign_os.campaign_task_evidence")) {
         return { rows: [evidenceRow()] };
       }
-      if (call.text.includes("AS participant_id")) {
-        return { rows: [rankingRow()] };
-      }
-
       return { rows: [] };
     });
     const store = createStore(pool);
@@ -2255,12 +2284,18 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       `SELECT indexname
        FROM pg_indexes
        WHERE schemaname = $1
-         AND tablename IN ($2, $3)
+         AND tablename IN ($2, $3, $4)
        ORDER BY indexname`,
-      ["campaign_os", "campaign_review_decisions", "campaign_export_artifacts"],
+      [
+        "campaign_os",
+        "campaign_review_decisions",
+        "campaign_export_artifacts",
+        "campaign_participants",
+      ],
     );
     expect(indexes.rows.map(({ indexname }) => indexname)).toEqual(expect.arrayContaining([
       "campaign_os_campaign_export_artifacts_list_idx",
+      "campaign_os_campaign_participants_dynamic_rank_idx",
       "campaign_os_campaign_review_decisions_current_idx",
       "campaign_os_campaign_review_decisions_filter_idx",
     ]));
@@ -2393,14 +2428,18 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     )).rejects.toMatchObject({ code: "23514" });
   }, 30_000);
 
-  it("requires the exact 0002 readiness checksum on a real database", async () => {
+  it("requires the exact latest Admin review readiness checksum on a real database", async () => {
     const readinessDatabase = `campaign_os_m242_ready_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
     await createDatabase(readinessDatabase);
     const readinessUrl = isolatedDatabaseUrl(TEST_DATABASE_URL!, readinessDatabase);
     let readinessPool: pg.Pool | undefined;
 
     try {
-      await applyMigrations(readinessUrl, [definitions[0]!], "trace-real-only-0001");
+      await applyMigrations(
+        readinessUrl,
+        [definitions[0]!, definitions[1]!],
+        "trace-real-through-0002",
+      );
       readinessPool = createRealPool(readinessUrl, 4);
       const readinessStore = createPostgresAdminReviewStore({
         boundedListLimit: 100,
@@ -2410,7 +2449,7 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       });
       await expect(readinessStore.listArtifacts(
         { campaignId: campaignA.campaignId },
-        { traceId: "trace-real-missing-0002" },
+        { traceId: "trace-real-missing-0003" },
       )).rejects.toMatchObject({
         code: "ADMIN_REVIEW_STORE_SCHEMA_NOT_READY",
         field: "migrationId",
@@ -2418,7 +2457,7 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
       await readinessPool.end();
       readinessPool = undefined;
 
-      await applyMigrations(readinessUrl, definitions, "trace-real-apply-0002");
+      await applyMigrations(readinessUrl, definitions, "trace-real-apply-0003");
       readinessPool = createRealPool(readinessUrl, 4);
       await readinessPool.query(
         "UPDATE campaign_os.schema_migrations SET checksum = $1 WHERE migration_id = $2",
@@ -3017,6 +3056,119 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
            AND content_bytes = octet_length(content)
          )`,
       );
+    }
+  }, 60_000);
+
+  it("reads a 5000-Participant ranked snapshot with one indexed window query under two seconds p95", async () => {
+    const scaleCampaign = {
+      campaignId: "campaign-admin-scale",
+      completionId: "completion-admin-scale-0001",
+      evidenceId: "evidence-admin-scale-0001",
+      participantId: "participant-admin-scale-0001",
+      suffix: "scale",
+      taskId: "task-admin-scale",
+      walletAddress: "2F4ScaleWallet0001",
+    };
+    await seedRealCampaign(databasePool, scaleCampaign);
+    await databasePool.query(
+      `INSERT INTO campaign_os.campaign_participants (
+         id, campaign_id, wallet_address, account_type, wallet_source,
+         wallet_type_verified, wallet_signature_status, wallet_verified_at,
+         locale_preference, total_points, rank, risk_flags, created_at, updated_at
+       )
+       SELECT
+         'participant-admin-scale-' || lpad(ordinal::text, 4, '0'),
+         $1,
+         '2F4ScaleWallet' || lpad(ordinal::text, 4, '0'),
+         'EOA',
+         'PORTKEY_EOA_EXTENSION',
+         true,
+         'signed',
+         '2026-07-15T01:00:00.000Z'::timestamptz,
+         'en-US',
+         $2 - ordinal,
+         ordinal,
+         '[]'::jsonb,
+         '2026-07-15T01:00:00.000Z'::timestamptz + ordinal * interval '1 millisecond',
+         '2026-07-15T01:00:01.000Z'::timestamptz + ordinal * interval '1 millisecond'
+       FROM generate_series(2, $2) AS ordinal`,
+      [scaleCampaign.campaignId, ADMIN_REVIEW_MAX_ARTIFACT_ROWS],
+    );
+    await databasePool.query("ANALYZE campaign_os.campaign_participants");
+
+    let rankedQueryCount = 0;
+    const countedPool: PostgresAdminReviewStorePool = {
+      connect: async () => {
+        const client = await databasePool.connect();
+
+        return {
+          query: async (text, values = []) => {
+            if (text.includes("ROW_NUMBER() OVER")) {
+              rankedQueryCount += 1;
+            }
+            const result = await client.query(text, [...values]);
+
+            return { rows: result.rows as Array<Record<string, unknown>> };
+          },
+          release: () => client.release(),
+        };
+      },
+      end: async () => undefined,
+      query: async (text, values = []) => {
+        const result = await databasePool.query(text, [...values]);
+
+        return { rows: result.rows as Array<Record<string, unknown>> };
+      },
+    };
+    const countedStore = createPostgresAdminReviewStore({
+      boundedListLimit: 100,
+      expectedMigration: { checksum: reviewMigration.checksum, id: reviewMigration.id },
+      ownsPool: false,
+      pool: countedPool,
+    });
+    const samples: number[] = [];
+
+    for (let sampleIndex = 0; sampleIndex < 3; sampleIndex += 1) {
+      rankedQueryCount = 0;
+      const startedAt = performance.now();
+      const snapshot = await countedStore.readSnapshot(
+        { campaignId: scaleCampaign.campaignId },
+        { traceId: `trace-real-ranked-scale-${sampleIndex}` },
+      );
+      samples.push(performance.now() - startedAt);
+
+      expect(snapshot.participants).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS);
+      expect(snapshot.ranking).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS);
+      expect(rankedQueryCount).toBe(1);
+    }
+
+    samples.sort((left, right) => left - right);
+    expect(samples[Math.ceil(samples.length * 0.95) - 1]).toBeLessThan(2_000);
+
+    const explainClient = await databasePool.connect();
+    try {
+      await explainClient.query("BEGIN");
+      await explainClient.query("SET LOCAL enable_seqscan = off");
+      const explain = await explainClient.query(
+        `EXPLAIN (ANALYZE, FORMAT JSON)
+         SELECT id, wallet_address, total_points, created_at
+         FROM campaign_os.campaign_participants
+         WHERE campaign_id = $1
+         ORDER BY
+           total_points DESC,
+           created_at ASC,
+           id COLLATE "C" ASC,
+           wallet_address COLLATE "C" ASC
+         LIMIT $2`,
+        [scaleCampaign.campaignId, ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1],
+      );
+      expect(JSON.stringify(explain.rows)).toContain(
+        "campaign_os_campaign_participants_dynamic_rank_idx",
+      );
+      await explainClient.query("ROLLBACK");
+    } finally {
+      explainClient.release();
+      await countedStore.close({ traceId: "trace-real-ranked-scale-close" });
     }
   }, 60_000);
 

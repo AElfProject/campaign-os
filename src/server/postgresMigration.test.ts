@@ -114,9 +114,11 @@ describe("PostgreSQL migration runtime", () => {
     expect(first.map(({ id }) => id)).toEqual([
       "0001_campaign_runtime",
       "0002_admin_review_export",
+      "0003_admin_review_rank_projection",
     ]);
     const campaignRuntime = first[0];
     const adminReviewExport = first[1];
+    const adminReviewRankProjection = first[2];
 
     for (const table of [
       "campaigns",
@@ -184,6 +186,22 @@ describe("PostgreSQL migration runtime", () => {
     );
     expect(adminReviewExport?.checksum).toBe(
       "4f8eb20ac83b52bc9bc3e842416ff09fce369ec64412b7d67b974f2c900e6af5",
+    );
+
+    expect(adminReviewRankProjection?.upSql).toContain(
+      "CREATE INDEX campaign_os_campaign_participants_dynamic_rank_idx",
+    );
+    expect(adminReviewRankProjection?.upSql).toContain(
+      "campaign_id,\n    total_points DESC,\n    created_at ASC",
+    );
+    expect(adminReviewRankProjection?.upSql).toContain('id COLLATE "C" ASC');
+    expect(adminReviewRankProjection?.upSql).toContain('wallet_address COLLATE "C" ASC');
+    expect(adminReviewRankProjection?.upSql).not.toMatch(/\b(?:ALTER|DROP|TRUNCATE|UPDATE|DELETE)\b/i);
+    expect(adminReviewRankProjection?.downSql).toBe(
+      "DROP INDEX IF EXISTS campaign_os.campaign_os_campaign_participants_dynamic_rank_idx;\n",
+    );
+    expect(adminReviewRankProjection?.checksum).toBe(
+      "c9236184b25820b36540942de86c2342c9098002a023db8da1f706cf287dd7e8",
     );
 
     const factTables = [

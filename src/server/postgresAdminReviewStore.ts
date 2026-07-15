@@ -46,6 +46,7 @@ const SAFE_FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
 const IDENTIFIER_MAX_LENGTH = 160;
 const SUBJECT_MAX_LENGTH = 256;
 const SNAPSHOT_PAGE_SIZE = 100;
+const RANKED_PARTICIPANT_SNAPSHOT_LIMIT = ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1;
 const MAX_TRANSACTION_WRITE_ATTEMPTS = 64;
 
 const CAMPAIGN_STATUSES = [
@@ -104,6 +105,10 @@ const PARTICIPANT_SNAPSHOT_COLUMNS = `
   risk_flags,
   created_at,
   updated_at
+`;
+const RANKED_PARTICIPANT_PROJECTION_COLUMNS = `
+  ${PARTICIPANT_SNAPSHOT_COLUMNS},
+  id AS participant_id
 `;
 const RANKED_PARTICIPANT_SNAPSHOT_SOURCE = `
   SELECT
@@ -1510,31 +1515,34 @@ export const createPostgresAdminReviewStore = (
       ),
       mapTaskRow,
     );
-    const participants = input.participantId === undefined
-      ? await readPages(
-        (limit, offset) => queryWith(
-          client,
-          operation,
-          traceId,
-          `SELECT ${PARTICIPANT_SNAPSHOT_COLUMNS}
-           FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
-           WHERE ranked_participant.campaign_id = $1
-           ORDER BY ranked_participant.id COLLATE "C" ASC
-           LIMIT $2 OFFSET $3`,
-          [input.campaignId, limit, offset],
-        ),
-        mapParticipantRow,
+    const rankedParticipantResult = input.participantId === undefined
+      ? await queryWith(
+        client,
+        operation,
+        traceId,
+        `SELECT ${RANKED_PARTICIPANT_PROJECTION_COLUMNS}
+         FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
+         WHERE ranked_participant.campaign_id = $1
+         ORDER BY
+           rank ASC,
+           created_at ASC,
+           id COLLATE "C" ASC,
+           wallet_address COLLATE "C" ASC
+         LIMIT $2`,
+        [input.campaignId, RANKED_PARTICIPANT_SNAPSHOT_LIMIT],
       )
       : await queryWith(
         client,
         operation,
         traceId,
-        `SELECT ${PARTICIPANT_SNAPSHOT_COLUMNS}
+        `SELECT ${RANKED_PARTICIPANT_PROJECTION_COLUMNS}
          FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
          WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2
          LIMIT 1`,
         [input.campaignId, input.participantId],
-      ).then((result) => mapRows(result.rows, mapParticipantRow));
+      );
+    const participants = mapRows(rankedParticipantResult.rows, mapParticipantRow);
+    const ranking = mapRows(rankedParticipantResult.rows, mapRankingRow);
     const scopedWallet = input.participantId === undefined
       ? undefined
       : participants[0]?.walletAddress;
@@ -1588,48 +1596,6 @@ export const createPostgresAdminReviewStore = (
         },
         mapEvidenceRow,
       );
-    const ranking = input.participantId === undefined
-      ? await readPages(
-        (limit, offset) => queryWith(
-          client,
-          operation,
-          traceId,
-          `SELECT
-             campaign_id,
-             id AS participant_id,
-             wallet_address,
-             total_points,
-             rank,
-             created_at
-           FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
-           WHERE ranked_participant.campaign_id = $1
-           ORDER BY
-             total_points DESC,
-             rank ASC,
-             created_at ASC,
-             wallet_address COLLATE "C" ASC,
-             id COLLATE "C" ASC
-           LIMIT $2 OFFSET $3`,
-          [input.campaignId, limit, offset],
-        ),
-        mapRankingRow,
-      )
-      : await queryWith(
-        client,
-        operation,
-        traceId,
-        `SELECT
-           campaign_id,
-           id AS participant_id,
-           wallet_address,
-           total_points,
-           rank,
-           created_at
-         FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
-         WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2
-         LIMIT 1`,
-        [input.campaignId, input.participantId],
-      ).then((result) => mapRows(result.rows, mapRankingRow));
     const rows: AdminReviewSnapshotRows = {
       campaign,
       completions,

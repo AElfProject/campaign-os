@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const ADMIN_REVIEW_MIGRATION_ID = "0002_admin_review_export";
+export const ADMIN_REVIEW_MIGRATION_ID = "0003_admin_review_rank_projection";
 export const ADMIN_REVIEW_SNAPSHOT_VERSION = "review-snapshot-v1";
 export const ADMIN_REVIEW_DECISION_PAYLOAD_VERSION = "review-decision-payload-v1";
 export const ADMIN_ARTIFACT_SOURCE_VERSION = "artifact-source-v1";

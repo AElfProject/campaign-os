@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS campaign_os.campaign_os_campaign_participants_dynamic_rank_idx;
