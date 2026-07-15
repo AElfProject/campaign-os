@@ -35,6 +35,7 @@ import {
   createAdminDurableReviewWorkflowState,
   nextAdminDurableReviewRequestToken,
   selectAdminDurableReviewCapabilities,
+  selectAdminDurableReviewRequestActive,
   selectAdminDurableReviewRetryTarget,
   type AdminDurableReviewDownloadRetryTarget,
   type AdminDurableReviewOperation,
@@ -252,6 +253,10 @@ export const AdminDurableReviewWorkspace = ({
   const confirmationRestorePendingRef = useRef(false);
   const diagnosticRef = useRef<HTMLDivElement | null>(null);
   const downloadDiagnosticRef = useRef<HTMLDivElement | null>(null);
+  const observedFailuresRef = useRef({
+    diagnostic: state.diagnostic,
+    downloadFailure: state.downloadFailure,
+  });
   const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const focusedParticipantRef = useRef<string | null>(null);
   const mountedRef = useRef(false);
@@ -469,10 +474,18 @@ export const AdminDurableReviewWorkspace = ({
   }, [abortAll, applyEvent, loadCampaigns, releaseObjectUrl, sessionKey]);
 
   useEffect(() => {
-    if (state.downloadFailure) {
-      downloadDiagnosticRef.current?.focus();
-    } else if (state.diagnostic) {
+    const previous = observedFailuresRef.current;
+    const diagnosticChanged = state.diagnostic !== previous.diagnostic;
+    const downloadFailureChanged = state.downloadFailure !== previous.downloadFailure;
+    observedFailuresRef.current = {
+      diagnostic: state.diagnostic,
+      downloadFailure: state.downloadFailure,
+    };
+
+    if (diagnosticChanged && state.diagnostic) {
       diagnosticRef.current?.focus();
+    } else if (downloadFailureChanged && state.downloadFailure) {
+      downloadDiagnosticRef.current?.focus();
     }
   }, [state.diagnostic, state.downloadFailure]);
 
@@ -642,6 +655,8 @@ export const AdminDurableReviewWorkspace = ({
         });
         if (next !== before) {
           ambiguousDecisionAttemptRef.current = null;
+          confirmationInitiatorRef.current = null;
+          confirmationRestorePendingRef.current = false;
         }
         return;
       }
@@ -662,6 +677,8 @@ export const AdminDurableReviewWorkspace = ({
         const next = applyEvent({ failure: workflowFailure(result), token, type: "requestFailed" });
         if (next !== before) {
           ambiguousDecisionAttemptRef.current = result.retryable ? confirmation : null;
+          confirmationInitiatorRef.current = null;
+          confirmationRestorePendingRef.current = false;
         }
         return;
       }
@@ -760,6 +777,13 @@ export const AdminDurableReviewWorkspace = ({
       );
       if (!result.ok) {
         applyEvent({ failure: workflowFailure(result), token, type: "requestFailed" });
+        return;
+      }
+      if (
+        !mountedRef.current
+        || controller.signal.aborted
+        || !selectAdminDurableReviewRequestActive(stateRef.current, token)
+      ) {
         return;
       }
       const download = readValue<AdminArtifactDownloadData>(result.data);

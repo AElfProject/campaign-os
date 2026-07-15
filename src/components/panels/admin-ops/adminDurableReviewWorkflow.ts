@@ -311,6 +311,12 @@ const tokenMatches = (
   && token.selectedArtifactId === active.selectedArtifactId
   && token.expectedContentHash === active.expectedContentHash;
 
+export const selectAdminDurableReviewRequestActive = (
+  state: AdminDurableReviewWorkflowState,
+  token: AdminDurableReviewRequestToken,
+): boolean => identityMatches(token, state)
+  && tokenMatches(token, state.activeRequests[token.operation]);
+
 const sha256Pattern = /^[a-f0-9]{64}$/u;
 
 interface AdminDurableReviewRequestOptions {

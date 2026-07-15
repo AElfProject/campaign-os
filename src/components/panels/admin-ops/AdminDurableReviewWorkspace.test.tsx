@@ -508,7 +508,7 @@ describe("AdminDurableReviewWorkspace", () => {
     await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(2));
   });
 
-  it("isolates a late download response from a newly selected Artifact", async () => {
+  it("blocks a superseded successful download before any browser handoff", async () => {
     const artifactB: AdminArtifactMetadata = {
       ...artifact,
       artifactId: "artifact-admin-02",
@@ -516,6 +516,9 @@ describe("AdminDurableReviewWorkspace", () => {
       fileName: "campaign-admin-01-current-02.csv",
     };
     let resolveArtifactA!: (
+      value: AdminDurableReviewResult<AdminArtifactDownloadData>,
+    ) => void;
+    let resolveArtifactB!: (
       value: AdminDurableReviewResult<AdminArtifactDownloadData>,
     ) => void;
     const bridge = createBridge();
@@ -528,24 +531,21 @@ describe("AdminDurableReviewWorkspace", () => {
       sourceManifest: { rows: [], version: "artifact-source-v1" },
     }));
     bridge.downloadArtifact = vi.fn<AdminDurableReviewApiBridge["downloadArtifact"]>(
-      (_campaignId, artifactId) => artifactId === artifact.artifactId
-        ? new Promise((resolve) => {
-            resolveArtifactA = resolve;
-          })
-        : Promise.resolve(success({
-            bytes: new TextEncoder().encode("campaignId,participantId\n"),
-            contentBytes: 25,
-            contentHash: artifactB.contentHash,
-            fileName: artifactB.fileName,
-            mimeType: artifactB.mimeType,
-          })),
+      (_campaignId, artifactId) => new Promise((resolve) => {
+        if (artifactId === artifact.artifactId) {
+          resolveArtifactA = resolve;
+        } else {
+          resolveArtifactB = resolve;
+        }
+      }),
     );
+    const createObjectURL = vi.fn(() => "blob:artifact-b");
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
-      value: vi.fn(() => "blob:artifact-b"),
+      value: createObjectURL,
     });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
     render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
     const campaignSelect = await screen.findByLabelText("Campaign");
@@ -558,28 +558,181 @@ describe("AdminDurableReviewWorkspace", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-02/ }));
     expect(artifactASignal?.aborted).toBe(true);
-    await act(async () => {
-      resolveArtifactA({
-        bridgeCode: "BRIDGE_REQUEST_FAILED",
-        code: "BRIDGE_REQUEST_TIMEOUT",
-        ok: false,
-        phase: "request",
-        reconnectRequired: false,
-        retryable: true,
-        traceId: "trace-late-artifact-a",
-      });
-      await Promise.resolve();
-    });
-
-    expect(screen.queryByText("trace-late-artifact-a")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry download" })).not.toBeInTheDocument();
     const downloadB = await screen.findByRole("button", { name: "Download artifact" });
     await waitFor(() => expect(downloadB).toBeEnabled());
     fireEvent.click(downloadB);
     await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveArtifactA(success({
+        bytes: new TextEncoder().encode("stale-artifact-a"),
+        contentBytes: 16,
+        contentHash: artifact.contentHash,
+        fileName: artifact.fileName,
+        mimeType: artifact.mimeType,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+    expect(document.querySelector(`a[download="${artifact.fileName}"]`)).toBeNull();
+
+    await act(async () => {
+      resolveArtifactB(success({
+        bytes: new TextEncoder().encode("campaignId,participantId\n"),
+        contentBytes: 25,
+        contentHash: artifactB.contentHash,
+        fileName: artifactB.fileName,
+        mimeType: artifactB.mimeType,
+      }));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+    expect(click).toHaveBeenCalledTimes(1);
     expect(vi.mocked(bridge.downloadArtifact).mock.calls[1]?.[3]).toEqual({
       expectedContentHash: artifactB.contentHash,
     });
+  });
+
+  it("blocks a successful download that resolves after the issued session changes", async () => {
+    let resolveDownload!: (
+      value: AdminDurableReviewResult<AdminArtifactDownloadData>,
+    ) => void;
+    const bridge = createBridge();
+    bridge.downloadArtifact = vi.fn<AdminDurableReviewApiBridge["downloadArtifact"]>(() =>
+      new Promise((resolve) => {
+        resolveDownload = resolve;
+      }));
+    const createObjectURL = vi.fn(() => "blob:stale-session-download");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    const view = render(
+      <AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />,
+    );
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(1));
+    const staleSignal = vi.mocked(bridge.downloadArtifact).mock.calls[0]?.[2].signal;
+
+    view.rerender(
+      <AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session("B")} />,
+    );
+    expect(staleSignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveDownload(success({
+        bytes: new TextEncoder().encode("stale-session"),
+        contentBytes: 13,
+        contentHash: artifact.contentHash,
+        fileName: artifact.fileName,
+        mimeType: artifact.mimeType,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it("blocks a successful download that resolves after unmount", async () => {
+    let resolveDownload!: (
+      value: AdminDurableReviewResult<AdminArtifactDownloadData>,
+    ) => void;
+    const bridge = createBridge();
+    bridge.downloadArtifact = vi.fn<AdminDurableReviewApiBridge["downloadArtifact"]>(() =>
+      new Promise((resolve) => {
+        resolveDownload = resolve;
+      }));
+    const createObjectURL = vi.fn(() => "blob:unmounted-download");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    const view = render(
+      <AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />,
+    );
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
+    await waitFor(() => expect(bridge.downloadArtifact).toHaveBeenCalledTimes(1));
+    const staleSignal = vi.mocked(bridge.downloadArtifact).mock.calls[0]?.[2].signal;
+
+    view.unmount();
+    expect(staleSignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveDownload(success({
+        bytes: new TextEncoder().encode("unmounted"),
+        contentBytes: 9,
+        contentHash: artifact.contentHash,
+        fileName: artifact.fileName,
+        mimeType: artifact.mimeType,
+      }));
+      await Promise.resolve();
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+    expect(document.querySelector(`a[download="${artifact.fileName}"]`)).toBeNull();
+  });
+
+  it("focuses the newest command failure while preserving an older download failure", async () => {
+    const bridge = createBridge();
+    const downloadFailure: AdminDurableReviewResult<AdminArtifactDownloadData> = {
+      bridgeCode: "BRIDGE_REQUEST_FAILED",
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      traceId: "trace-download-before-decision",
+    };
+    const decisionFailure: AdminDurableReviewResult<AdminDecisionReceiptData> = {
+      bridgeCode: "BRIDGE_REQUEST_FAILED",
+      code: "BRIDGE_REQUEST_TIMEOUT",
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      traceId: "trace-decision-after-download",
+    };
+    bridge.downloadArtifact = vi.fn(async () => downloadFailure);
+    bridge.submitDecision = vi.fn(async () => decisionFailure);
+
+    render(<AdminDurableReviewWorkspace bridge={bridge} locale="en-US" session={session()} />);
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    fireEvent.click(await screen.findByRole("button", { name: /participant-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /artifact-admin-01/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download artifact" }));
+
+    const downloadTrace = await screen.findByText("trace-download-before-decision");
+    const downloadAlert = downloadTrace.closest<HTMLElement>("[role='alert']");
+    expect(downloadAlert).not.toBeNull();
+    await waitFor(() => expect(downloadAlert).toHaveFocus());
+
+    const submit = await screen.findByRole("button", { name: "Submit decision" });
+    fireEvent.click(submit);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and submit" }));
+
+    const decisionTrace = await screen.findByText("trace-decision-after-download");
+    const decisionAlert = decisionTrace.closest<HTMLElement>("[role='alert']");
+    expect(decisionAlert).not.toBeNull();
+    await waitFor(() => expect(decisionAlert).toHaveFocus());
+    expect(screen.getByText("trace-download-before-decision")).toBeInTheDocument();
+
+    const refresh = screen.getByRole("button", { name: "Refresh review workspace" });
+    refresh.focus();
+    fireEvent.click(refresh);
+    await waitFor(() => expect(bridge.listCampaigns).toHaveBeenCalledTimes(2));
+    expect(refresh).toHaveFocus();
+    expect(downloadAlert).not.toHaveFocus();
   });
 
   it("rotates the decision idempotency key after a successful identical command", async () => {
