@@ -44,6 +44,9 @@ describe("server request guard", () => {
     expect(decision.headers["content-type"]).toContain("application/json");
     expect(decision.headers["x-campaign-os-trace-id"]).toBe("trace-accepted-get");
     expect(decision.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(decision.headers["access-control-expose-headers"]).toBe(
+      "content-disposition, x-campaign-os-content-sha256, x-campaign-os-trace-id",
+    );
   });
 
   it("generates trace IDs when missing", () => {
@@ -267,6 +270,9 @@ describe("server request guard", () => {
     expect(decision.headers["access-control-allow-headers"]).toContain("x-campaign-os-roles");
     expect(decision.headers["access-control-allow-headers"]).toContain("x-campaign-os-wallet-address");
     expect(decision.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(decision.headers["access-control-expose-headers"]).toContain("content-disposition");
+    expect(decision.headers["access-control-expose-headers"]).toContain("x-campaign-os-content-sha256");
+    expect(decision.headers["access-control-expose-headers"]).toContain("x-campaign-os-trace-id");
     expect(decision.headers["x-campaign-os-trace-id"]).toBe("trace-preflight");
   });
 

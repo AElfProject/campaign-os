@@ -473,6 +473,7 @@ describe("Campaign OS API server entrypoint", () => {
     mimeType,
   }) => {
     const traceId = `trace-http-download-${format}`;
+    const trustedOrigin = "https://admin.campaign-os.test";
     const expectedBytes = Buffer.from(content, "utf8");
     const runtimeResponse = {
       body: createSuccessEnvelope({
@@ -495,12 +496,18 @@ describe("Campaign OS API server entrypoint", () => {
       rawBody: content,
       status: 200,
     } satisfies ApiRuntimeResponse;
-    const { runtime, server } = await startServerWithRuntimeResponse(runtimeResponse);
+    const { runtime, server } = await startServerWithRuntimeResponse(runtimeResponse, [trustedOrigin]);
     const path = `/api/admin/campaigns/campaign-transport/artifacts/artifact-transport-${format}/download`;
 
     try {
-      const response = await fetch(`${server.url}${path}`);
+      const response = await fetch(`${server.url}${path}`, {
+        headers: { origin: trustedOrigin },
+      });
       const actualBytes = Buffer.from(await response.arrayBuffer());
+      const exposedHeaders = response.headers
+        .get("access-control-expose-headers")
+        ?.split(",")
+        .map((header) => header.trim().toLowerCase());
 
       expect(response.status).toBe(200);
       expect(Buffer.compare(actualBytes, expectedBytes)).toBe(0);
@@ -510,6 +517,13 @@ describe("Campaign OS API server entrypoint", () => {
       expect(response.headers.get("x-campaign-os-content-sha256")).toBe(sha256(content));
       expect(response.headers.get("content-length")).toBe(String(expectedBytes.byteLength));
       expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
+      expect(response.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
+      expect(exposedHeaders).toEqual(expect.arrayContaining([
+        "content-disposition",
+        "x-campaign-os-content-sha256",
+        "x-campaign-os-trace-id",
+      ]));
+      expect(exposedHeaders).not.toContain("*");
       expect(runtime.handle).toHaveBeenCalledWith(expect.objectContaining({
         method: "GET",
         path,

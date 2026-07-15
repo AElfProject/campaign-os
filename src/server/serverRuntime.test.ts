@@ -53,6 +53,11 @@ describe("API server runtime contract", () => {
     });
     expect(contract.corsPolicy).toMatchObject({
       enabled: true,
+      exposedHeaders: [
+        "content-disposition",
+        "x-campaign-os-content-sha256",
+        "x-campaign-os-trace-id",
+      ],
       preflightHandledBeforeRuntime: true,
     });
     expect(contract.corsPolicy.allowedOrigins).toEqual(
@@ -152,6 +157,7 @@ describe("API server runtime contract", () => {
       "x-campaign-os-wallet-source",
     ]));
     expect(contract.corsPolicy.allowedHeaders).not.toContain("*");
+    expect(contract.corsPolicy.exposedHeaders).not.toContain("*");
     expect(contract.corsPolicy.allowedOrigins).not.toContain("*");
     expect(contract.requestGuard.maxBodyBytes).toBe(4096);
     expect(contract.shutdown.shutdownTimeoutMs).toBe(7000);

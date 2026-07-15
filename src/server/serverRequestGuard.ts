@@ -143,6 +143,7 @@ const createCorsHeaders = (
     "access-control-allow-headers": corsPolicy.allowedHeaders.join(", "),
     "access-control-allow-methods": corsPolicy.allowedMethods.join(", "),
     "access-control-allow-origin": allowOrigin,
+    "access-control-expose-headers": corsPolicy.exposedHeaders.join(", "),
     "access-control-max-age": String(corsPolicy.maxAgeSeconds),
     vary: "origin",
   };
