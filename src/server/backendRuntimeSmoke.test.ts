@@ -668,6 +668,18 @@ describe("backend runtime smoke command", () => {
 
     expect(summary).toMatchObject({
       activationId: "campaign-os-backend-runtime-activation",
+      adminReviewRuntime: {
+        coverage: "default_disabled_route",
+        enabled: false,
+        endpoint: "/api/admin/campaigns",
+        errorCode: "ROUTE_NOT_FOUND",
+        httpStatus: 404,
+        responseDataPresent: false,
+        routeExposed: false,
+        safeEnvelope: true,
+        status: "disabled",
+        traceId: "campaign-os-smoke-admin-review-disabled",
+      },
       authSessionFoundation: {
         blockerCount: 0,
         diagnosticCodes: expect.arrayContaining(["AUTH_AGENT_CREDENTIAL_SEPARATE"]),
@@ -1039,6 +1051,10 @@ describe("backend runtime smoke command", () => {
         "reward-distribution",
       ]),
     );
+    const adminReviewRequestIndex = requests.findIndex((request) =>
+      request.pathname === "/api/admin/campaigns"
+      && request.headers.get("x-campaign-os-trace-id") === summary.adminReviewRuntime.traceId
+    );
     const walletSessionRequestIndex = requests.findIndex((request) =>
       request.pathname === "/api/wallet/session"
       && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.walletSession
@@ -1061,6 +1077,8 @@ describe("backend runtime smoke command", () => {
     const verificationRequest = requests[verificationRequestIndex];
     const verificationBody = JSON.parse(verificationRequest?.body ?? "{}") as Record<string, unknown>;
 
+    expect(adminReviewRequestIndex).toBeGreaterThanOrEqual(0);
+    expect(walletSessionRequestIndex).toBeGreaterThan(adminReviewRequestIndex);
     expect(walletSessionRequestIndex).toBeGreaterThanOrEqual(0);
     expect(campaignDraftRequestIndex).toBeGreaterThan(walletSessionRequestIndex);
     expect(taskDraftRequestIndex).toBeGreaterThan(campaignDraftRequestIndex);
@@ -1105,6 +1123,33 @@ describe("backend runtime smoke command", () => {
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
+  });
+
+  it("fails closed when the disabled Admin probe exposes response data", async () => {
+    const fetchWithAdminData: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (new URL(url).pathname !== "/api/admin/campaigns") {
+        return response;
+      }
+
+      const payload = await response.clone().json() as Record<string, unknown>;
+      payload.data = { campaigns: [] };
+
+      return new Response(JSON.stringify(payload), {
+        headers: response.headers,
+        status: response.status,
+      });
+    };
+
+    await expect(runBackendRuntimeSmoke({ fetchImpl: fetchWithAdminData })).rejects.toThrow(
+      "Campaign OS backend runtime smoke check failed.",
+    );
   });
 
   it("removes the generated persistence directory when server shutdown fails", async () => {
