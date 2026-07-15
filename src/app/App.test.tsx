@@ -179,8 +179,14 @@ describe("Campaign OS app shell", () => {
     ...overrides,
   });
 
-  const participantWalletSessionBridgeState = (): WalletSessionApiBridgeState => {
-    const session = issuedWalletSession("sess-eoa-app-001");
+  const participantWalletSessionBridgeState = ({
+    adapterName = "PortkeyDiscoverWallet",
+    sessionId = "sess-eoa-app-001",
+  }: {
+    adapterName?: string;
+    sessionId?: string;
+  } = {}): WalletSessionApiBridgeState => {
+    const session = issuedWalletSession(sessionId);
 
     return walletSessionBridgeState({
       repository: {
@@ -190,11 +196,11 @@ describe("Campaign OS app shell", () => {
         upserted: true,
       },
       request: {
-        adapterName: "PortkeyDiscoverWallet",
-        fixtureId: "sess-eoa-app-001",
+        adapterName,
+        fixtureId: sessionId,
       },
       session,
-      traceId: "trace-participant-a",
+      traceId: `trace-${sessionId}`,
     });
   };
 
@@ -344,10 +350,18 @@ describe("Campaign OS app shell", () => {
     expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
-  it("binds a Participant stage session to User App only", async () => {
+  it.each([
+    ["Participant A", "participant-a", "PortkeyDiscoverWallet", "sess-eoa-app-001"],
+    ["Participant B", "participant-b", "PortkeyExtensionWallet", "sess-eoa-001"],
+  ])("binds %s stage session to User App only", async (
+    label,
+    identity,
+    adapterName,
+    sessionId,
+  ) => {
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
-    const participantState = participantWalletSessionBridgeState();
+    const participantState = participantWalletSessionBridgeState({ adapterName, sessionId });
     mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(participantState);
     const ownerBridge = appOwnerBridge();
     const participantBridge = appParticipantBridge();
@@ -363,10 +377,10 @@ describe("Campaign OS app shell", () => {
 
     fireEvent.click(getHeaderConnectWalletButton());
     fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
-      target: { value: "participant-a" },
+      target: { value: identity },
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Connect as Participant A" }));
+      fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
     });
 
     await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1));
@@ -450,6 +464,140 @@ describe("Campaign OS app shell", () => {
       name: "Manage wallet connection: AA · Portkey 2F4...9aB",
     })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      identity: "owner" as const,
+      label: "Owner",
+      mutate: (session: NormalizedWalletSession): NormalizedWalletSession => ({
+        ...session,
+        proof: { ...session.proof!, status: "stale" },
+      }),
+      risk: "stale proof",
+    },
+    {
+      identity: "admin" as const,
+      label: "Admin",
+      mutate: (session: NormalizedWalletSession): NormalizedWalletSession => ({
+        ...session,
+        proof: { ...session.proof!, trustLevel: "untrusted" },
+      }),
+      risk: "untrusted proof",
+    },
+    {
+      identity: "owner" as const,
+      label: "Owner",
+      mutate: (session: NormalizedWalletSession): NormalizedWalletSession => ({
+        ...session,
+        signatureStatus: "missing",
+      }),
+      risk: "missing signature",
+    },
+    {
+      identity: "admin" as const,
+      label: "Admin",
+      mutate: (session: NormalizedWalletSession): NormalizedWalletSession => ({
+        ...session,
+        capabilities: session.capabilities.filter((capability) => capability !== "SIGN_MESSAGE"),
+      }),
+      risk: "missing SIGN_MESSAGE capability",
+    },
+    {
+      identity: "owner" as const,
+      label: "Owner",
+      mutate: (session: NormalizedWalletSession): NormalizedWalletSession => ({
+        ...session,
+        walletTypeVerified: false,
+      }),
+      risk: "unverified wallet type",
+    },
+  ])("keeps $label Stage connection fail-closed for $risk", async ({
+    identity,
+    label,
+    mutate,
+  }) => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const baseState = walletSessionBridgeState();
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(walletSessionBridgeState({
+      session: mutate(baseState.session!),
+    }));
+    const ownerBridge = appOwnerBridge();
+    const participantBridge = appParticipantBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    if (identity !== "owner") {
+      fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+        target: { value: identity },
+      });
+    }
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Owner", "owner", "participant-a"],
+    ["Participant A", "participant-a", "participant-b"],
+    ["Participant B", "participant-b", "participant-a"],
+    ["Admin", "admin", "participant-a"],
+  ])("rejects a %s Stage connection when the API returns the %s fixture", async (
+    label,
+    identity,
+    responseIdentity,
+  ) => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const responseState = responseIdentity === "participant-b"
+      ? participantWalletSessionBridgeState({
+          adapterName: "PortkeyExtensionWallet",
+          sessionId: "sess-eoa-001",
+        })
+      : participantWalletSessionBridgeState();
+    mockedSubmitWalletSessionApiPreview.mockResolvedValueOnce(responseState);
+    const ownerBridge = appOwnerBridge();
+    const participantBridge = appParticipantBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    fireEvent.click(getHeaderConnectWalletButton());
+    if (identity !== "owner") {
+      fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+        target: { value: identity },
+      });
+    }
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+    expect(getHeaderConnectWalletButton()).toBeInTheDocument();
+    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
+    expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -105,6 +105,29 @@ const PARTICIPANT_SNAPSHOT_COLUMNS = `
   created_at,
   updated_at
 `;
+const RANKED_PARTICIPANT_SNAPSHOT_SOURCE = `
+  SELECT
+    id,
+    campaign_id,
+    wallet_address,
+    account_type,
+    wallet_source,
+    wallet_type_verified,
+    total_points,
+    ROW_NUMBER() OVER (
+      PARTITION BY campaign_id
+      ORDER BY
+        total_points DESC,
+        created_at ASC,
+        id COLLATE "C" ASC,
+        wallet_address COLLATE "C" ASC
+    )::integer AS rank,
+    risk_flags,
+    created_at,
+    updated_at
+  FROM campaign_os.campaign_participants
+  WHERE campaign_id = $1
+`;
 const COMPLETION_SNAPSHOT_COLUMNS = `
   id,
   campaign_id,
@@ -1494,9 +1517,9 @@ export const createPostgresAdminReviewStore = (
           operation,
           traceId,
           `SELECT ${PARTICIPANT_SNAPSHOT_COLUMNS}
-           FROM campaign_os.campaign_participants
-           WHERE campaign_id = $1
-           ORDER BY id COLLATE "C" ASC
+           FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
+           WHERE ranked_participant.campaign_id = $1
+           ORDER BY ranked_participant.id COLLATE "C" ASC
            LIMIT $2 OFFSET $3`,
           [input.campaignId, limit, offset],
         ),
@@ -1507,8 +1530,8 @@ export const createPostgresAdminReviewStore = (
         operation,
         traceId,
         `SELECT ${PARTICIPANT_SNAPSHOT_COLUMNS}
-         FROM campaign_os.campaign_participants
-         WHERE campaign_id = $1 AND id = $2
+         FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
+         WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2
          LIMIT 1`,
         [input.campaignId, input.participantId],
       ).then((result) => mapRows(result.rows, mapParticipantRow));
@@ -1578,11 +1601,11 @@ export const createPostgresAdminReviewStore = (
              total_points,
              rank,
              created_at
-           FROM campaign_os.campaign_participants
-           WHERE campaign_id = $1
+           FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
+           WHERE ranked_participant.campaign_id = $1
            ORDER BY
              total_points DESC,
-             rank ASC NULLS LAST,
+             rank ASC,
              created_at ASC,
              wallet_address COLLATE "C" ASC,
              id COLLATE "C" ASC
@@ -1602,8 +1625,8 @@ export const createPostgresAdminReviewStore = (
            total_points,
            rank,
            created_at
-         FROM campaign_os.campaign_participants
-         WHERE campaign_id = $1 AND id = $2
+         FROM (${RANKED_PARTICIPANT_SNAPSHOT_SOURCE}) AS ranked_participant
+         WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2
          LIMIT 1`,
         [input.campaignId, input.participantId],
       ).then((result) => mapRows(result.rows, mapRankingRow));

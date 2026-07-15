@@ -292,7 +292,7 @@ const isIssuedOwnerSessionReady = (
   && session.issuer?.valid === true,
 );
 
-const isIssuedParticipantSessionReady = (
+const isIssuedVerifiedWalletSessionReady = (
   state: WalletSessionApiBridgeState,
   session: NormalizedWalletSession | null,
 ) => Boolean(
@@ -300,8 +300,10 @@ const isIssuedParticipantSessionReady = (
   && session
   && (session.accountType === "AA" || session.accountType === "EOA")
   && session.verificationStatus === "verified"
+  && session.signatureStatus === "signed"
   && session.walletTypeVerified
   && session.walletSource !== "AGENT_SKILL"
+  && session.capabilities.includes("SIGN_MESSAGE")
   && !session.capabilities.includes("INTERNAL_AUTOMATION")
   && session.proof?.proofType === "wallet_signature"
   && session.proof.status === "verified"
@@ -315,12 +317,9 @@ const isStageReviewIdentitySessionReady = (
   const session = state.session ?? null;
   const fixtureId = stageReviewFixtureRequests[identity].fixtureId;
   const expectedSession = walletSessions.find((candidate) => candidate.sessionId === fixtureId);
-  const issuedSessionReady = identity === "participant-a" || identity === "participant-b"
-    ? isIssuedParticipantSessionReady(state, session)
-    : isIssuedOwnerSessionReady(state, session);
 
   return Boolean(
-    issuedSessionReady
+    isIssuedVerifiedWalletSessionReady(state, session)
     && state.request.fixtureId === fixtureId
     && expectedSession
     && session?.accountType === expectedSession.accountType
@@ -440,7 +439,7 @@ export const App = ({
     headerWalletSessionBridgeState,
     headerWalletSession,
   );
-  const issuedParticipantSessionReady = isIssuedParticipantSessionReady(
+  const issuedParticipantSessionReady = isIssuedVerifiedWalletSessionReady(
     headerWalletSessionBridgeState,
     headerWalletSession,
   );

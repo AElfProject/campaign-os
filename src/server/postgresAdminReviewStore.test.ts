@@ -1007,11 +1007,17 @@ describe("PostgreSQL Admin review snapshots", () => {
       "campaign-admin-0001",
       "2F4ParticipantWallet",
     ]);
-    expect(pool.calls[7]?.text).toContain("WHERE campaign_id = $1 AND id = $2");
+    expect(pool.calls[7]?.text).toContain(
+      "WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2",
+    );
     expect(pool.calls[7]?.values).toEqual([
       "campaign-admin-0001",
       "participant-admin-0001",
     ]);
+    expect(pool.calls[4]?.text).toContain("ROW_NUMBER() OVER");
+    expect(pool.calls[7]?.text).toContain("ROW_NUMBER() OVER");
+    expect(pool.calls[4]?.text).toContain("ranked_participant.id = $2");
+    expect(pool.calls[7]?.text).toContain("ranked_participant.id = $2");
     expect(pool.calls.every(({ text }) => !/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/i.test(text))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
   });
