@@ -3096,6 +3096,8 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
     let rankedQueryCount = 0;
     let rankedQueryText: string | undefined;
     let rankedQueryValues: readonly unknown[] = [];
+    let completionQueryCount = 0;
+    let evidenceQueryCount = 0;
     const countedPool: PostgresAdminReviewStorePool = {
       connect: async () => {
         const client = await databasePool.connect();
@@ -3106,6 +3108,12 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
               rankedQueryCount += 1;
               rankedQueryText = text;
               rankedQueryValues = values;
+            }
+            if (text.includes("FROM campaign_os.campaign_task_completions")) {
+              completionQueryCount += 1;
+            }
+            if (text.includes("FROM campaign_os.campaign_task_evidence")) {
+              evidenceQueryCount += 1;
             }
             const result = await client.query(text, [...values]);
 
@@ -3131,16 +3139,23 @@ realPostgresSuite("PostgreSQL Admin review store real acceptance", () => {
 
     for (let sampleIndex = 0; sampleIndex < 3; sampleIndex += 1) {
       rankedQueryCount = 0;
+      completionQueryCount = 0;
+      evidenceQueryCount = 0;
       const startedAt = performance.now();
-      const snapshot = await countedStore.readSnapshot(
+      await expect(countedStore.readSnapshot(
         { campaignId: scaleCampaign.campaignId },
         { traceId: `trace-real-ranked-scale-${sampleIndex}` },
-      );
+      )).rejects.toMatchObject({
+        code: "ADMIN_REVIEW_STORE_BOUND_EXCEEDED",
+        field: "participants",
+        operation: "readSnapshot",
+        traceId: `trace-real-ranked-scale-${sampleIndex}`,
+      });
       samples.push(performance.now() - startedAt);
 
-      expect(snapshot.participants).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1);
-      expect(snapshot.ranking).toHaveLength(ADMIN_REVIEW_MAX_ARTIFACT_ROWS + 1);
       expect(rankedQueryCount).toBe(1);
+      expect(completionQueryCount).toBe(0);
+      expect(evidenceQueryCount).toBe(0);
     }
 
     samples.sort((left, right) => left - right);

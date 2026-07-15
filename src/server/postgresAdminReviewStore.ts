@@ -1541,6 +1541,17 @@ export const createPostgresAdminReviewStore = (
          LIMIT 1`,
         [input.campaignId, input.participantId],
       );
+    if (
+      input.participantId === undefined
+      && rankedParticipantResult.rows.length > ADMIN_REVIEW_MAX_ARTIFACT_ROWS
+    ) {
+      throw storeError(
+        "ADMIN_REVIEW_STORE_BOUND_EXCEEDED",
+        "participants",
+        operation,
+        traceId,
+      );
+    }
     const participants = mapRows(rankedParticipantResult.rows, mapParticipantRow);
     const ranking = mapRows(rankedParticipantResult.rows, mapRankingRow);
     const scopedWallet = input.participantId === undefined
