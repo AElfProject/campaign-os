@@ -536,6 +536,35 @@ describe("provider HTTP fetch transport", () => {
     expect(rejected).not.toHaveProperty("body");
   });
 
+  it("fails closed without RangeError for deeply nested bounded JSON", async () => {
+    const depth = 12_000;
+    const responseBody = `${"{\"value\":".repeat(depth)}null${"}".repeat(depth)}`;
+    expect(Buffer.byteLength(responseBody, "utf8")).toBeLessThan(MAX_RESPONSE_BYTES);
+    const server = await startServer((_request, response) => {
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json");
+      response.end(responseBody);
+    });
+    const getBinding = binding({
+      bodyEnvKey: undefined,
+      credentialEnvKey: undefined,
+      headerEnvKey: undefined,
+    });
+    const transport = createProviderHttpFetchTransport({
+      materialResolver: resolverFor(`${server.origin}/deep-json`, { binding: getBinding }),
+    });
+    const request = plan({ bodyRef: undefined, method: "GET" });
+    const transportResult = await transport(request, context());
+
+    expect(transportResult).toMatchObject({ statusCode: 200, timedOut: false });
+    expect(() => normalizeProviderHttpResponse(request, transportResult)).not.toThrow();
+    expect(normalizeProviderHttpResponse(request, transportResult)).toMatchObject({
+      diagnosticCodes: ["http_response_structure_exceeded"],
+      outcome: "manual_review",
+      positiveMatch: false,
+    });
+  });
+
   it("cancels chunked overflow before complete body materialization", async () => {
     let responseClosed = false;
     let chunksWritten = 0;

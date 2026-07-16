@@ -52,9 +52,8 @@ const supportedMappingProfileByRequestId = new Map<string, ProviderHttpSupported
     },
   ],
 ]);
-
 const supportedResponseMappingIds = new Set(
-  [...supportedMappingProfileByRequestId.values()].map((profile) => profile.responseMappingId),
+  [...supportedMappingProfileByRequestId.values()].map(({ responseMappingId }) => responseMappingId),
 );
 
 const compatibilityDiagnosticByRolloutStatus = new Map<
@@ -297,6 +296,59 @@ export const providerHttpEndpointRegistry: readonly ProviderHttpEndpointEntry[] 
     urlTemplateRef: "provider.endpoint.ai_provider.verification_status.url",
   }),
 ]);
+
+export interface ProviderHttpMappingCompatibilityRegistration {
+  readonly endpointId: string;
+  readonly requestMappingId: string;
+  readonly responseMappingId: string;
+  readonly verificationType: ProviderHttpVerificationType;
+}
+
+export const registerProviderHttpMappingCompatibilityProfiles = (
+  registrations: readonly ProviderHttpMappingCompatibilityRegistration[],
+): boolean => {
+  const stagedProfiles = new Map(supportedMappingProfileByRequestId);
+
+  for (const registration of registrations) {
+    const endpointEntry = providerHttpEndpointRegistry.find(
+      ({ endpointId }) => endpointId === registration.endpointId,
+    );
+    if (
+      !endpointEntry
+      || endpointEntry.rolloutStatus !== "enabled"
+      || endpointEntry.requestMappingId !== registration.requestMappingId
+      || endpointEntry.responseMappingId !== registration.responseMappingId
+      || !endpointEntry.supportedVerificationTypes.includes(registration.verificationType)
+    ) {
+      return false;
+    }
+    const profile: ProviderHttpSupportedMappingProfile = {
+      category: endpointEntry.category,
+      responseMappingId: registration.responseMappingId,
+      verificationType: registration.verificationType,
+    };
+    const existing = stagedProfiles.get(registration.requestMappingId);
+    if (
+      existing
+      && (
+        existing.category !== profile.category
+        || existing.responseMappingId !== profile.responseMappingId
+        || existing.verificationType !== profile.verificationType
+      )
+    ) {
+      return false;
+    }
+    stagedProfiles.set(registration.requestMappingId, profile);
+  }
+
+  supportedMappingProfileByRequestId.clear();
+  supportedResponseMappingIds.clear();
+  for (const [requestMappingId, profile] of stagedProfiles) {
+    supportedMappingProfileByRequestId.set(requestMappingId, profile);
+    supportedResponseMappingIds.add(profile.responseMappingId);
+  }
+  return true;
+};
 
 export const providerHttpVerificationBindingExamples = {
   "aefinder-aelfscan": {

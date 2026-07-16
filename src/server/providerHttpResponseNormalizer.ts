@@ -20,6 +20,7 @@ export type ProviderHttpResponseDiagnosticCode =
   | "http_rate_limited"
   | "http_request_mapping_failure"
   | "http_response_too_large"
+  | "http_response_structure_exceeded"
   | "http_runtime_aborted"
   | "http_timeout"
   | "http_transport_closed"
@@ -56,7 +57,8 @@ export interface ProviderHttpResponseDiagnostic {
 
 export interface ProviderHttpNormalizationPolicy {
   abortedOutcome?: "manual_review" | "pending";
-  missingEvidenceOutcome?: "blocked" | "manual_review";
+  degradationOutcome?: "blocked" | "manual_review" | "pending";
+  missingEvidenceOutcome?: "blocked" | "manual_review" | "pending";
   notFoundOutcome?: "failed" | "manual_review";
   retryExhaustedOutcome?: "manual_review" | "disable_provider_task_templates";
   unsupportedMappingOutcome?: "blocked" | "manual_review";
@@ -154,7 +156,10 @@ export const normalizeProviderHttpResponse = (
     });
   }
 
-  if (statusCode === 202 || isPendingBody(transportResult.body)) {
+  if (
+    statusCode === 202
+    || (statusCode >= 200 && statusCode < 300 && isPendingBody(transportResult.body))
+  ) {
     return createResult(plan, transportResult, {
       degradationDecision: "pending",
       diagnostics: [],
@@ -268,6 +273,23 @@ const normalizeSuccessfulResponse = (
     });
   }
 
+  if (!hasBoundedJsonStructure(transportResult.body)) {
+    return createResult(plan, transportResult, {
+      degradationDecision: "manual_review",
+      diagnostics: [
+        diagnostic(
+          "http_response_structure_exceeded",
+          "body",
+          "Provider HTTP response structure exceeded safe bounds.",
+          ["body"],
+        ),
+      ],
+      outcome: "manual_review",
+      positiveMatch: false,
+      retryPosture: "blocked",
+    });
+  }
+
   if (containsUnsafeProviderHttpRuntimeMaterial(transportResult.body)) {
     return createResult(plan, transportResult, {
       degradationDecision: "manual_review",
@@ -305,7 +327,7 @@ const normalizeSuccessfulResponse = (
       transportExecuted: true,
     });
   } catch {
-    return invalidMatcherResult(plan, transportResult, "http_matcher_failed");
+    return invalidMatcherResult(plan, transportResult, "http_matcher_failed", policy);
   }
 
   if (!isValidMatchResult(match)) {
@@ -315,7 +337,12 @@ const normalizeSuccessfulResponse = (
       isPositiveMatchWithoutEvidence(match)
         ? "http_missing_evidence"
         : "http_matcher_failed",
+      policy,
     );
+  }
+
+  if (isMissingEvidenceMatch(match)) {
+    return missingEvidenceResult(plan, transportResult, policy);
   }
 
   const matchDiagnostics = match.diagnosticCodes.map((code) =>
@@ -341,12 +368,13 @@ const normalizeTransportFailure = (
   const code = transportResult.diagnostic?.code;
 
   if (transportResult.timedOut || code === "timeout" || transportResult.statusCode === 408) {
+    const outcome = policy.degradationOutcome ?? "pending";
     return createResult(plan, transportResult, {
-      degradationDecision: "pending",
+      degradationDecision: outcome,
       diagnostics: [diagnostic("http_timeout", "transport", "Provider HTTP request timed out.")],
-      outcome: "pending",
+      outcome,
       positiveMatch: false,
-      retryPosture: "not_retried",
+      retryPosture: retryPostureForDegradation(outcome),
     });
   }
 
@@ -411,16 +439,17 @@ const unavailableResult = (
   policy: ProviderHttpNormalizationPolicy,
 ): ProviderHttpNormalizedResult => {
   const exhausted = plan.attempt.count >= plan.attempt.maxAttempts;
-  const outcome = exhausted
-    ? policy.retryExhaustedOutcome ?? "manual_review"
-    : "pending";
+  const outcome = policy.degradationOutcome
+    ?? (exhausted ? policy.retryExhaustedOutcome ?? "manual_review" : "pending");
 
   return createResult(plan, transportResult, {
     degradationDecision: outcome,
     diagnostics: [diagnostic(code, "statusCode", message)],
     outcome,
     positiveMatch: false,
-    retryPosture: exhausted ? "exhausted" : "not_retried",
+    retryPosture: policy.degradationOutcome
+      ? retryPostureForDegradation(policy.degradationOutcome)
+      : exhausted ? "exhausted" : "not_retried",
   });
 };
 
@@ -428,15 +457,37 @@ const invalidMatcherResult = (
   plan: ProviderHttpRequestPlan,
   transportResult: ProviderHttpTransportResult,
   code: Extract<ProviderHttpResponseDiagnosticCode, "http_matcher_failed" | "http_missing_evidence">,
-): ProviderHttpNormalizedResult => createResult(plan, transportResult, {
-  degradationDecision: "manual_review",
-  diagnostics: [
-    diagnostic(code, "matcher", "Provider HTTP matcher result failed closed."),
-  ],
-  outcome: "manual_review",
-  positiveMatch: false,
-  retryPosture: "blocked",
-});
+  policy: ProviderHttpNormalizationPolicy,
+): ProviderHttpNormalizedResult => code === "http_missing_evidence"
+  ? missingEvidenceResult(plan, transportResult, policy)
+  : createResult(plan, transportResult, {
+    degradationDecision: "manual_review",
+    diagnostics: [
+      diagnostic(code, "matcher", "Provider HTTP matcher result failed closed."),
+    ],
+    outcome: "manual_review",
+    positiveMatch: false,
+    retryPosture: "blocked",
+  });
+
+const missingEvidenceResult = (
+  plan: ProviderHttpRequestPlan,
+  transportResult: ProviderHttpTransportResult,
+  policy: ProviderHttpNormalizationPolicy,
+): ProviderHttpNormalizedResult => {
+  const outcome = policy.missingEvidenceOutcome
+    ?? policy.degradationOutcome
+    ?? "manual_review";
+  return createResult(plan, transportResult, {
+    degradationDecision: outcome,
+    diagnostics: [
+      diagnostic("http_missing_evidence", "matcher", "Provider HTTP evidence was missing or invalid."),
+    ],
+    outcome,
+    positiveMatch: false,
+    retryPosture: retryPostureForDegradation(outcome),
+  });
+};
 
 const createResult = (
   plan: ProviderHttpRequestPlan,
@@ -584,6 +635,56 @@ function diagnostic(
 
 function isPendingBody(body: unknown): boolean {
   return isPlainRecord(body) && body.status === "pending";
+}
+
+function isMissingEvidenceMatch(match: ProviderHttpResponseMatchResult): boolean {
+  return match.outcome === "manual_review"
+    && match.positiveMatch === false
+    && match.diagnosticCodes.includes("PROVIDER_MATCH_EVIDENCE_INVALID");
+}
+
+function retryPostureForDegradation(
+  outcome: "blocked" | "manual_review" | "pending",
+): ProviderHttpRetryPosture {
+  return outcome === "pending" ? "not_retried" : "blocked";
+}
+
+function hasBoundedJsonStructure(value: unknown): boolean {
+  const stack: Array<{ depth: number; value: unknown }> = [{ depth: 0, value }];
+  const seen = new WeakSet<object>();
+  let nodeCount = 0;
+
+  try {
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      nodeCount += 1;
+      if (nodeCount > 4_096 || current.depth > 64) {
+        return false;
+      }
+      if (typeof current.value !== "object" || current.value === null) {
+        continue;
+      }
+      if (seen.has(current.value)) {
+        return false;
+      }
+      seen.add(current.value);
+      const children = Array.isArray(current.value)
+        ? current.value
+        : isPlainRecord(current.value)
+          ? Object.values(current.value)
+          : undefined;
+      if (!children) {
+        return false;
+      }
+      for (const child of children) {
+        stack.push({ depth: current.depth + 1, value: child });
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

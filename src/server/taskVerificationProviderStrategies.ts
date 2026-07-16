@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   isServerIssuedTaskVerificationIdentity,
+  issueTrustedTaskVerificationIdentityInput,
   type CanonicalTaskVerificationRevision,
   type TaskVerificationIdentity,
   type TaskVerificationRulePrimitive,
@@ -26,7 +27,10 @@ import {
   type ProviderHttpCanonicalRequestMaterial,
   type ProviderHttpCanonicalRequestPrimitive,
 } from "./providerHttpExecutionMaterial";
-import { providerHttpEndpointRegistry } from "./providerHttpRuntimeRegistry";
+import {
+  providerHttpEndpointRegistry,
+  registerProviderHttpMappingCompatibilityProfiles,
+} from "./providerHttpRuntimeRegistry";
 import type {
   ProviderHttpMethod,
   ProviderHttpProviderFamily,
@@ -197,6 +201,8 @@ const DAPP_ALLOWED_RULE_FIELDS = Object.freeze([
   "value",
 ] as const);
 
+const CANONICAL_NON_WIRE_RULE_FIELDS = new Set(["providerBindingId", "source"]);
+
 const ON_CHAIN_REQUEST_RULE_FIELDS = Object.freeze([
   "contractAddress",
   "eventName",
@@ -338,6 +344,22 @@ readonly TaskVerificationProviderBindingStrategy[] = Object.freeze(
     })];
   }),
 );
+
+if (!registerProviderHttpMappingCompatibilityProfiles(
+  defaultTaskVerificationProviderBindingStrategies.flatMap((definition) =>
+    definition.endpointId
+      ? [{
+        endpointId: definition.endpointId,
+        requestMappingId: definition.requestMappingId,
+        responseMappingId: definition.responseMappingId,
+        verificationType: definition.verificationType,
+      }]
+      : []),
+)) {
+  throw new TaskVerificationProviderStrategyRegistryError(
+    "TASK_VERIFICATION_STRATEGY_BINDING_UNSUPPORTED",
+  );
+}
 
 export const defaultTaskVerificationProviderProtocolStrategies:
 readonly TaskVerificationProviderProtocolStrategy[] = Object.freeze(
@@ -486,7 +508,8 @@ function buildProviderRequest(
   const rule = input.task.evidenceRule;
   const allowedRuleFields = new Set(resolution.definition.allowedRuleFields);
   if (
-    Object.keys(rule).some((field) => !allowedRuleFields.has(field))
+    Object.keys(rule).some((field) =>
+      !allowedRuleFields.has(field) && !CANONICAL_NON_WIRE_RULE_FIELDS.has(field))
     || Object.values(rule).some((value) => !isBoundedRulePrimitive(value))
   ) {
     return failedBuild("TASK_VERIFICATION_STRATEGY_RULE_UNSUPPORTED");
@@ -769,10 +792,29 @@ function resolveExpectation(
 }
 
 function hasValidAuthority(input: TaskVerificationProviderRequestBuildInput): boolean {
-  return Boolean(
-    input
-    && isServerIssuedTaskVerificationIdentity(input.identity)
-    && input.identity.binding.bindingId === input.binding.id
+  if (
+    !input
+    || !isServerIssuedTaskVerificationIdentity(input.identity)
+    || typeof input.traceId !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.traceId)
+  ) {
+    return false;
+  }
+
+  try {
+    issueTrustedTaskVerificationIdentityInput({
+      binding: input.identity.binding,
+      issuedSubject: input.identity.issuedSubject,
+      task: input.task,
+      traceId: input.traceId,
+    });
+  } catch {
+    return false;
+  }
+
+  const providerBindingId = input.task.evidenceRule.providerBindingId;
+  const source = input.task.evidenceRule.source;
+  return input.identity.binding.bindingId === input.binding.id
     && input.identity.binding.bindingRevision === input.binding.revision
     && input.identity.campaignId === input.task.campaignId
     && input.identity.taskId === input.task.taskId
@@ -780,9 +822,9 @@ function hasValidAuthority(input: TaskVerificationProviderRequestBuildInput): bo
     && input.identity.taskRevisionDigest === input.task.taskRevisionDigest
     && input.identity.evidenceRuleDigest === input.task.evidenceRuleDigest
     && input.task.verificationType === input.binding.verificationType
-    && typeof input.traceId === "string"
-    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.traceId)
-  );
+    && (providerBindingId === undefined
+      || providerBindingId === input.binding.id)
+    && (source === undefined || source === input.binding.evidenceSource);
 }
 
 function definitionMatchesBinding(

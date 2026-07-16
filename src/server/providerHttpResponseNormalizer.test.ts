@@ -188,6 +188,64 @@ describe("provider HTTP response normalizer", () => {
     });
   });
 
+  it.each([
+    [401, "http_auth_or_config_failure", "blocked"],
+    [404, "http_non_retryable_failure", "failed"],
+    [409, "http_conflict", "blocked"],
+    [429, "http_rate_limited", "pending"],
+    [503, "http_provider_unavailable", "pending"],
+  ] as const)("does not let a pending body mask HTTP %s", (statusCode, diagnosticCode, outcome) => {
+    const result = normalizeProviderHttpResponse(plan(), {
+      body: { status: "pending" },
+      durationMs: 9,
+      statusCode,
+      timedOut: false,
+    });
+
+    expect(result).toMatchObject({ diagnosticCodes: [diagnosticCode], outcome });
+  });
+
+  it.each(["blocked", "manual_review", "pending"] as const)(
+    "applies %s degradation to timeout, rate limit, unavailable, and missing evidence",
+    (degradationOutcome) => {
+      const policy = { degradationOutcome };
+      const timeout = normalizeProviderHttpResponse(
+        plan(),
+        { durationMs: 2_500, timedOut: true },
+        policy,
+      );
+      const rateLimited = normalizeProviderHttpResponse(
+        plan(),
+        { body: { status: "pending" }, durationMs: 9, statusCode: 429, timedOut: false },
+        policy,
+      );
+      const unavailable = normalizeProviderHttpResponse(
+        plan(),
+        { body: { status: "pending" }, durationMs: 9, statusCode: 503, timedOut: false },
+        policy,
+      );
+      const missingEvidence = normalizeProviderHttpResponse(
+        plan(),
+        {
+          body: { status: "completed", verified: true },
+          durationMs: 9,
+          statusCode: 200,
+          timedOut: false,
+        },
+        policy,
+        () => ({
+          diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+          outcome: "completed",
+          positiveMatch: true,
+        }),
+      );
+
+      expect([timeout, rateLimited, unavailable, missingEvidence].map(({ outcome }) => outcome))
+        .toEqual([degradationOutcome, degradationOutcome, degradationOutcome, degradationOutcome]);
+      expect(missingEvidence.diagnosticCodes).toEqual(["http_missing_evidence"]);
+    },
+  );
+
   it("maps timeout, aborted, malformed, unsupported mapping, and unsafe body without leaks", () => {
     const timeout = normalizeProviderHttpResponse(plan(), { durationMs: 2500, statusCode: 408, timedOut: true });
     const malformed = normalizeProviderHttpResponse(plan(), { body: "not-json", durationMs: 10, statusCode: 200, timedOut: false });

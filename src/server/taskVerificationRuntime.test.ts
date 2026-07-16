@@ -24,7 +24,10 @@ import {
   TaskVerificationRuntime,
   type TaskVerificationFinalizationWriteFactory,
 } from "./taskVerificationRuntime";
-import { createProviderHttpExecutionMaterialResolver } from "./providerHttpExecutionMaterial";
+import {
+  createProviderHttpExecutionMaterialResolver,
+  type ProviderHttpExecutionMaterialResolver,
+} from "./providerHttpExecutionMaterial";
 import { createProviderHttpFetchTransport } from "./providerHttpFetchTransport";
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpTransport, ProviderHttpTransportResult } from "./providerHttpTransport";
@@ -76,8 +79,11 @@ const bindingDescriptor = (
   ...overrides,
 });
 
-const config = (enabled = true): TaskVerificationConfig => resolveTaskVerificationConfig({
-  bindingsJson: JSON.stringify([bindingDescriptor()]),
+const config = (
+  enabled = true,
+  overrides: Partial<Record<keyof TaskVerificationBinding, unknown>> = {},
+): TaskVerificationConfig => resolveTaskVerificationConfig({
+  bindingsJson: JSON.stringify([bindingDescriptor(overrides)]),
   enablement: enabled ? TASK_VERIFICATION_APPROVED_ENABLEMENT : undefined,
   env: { [ENDPOINT_KEY]: "http://127.0.0.1:4179/verify" },
   environment: "local",
@@ -308,13 +314,14 @@ const writeFactory: TaskVerificationFinalizationWriteFactory = ({
 });
 
 const createRuntime = (options: {
+  finalizationWriteFactory?: TaskVerificationFinalizationWriteFactory;
   runtimeConfig?: TaskVerificationConfig;
   store?: TaskVerificationAttemptStore;
   transport?: ProviderHttpTransport;
 } = {}) => new TaskVerificationRuntime({
   attemptStore: options.store ?? fakeStore().store,
   config: options.runtimeConfig ?? config(),
-  finalizationWriteFactory: writeFactory,
+  finalizationWriteFactory: options.finalizationWriteFactory ?? writeFactory,
   now: () => "2026-07-16T00:00:01.000Z",
   providerHttpRuntime: providerRuntime,
   transport: options.transport ?? (() => successfulTransportResult()),
@@ -482,6 +489,52 @@ describe("task verification runtime", () => {
     expect(missingTransport.begin).not.toHaveBeenCalled();
   });
 
+  it("rejects a forged Task before begin, materialization, transport, or finalization", async () => {
+    const valid = authority();
+    const forgedTask = Object.freeze({
+      ...valid.task,
+      evidenceRule: Object.freeze({
+        ...valid.task.evidenceRule,
+        expectedValue: false,
+      }),
+      points: 999_999_999,
+    }) as CanonicalTaskVerificationRevision;
+    const fake = fakeStore();
+    const materialResolver = vi.fn(async () => {
+      throw new Error("must not materialize forged Task");
+    }) as unknown as ProviderHttpExecutionMaterialResolver;
+    const fetchImplementation = vi.fn(async () => new Response("{}", { status: 200 }));
+    const transport = createProviderHttpFetchTransport({
+      fetch: fetchImplementation as typeof fetch,
+      materialResolver,
+    });
+    const finalizationWriteFactory = vi.fn(writeFactory);
+    const runtime = createRuntime({
+      finalizationWriteFactory,
+      store: fake.store,
+      transport,
+    });
+
+    const result = await runtime.execute({
+      identity: valid.identity,
+      task: forgedTask,
+      traceId: TRACE_ID,
+    });
+
+    expect(result).toMatchObject({
+      diagnosticCodes: ["TASK_VERIFICATION_AUTHORITY_INVALID"],
+      outcome: "blocked",
+      pointsAwarded: 0,
+      transportExecuted: false,
+    });
+    expect(fake.begin).not.toHaveBeenCalled();
+    expect(materialResolver).not.toHaveBeenCalled();
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(finalizationWriteFactory).not.toHaveBeenCalled();
+    expect(fake.finalize).not.toHaveBeenCalled();
+    await expect(transport.close()).resolves.toMatchObject({ status: "drained" });
+  });
+
   it.each(["stale_owner", "conflict", "terminal", "already_marked_same_owner"] as const)(
     "does not dispatch when mark returns %s",
     async (markKind) => {
@@ -551,13 +604,13 @@ describe("task verification runtime", () => {
     }, "pending", 0],
     ["timeout", {
       aborted: true, diagnostic: { code: "timeout", message: "safe", traceId: TRACE_ID }, durationMs: 100, timedOut: true,
-    }, "pending", 0],
+    }, "manual_review", 0],
     ["rate-limit", {
       body: { status: "pending" }, durationMs: 10, statusCode: 429, timedOut: false,
-    }, "pending", 0],
+    }, "manual_review", 0],
     ["unavailable", {
       body: { status: "unavailable" }, durationMs: 10, statusCode: 503, timedOut: false,
-    }, "pending", 0],
+    }, "manual_review", 0],
     ["malformed", {
       diagnostic: { code: "malformed_json", message: "safe", traceId: TRACE_ID }, durationMs: 10, statusCode: 200, timedOut: false,
     }, "manual_review", 0],
@@ -586,6 +639,43 @@ describe("task verification runtime", () => {
       expect(result).not.toHaveProperty("evidence");
     }
   });
+
+  it.each(["blocked", "manual_review", "pending"] as const)(
+    "applies binding degradation policy %s across provider failure classes",
+    async (degradationPolicy) => {
+      const cases: readonly ProviderHttpTransportResult[] = [
+        {
+          aborted: true,
+          diagnostic: { code: "timeout", message: "safe", traceId: TRACE_ID },
+          durationMs: 100,
+          timedOut: true,
+        },
+        { body: { status: "pending" }, durationMs: 10, statusCode: 429, timedOut: false },
+        { body: { status: "pending" }, durationMs: 10, statusCode: 503, timedOut: false },
+        {
+          body: { status: "completed", verified: true },
+          durationMs: 10,
+          statusCode: 200,
+          timedOut: false,
+        },
+      ];
+      const expectedStatus = degradationPolicy === "pending" ? "pending" : "manual_review";
+
+      for (const transportResult of cases) {
+        const fake = fakeStore();
+        const result = await createRuntime({
+          runtimeConfig: config(true, { degradationPolicy }),
+          store: fake.store,
+          transport: () => transportResult,
+        }).execute({ ...authority(), traceId: TRACE_ID });
+
+        expect(fake.finalize).toHaveBeenCalledTimes(1);
+        expect(fake.finalize.mock.calls[0][0].transition.status).toBe(expectedStatus);
+        expect(result).toMatchObject({ outcome: expectedStatus, pointsAwarded: 0 });
+        expect(result).not.toHaveProperty("evidence");
+      }
+    },
+  );
 
   it.each(["stale_owner", "conflict", "blocked"] as const)(
     "never returns optimistic completion when finalize returns %s",
@@ -725,14 +815,17 @@ describe("task verification runtime", () => {
     expect(runtime.state()).toMatchObject({ accepting: false, activeCallCount: 0 });
   });
 
-  it("returns a bounded close timeout and releases runtime controller ownership", async () => {
+  it("retains timed-out durable work and lets a later idempotent close drain it", async () => {
     const fake = fakeStore();
+    const events: string[] = [];
     let releaseFinalize: (() => void) | undefined;
     const finalizeGate = new Promise<void>((resolve) => {
       releaseFinalize = resolve;
     });
     fake.store.finalize = vi.fn(async (input) => {
+      events.push("finalize:start");
       await finalizeGate;
+      events.push("finalize:end");
       return {
         attempt: baseAttempt({ dispatchState: "result_observed", status: input.transition.status }),
         kind: "committed" as const,
@@ -749,12 +842,20 @@ describe("task verification runtime", () => {
     });
     const execution = runtime.execute({ ...authority(), traceId: TRACE_ID });
     await vi.waitFor(() => expect(fake.store.finalize).toHaveBeenCalledTimes(1));
-    const closeResult = await runtime.close();
+    const firstClose = runtime.close();
+    expect(runtime.close()).toBe(firstClose);
+    const closeResult = await firstClose;
 
-    expect(closeResult).toMatchObject({ activeCallCount: 0, status: "timed_out" });
-    expect(runtime.state()).toMatchObject({ activeCallCount: 0, controllerCount: 0 });
+    expect(closeResult).toMatchObject({ activeCallCount: 1, status: "timed_out" });
+    expect(runtime.state()).toMatchObject({ activeCallCount: 1, controllerCount: 0 });
+    const lateClose = runtime.close();
+    void lateClose.then(() => events.push("close:drained"));
+    expect(runtime.close()).toBe(lateClose);
     releaseFinalize?.();
     await execution;
-    await expect(runtime.close()).resolves.toEqual(closeResult);
+    await expect(lateClose).resolves.toEqual({ activeCallCount: 0, status: "drained" });
+    expect(events).toEqual(["finalize:start", "finalize:end", "close:drained"]);
+    expect(runtime.state()).toMatchObject({ activeCallCount: 0, controllerCount: 0 });
+    await expect(runtime.close()).resolves.toEqual({ activeCallCount: 0, status: "drained" });
   });
 });

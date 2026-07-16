@@ -8,6 +8,7 @@ import type {
 } from "./taskVerificationAttemptStore";
 import {
   isServerIssuedTaskVerificationIdentity,
+  issueTrustedTaskVerificationIdentityInput,
   transitionTaskVerificationAttempt,
   type CanonicalTaskVerificationRevision,
   type TaskVerificationIdentity,
@@ -138,7 +139,6 @@ interface RuntimePreflight {
 }
 
 interface ActiveRuntimeCall {
-  controller: AbortController;
   identityKey: string;
   promise: Promise<TaskVerificationRuntimeResult>;
 }
@@ -146,6 +146,7 @@ interface ActiveRuntimeCall {
 const SAFE_TRACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class TaskVerificationRuntime {
+  private readonly abortControllers = new Set<AbortController>();
   private readonly activeCalls = new Set<ActiveRuntimeCall>();
   private readonly attemptStore: TaskVerificationAttemptStore;
   private readonly config: TaskVerificationConfig;
@@ -204,16 +205,17 @@ export class TaskVerificationRuntime {
     }
 
     const controller = new AbortController();
+    this.abortControllers.add(controller);
     const promise = this.executeOwnerCall(input, preflight.value, controller).catch(() =>
       failureResult("TASK_VERIFICATION_FINALIZE_FAILED", traceId, "manual_review"));
     const activeCall: ActiveRuntimeCall = {
-      controller,
       identityKey: input.identity.idempotencyKey,
       promise,
     };
     this.activeCalls.add(activeCall);
     this.inFlightByIdentity.set(input.identity.idempotencyKey, promise);
     const cleanup = () => {
+      this.abortControllers.delete(controller);
       this.activeCalls.delete(activeCall);
       if (this.inFlightByIdentity.get(activeCall.identityKey) === promise) {
         this.inFlightByIdentity.delete(activeCall.identityKey);
@@ -229,11 +231,18 @@ export class TaskVerificationRuntime {
     }
 
     this.accepting = false;
-    for (const call of this.activeCalls) {
-      call.controller.abort();
+    for (const controller of this.abortControllers) {
+      controller.abort();
     }
-    this.closePromise = this.drain();
-    return this.closePromise;
+    this.abortControllers.clear();
+    const closePromise = this.drain();
+    this.closePromise = closePromise;
+    void closePromise.then((result) => {
+      if (result.status === "timed_out" && this.closePromise === closePromise) {
+        this.closePromise = undefined;
+      }
+    });
+    return closePromise;
   }
 
   stop(): Promise<TaskVerificationRuntimeCloseResult> {
@@ -244,7 +253,7 @@ export class TaskVerificationRuntime {
     return Object.freeze({
       accepting: this.accepting,
       activeCallCount: this.activeCalls.size,
-      controllerCount: this.activeCalls.size,
+      controllerCount: this.abortControllers.size,
     });
   }
 
@@ -411,6 +420,7 @@ export class TaskVerificationRuntime {
 
       providerResult = await executeProviderHttpRequest(built.plannerInput, {
         matcher: built.matcher,
+        normalizationPolicy: { degradationOutcome: binding.degradationPolicy },
         runtime: this.providerHttpRuntime,
         transport: bindProviderHttpCanonicalRequestMaterial(
           this.transport!,
@@ -596,12 +606,8 @@ export class TaskVerificationRuntime {
     if (timer !== undefined) {
       clearTimeout(timer);
     }
-    if (status === "timed_out") {
-      this.activeCalls.clear();
-      this.inFlightByIdentity.clear();
-    }
     return Object.freeze({
-      activeCallCount: status === "drained" ? this.activeCalls.size : 0,
+      activeCallCount: this.activeCalls.size,
       status,
     });
   }
@@ -617,6 +623,17 @@ function hasMatchingAuthority(input: ExecuteTaskVerificationRuntimeInput): boole
     || !isServerIssuedTaskVerificationIdentity(input.identity)
     || !input.task
   ) {
+    return false;
+  }
+
+  try {
+    issueTrustedTaskVerificationIdentityInput({
+      binding: input.identity.binding,
+      issuedSubject: input.identity.issuedSubject,
+      task: input.task,
+      traceId: "trace-runtime-authority",
+    });
+  } catch {
     return false;
   }
 

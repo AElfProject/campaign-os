@@ -4,8 +4,13 @@ import {
   createCanonicalTaskVerificationRevision,
   deriveTaskVerificationIdentity,
   issueTrustedTaskVerificationIdentityInput,
+  type CanonicalTaskVerificationRevision,
 } from "./taskVerification";
-import type { TaskVerificationBinding } from "./taskVerificationConfig";
+import {
+  TASK_VERIFICATION_APPROVED_ENABLEMENT,
+  resolveTaskVerificationConfig,
+  type TaskVerificationBinding,
+} from "./taskVerificationConfig";
 import { providerHttpResponseNormalizerSupportedMappingIds } from "./providerHttpResponseNormalizer";
 import {
   TaskVerificationProviderStrategyRegistryError,
@@ -158,6 +163,79 @@ describe("task verification provider strategies", () => {
     expect(JSON.stringify(result.requestMaterial)).toBe("{}");
     expect(inspect(result)).not.toContain("ELF_FAKE_WALLET_SENTINEL");
     expect(inspect(result)).not.toContain("chain-ref:fake-a");
+  });
+
+  it("rejects a forged Task object even when its digests match a valid issued identity", () => {
+    const registry = createTaskVerificationProviderStrategyRegistry({ environment: "local" });
+    const { identity, task } = canonicalInput();
+    const forgedTask = Object.freeze({
+      ...task,
+      evidenceRule: Object.freeze({
+        ...task.evidenceRule,
+        expectedValue: false,
+      }),
+      points: 999_999_999,
+    }) as CanonicalTaskVerificationRevision;
+
+    expect(registry.buildRequest({
+      attempt: { count: 1, maxAttempts: 3 },
+      binding: binding(),
+      identity,
+      task: forgedTask,
+      traceId: "trace-strategy-forged-task",
+    })).toMatchObject({
+      diagnosticCode: "TASK_VERIFICATION_STRATEGY_AUTHORITY_INVALID",
+      ok: false,
+    });
+  });
+
+  it("validates canonical provider metadata without mapping it to wire fields", () => {
+    const registry = createTaskVerificationProviderStrategyRegistry({ environment: "local" });
+    const providerBinding = binding();
+    const valid = canonicalInput({
+      chainId: "chain-ref:fake-a",
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: providerBinding.id,
+      source: providerBinding.evidenceSource,
+    });
+    const built = registry.buildRequest({
+      attempt: { count: 1, maxAttempts: 3 },
+      binding: providerBinding,
+      identity: valid.identity,
+      task: valid.task,
+      traceId: "trace-strategy-metadata",
+    });
+
+    expect(built.ok).toBe(true);
+    const resolution = registry.resolveBinding(providerBinding);
+    expect(resolution.ok && resolution.definition?.requestMapping.fields.every(
+      ({ source }) => source !== "rule.providerBindingId" && source !== "rule.source",
+    )).toBe(true);
+
+    for (const metadata of [
+      { providerBindingId: "different-binding", source: providerBinding.evidenceSource },
+      { providerBindingId: providerBinding.id, source: "DAPP_API" },
+    ]) {
+      const invalid = canonicalInput({
+        chainId: "chain-ref:fake-a",
+        expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
+        ...metadata,
+      });
+      expect(registry.buildRequest({
+        attempt: { count: 1, maxAttempts: 3 },
+        binding: providerBinding,
+        identity: invalid.identity,
+        task: invalid.task,
+        traceId: "trace-strategy-metadata-mismatch",
+      })).toMatchObject({
+        diagnosticCode: "TASK_VERIFICATION_STRATEGY_AUTHORITY_INVALID",
+        ok: false,
+      });
+    }
   });
 
   it.each([
@@ -469,6 +547,59 @@ describe("task verification provider strategies", () => {
     expect(new Set(providerHttpResponseNormalizerSupportedMappingIds)).toEqual(
       new Set(enabledEndpoints.map(({ responseMappingId }) => responseMappingId)),
     );
+  });
+
+  it.each([
+    "aefinder",
+    "ebridge",
+    "awaken",
+    "forest-schrodinger",
+    "tmrwdao",
+  ] as const)("resolves the enabled %s family through real config compatibility", (providerFamily) => {
+    const endpoint = providerHttpEndpointRegistry.find((entry) =>
+      entry.providerFamily === providerFamily && entry.rolloutStatus === "enabled");
+    expect(endpoint).toBeDefined();
+    if (!endpoint) {
+      return;
+    }
+    const verificationType = endpoint.supportedVerificationTypes[0];
+    expect(verificationType === "ON_CHAIN" || verificationType === "DAPP_API").toBe(true);
+    if (verificationType !== "ON_CHAIN" && verificationType !== "DAPP_API") {
+      return;
+    }
+    const endpointEnvKey = `CAMPAIGN_OS_FAKE_${providerFamily.toUpperCase().replace(/-/g, "_")}_ENDPOINT`;
+    const config = resolveTaskVerificationConfig({
+      bindingsJson: JSON.stringify([{
+        degradationPolicy: "manual_review",
+        enabled: true,
+        endpointEnvKey,
+        endpointId: endpoint.endpointId,
+        evidenceSource: verificationType === "ON_CHAIN" ? "AELFSCAN" : "DAPP_API",
+        id: `fake-${providerFamily}-binding`,
+        maxAttempts: 3,
+        maxResponseBytes: 65_536,
+        providerFamily: endpoint.providerFamily,
+        providerGroupId: endpoint.providerGroupId,
+        requestMappingId: endpoint.requestMappingId,
+        responseMappingId: endpoint.responseMappingId,
+        revision: 1,
+        timeoutMs: 2_500,
+        verificationType,
+      }]),
+      enablement: TASK_VERIFICATION_APPROVED_ENABLEMENT,
+      env: { [endpointEnvKey]: "http://127.0.0.1:4179/verify" },
+      environment: "local",
+      providerHttpTransportProvided: true,
+    });
+
+    expect(config).toMatchObject({ enabled: true, status: "ready", valid: true });
+    expect(config.diagnostics).toEqual([]);
+    const resolved = config.resolveBinding(`fake-${providerFamily}-binding`, verificationType);
+    expect(resolved.status).toBe("resolved");
+    if (resolved.status === "resolved") {
+      expect(createTaskVerificationProviderStrategyRegistry({ environment: "local" })
+        .resolveBinding(resolved.binding)).toMatchObject({ ok: true });
+    }
   });
 
   it("keeps canonical safe result digests stable across key order without retaining raw response", () => {
