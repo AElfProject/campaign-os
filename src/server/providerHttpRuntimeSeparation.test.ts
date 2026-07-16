@@ -255,6 +255,7 @@ describe("provider HTTP runtime separation boundaries", () => {
         env: providerHttpReadyEnv,
         profileId: "production-required",
       },
+      providerHttpTransportProvided: true,
     });
     const triggerResult = dryRunSchedulerTrigger({
       idempotencyKey: "idempotency:task-verification-on-request:campaign-1",

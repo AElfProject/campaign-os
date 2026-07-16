@@ -17,7 +17,10 @@ import {
   withoutParticipantRank,
   type ParticipantRankRow,
 } from "./participantJourney";
-import type { TaskVerificationAttemptStore } from "./taskVerificationAttemptStore";
+import type {
+  TaskVerificationAttemptSafeRecord,
+  TaskVerificationAttemptStore,
+} from "./taskVerificationAttemptStore";
 
 export type CampaignDurableStoreMode =
   | "local_seeded"
@@ -130,6 +133,7 @@ export interface CampaignDurableStoreParticipantJourneySnapshotInput {
 }
 
 export interface CampaignDurableStoreParticipantJourneySnapshot {
+  attempts: TaskVerificationAttemptSafeRecord[];
   campaign: CampaignDbDraft | undefined;
   completions: CampaignDbTaskCompletion[];
   evidence: CampaignDbTaskEvidenceRecord[];
@@ -1025,6 +1029,7 @@ export const createCampaignDurableStore = ({
 
       if (!campaign) {
         return {
+          attempts: [],
           campaign: undefined,
           completions: [],
           evidence: [],
@@ -1048,6 +1053,7 @@ export const createCampaignDurableStore = ({
         .sort(compareParticipantRankRows);
 
       return cloneRecord({
+        attempts: [],
         campaign,
         completions,
         evidence,

@@ -76,10 +76,40 @@ const CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME = createProviderHttpRuntimeS
   profileId: "production-required",
   transportProvided: true,
 });
+type ControlledTaskVerificationOutcome = "completed" | "failed" | "manual_review" | "pending";
+const controlledTaskVerificationOutcomes = new Map<string, ControlledTaskVerificationOutcome>();
 const controlledTaskVerificationTransport: ProviderHttpTransport = (request) => {
+  const outcome = controlledTaskVerificationOutcomes.get(request.taskId) ?? "completed";
   const evidenceHash = createHash("sha256")
     .update(`${request.taskId}:${request.idempotencyRef}`)
     .digest("hex");
+
+  if (outcome === "pending") {
+    return {
+      body: { status: "pending" },
+      durationMs: 1,
+      statusCode: 202,
+      timedOut: false,
+    };
+  }
+
+  if (outcome === "failed") {
+    return {
+      body: { status: "completed", verified: false },
+      durationMs: 1,
+      statusCode: 200,
+      timedOut: false,
+    };
+  }
+
+  if (outcome === "manual_review") {
+    return {
+      body: { status: "unrecognized" },
+      durationMs: 1,
+      statusCode: 200,
+      timedOut: false,
+    };
+  }
 
   return {
     body: {
@@ -358,6 +388,18 @@ interface VerificationData {
     status: string;
     taskId: string;
     transportExecuted: boolean;
+    verificationAttemptId: string;
+    walletAddress: string;
+  };
+}
+
+interface AttemptOnlyVerificationData {
+  payload: {
+    campaignId: string;
+    outcome: "failed" | "manual_review" | "pending";
+    pointsAwarded: 0;
+    status: "failed" | "manual_review" | "pending";
+    taskId: string;
     verificationAttemptId: string;
     walletAddress: string;
   };
@@ -4061,4 +4103,201 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(servers.size).toBe(0);
     expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
   }, 120_000);
+
+  it("recovers pending, failed, and manual-review Journey posture from durable attempts after restart", async () => {
+    adminMembershipCampaignIds = null;
+    participantPreviewCampaignIds = "";
+    const ownerAddress = `2F4PostureOwner${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const participantAddress = `3E9PostureParticipant${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const firstServer = await startServer();
+    const firstOwnerSession = await issueProjectOwnerSession(
+      firstServer,
+      { adapterName: "PortkeyAAWallet", address: ownerAddress },
+      "trace-pg-posture-owner-a",
+    );
+    const created = await requestJson<CampaignCreateData>(firstServer, "/api/campaigns", {
+      body: JSON.stringify({
+        contractMode: "OFF_CHAIN_MVP",
+        defaultLocale: "en-US",
+        duration: "2026-08-01/2026-08-14",
+        endTime: "2026-08-14T23:59:59Z",
+        goal: "Recover non-completed verification posture",
+        ownerAddress,
+        projectId: `postgres-posture-${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+        rewardDescription: "Posture-only verification acceptance.",
+        startTime: "2026-08-01T00:00:00Z",
+        supportedLocales: ["en-US"],
+        walletPolicy: "ANY",
+      }),
+      headers: firstOwnerSession.headers("trace-pg-posture-campaign"),
+      method: "POST",
+    });
+    const campaignId = created.payload.id;
+    participantPreviewCampaignIds = campaignId;
+    const outcomeCases = [
+      { expectedHttpStatus: 202, outcome: "pending" },
+      { expectedHttpStatus: 200, outcome: "failed" },
+      { expectedHttpStatus: 200, outcome: "manual_review" },
+    ] as const;
+    const taskCases = await Promise.all(outcomeCases.map(async ({ expectedHttpStatus, outcome }) => {
+      const createdTask = await requestJson<TaskCreateData>(
+        firstServer,
+        `/api/campaigns/${campaignId}/tasks`,
+        {
+          body: JSON.stringify({
+            evidenceRule: controlledOnChainEvidenceRule({ source: "AELFSCAN" }),
+            points: 40,
+            required: true,
+            templateCode: `provider_${outcome}`,
+            verificationType: "ON_CHAIN",
+            walletCompatibility: "ANY",
+          }),
+          headers: firstOwnerSession.headers(`trace-pg-posture-task-${outcome}`),
+          method: "POST",
+        },
+      );
+
+      controlledTaskVerificationOutcomes.set(createdTask.campaignDbTask.taskId, outcome);
+      return {
+        expectedHttpStatus,
+        outcome,
+        taskId: createdTask.campaignDbTask.taskId,
+      };
+    }));
+    const firstParticipantSession = await issueParticipantSession(
+      firstServer,
+      { adapterName: "PortkeyExtensionWallet", address: participantAddress },
+      "trace-pg-posture-participant-a",
+    );
+    const attempts = new Map<string, string>();
+
+    try {
+      for (const taskCase of taskCases) {
+        const result = await requestApi<AttemptOnlyVerificationData>(
+          firstServer,
+          `/api/tasks/${taskCase.taskId}/verify`,
+          {
+            body: JSON.stringify({ campaignId }),
+            headers: firstParticipantSession.headers(`trace-pg-posture-verify-${taskCase.outcome}`),
+            method: "POST",
+          },
+        );
+
+        expect(result.status).toBe(taskCase.expectedHttpStatus);
+        expect(result.envelope).toMatchObject({ ok: true });
+        expect(result.envelope.data?.payload).toMatchObject({
+          campaignId,
+          outcome: taskCase.outcome,
+          pointsAwarded: 0,
+          status: taskCase.outcome,
+          taskId: taskCase.taskId,
+          walletAddress: participantAddress,
+        });
+        const attemptId = result.envelope.data?.payload.verificationAttemptId;
+        expect(attemptId).toEqual(expect.any(String));
+        attempts.set(taskCase.taskId, attemptId ?? "");
+        expect(JSON.stringify(result.envelope.data)).not.toContain("campaignDbCompletion");
+        expect(JSON.stringify(result.envelope.data)).not.toContain("campaignDbEvidence");
+      }
+
+      const firstJourney = await requestJson<ParticipantJourneyData>(
+        firstServer,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: firstParticipantSession.headers("trace-pg-posture-journey-a") },
+      );
+      const firstPosture = new Map(firstJourney.payload.tasks.map((entry) => [entry.taskId, entry]));
+
+      for (const taskCase of taskCases) {
+        expect(firstPosture.get(taskCase.taskId)).toMatchObject({
+          completionId: null,
+          evidenceId: null,
+          pointsAwarded: 0,
+          status: taskCase.outcome,
+          verificationAttemptId: attempts.get(taskCase.taskId),
+        });
+      }
+      expect(firstJourney.payload).toMatchObject({
+        eligibility: { eligible: false, score: 0 },
+        participant: { participantId: null, totalPoints: 0 },
+        ranking: { rank: null, totalPoints: 0 },
+      });
+
+      const auditPool = createAuditPool();
+      try {
+        const counts = await auditPool.query<{
+          completion_count: string;
+          evidence_count: string;
+          participant_count: string;
+        }>(`
+          SELECT
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_participants
+              WHERE campaign_id = $1 AND wallet_address = $2) AS participant_count,
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_task_completions
+              WHERE campaign_id = $1 AND wallet_address = $2) AS completion_count,
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_task_evidence
+              WHERE campaign_id = $1 AND wallet_address = $2) AS evidence_count
+        `, [campaignId, participantAddress]);
+        const durableAttempts = await auditPool.query<{ id: string; status: string; task_id: string }>(`
+          SELECT id, status, task_id
+          FROM campaign_os.verification_attempts
+          WHERE campaign_id = $1 AND wallet_address = $2
+          ORDER BY task_id COLLATE "C" ASC
+        `, [campaignId, participantAddress]);
+
+        expect(counts.rows[0]).toEqual({
+          completion_count: "0",
+          evidence_count: "0",
+          participant_count: "0",
+        });
+        expect(durableAttempts.rows).toHaveLength(3);
+        expect(new Map(durableAttempts.rows.map((row) => [row.task_id, row]))).toEqual(
+          new Map(taskCases.map((taskCase) => [taskCase.taskId, {
+            id: attempts.get(taskCase.taskId),
+            status: taskCase.outcome,
+            task_id: taskCase.taskId,
+          }])),
+        );
+      } finally {
+        await auditPool.end();
+      }
+
+      await stopServer(firstServer);
+      expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
+      const secondServer = await startServer();
+      const secondParticipantSession = await issueParticipantSession(
+        secondServer,
+        { adapterName: "PortkeyExtensionWallet", address: participantAddress },
+        "trace-pg-posture-participant-b",
+      );
+      const recoveredJourney = await requestJson<ParticipantJourneyData>(
+        secondServer,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: secondParticipantSession.headers("trace-pg-posture-journey-b") },
+      );
+      const recoveredPosture = new Map(
+        recoveredJourney.payload.tasks.map((entry) => [entry.taskId, entry]),
+      );
+
+      for (const taskCase of taskCases) {
+        expect(recoveredPosture.get(taskCase.taskId)).toMatchObject({
+          completionId: null,
+          evidenceId: null,
+          pointsAwarded: 0,
+          status: taskCase.outcome,
+          verificationAttemptId: attempts.get(taskCase.taskId),
+        });
+      }
+      expect(recoveredJourney.payload).toMatchObject({
+        eligibility: { eligible: false, score: 0 },
+        participant: { participantId: null, totalPoints: 0 },
+        ranking: { rank: null, totalPoints: 0 },
+      });
+      await stopServer(secondServer);
+      expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
+    } finally {
+      for (const { taskId } of taskCases) {
+        controlledTaskVerificationOutcomes.delete(taskId);
+      }
+    }
+  }, 60_000);
 });

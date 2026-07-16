@@ -2546,6 +2546,7 @@ export const createPostgresCampaignDurableStore = ({
         await queryWith(client, operation, "COMMIT", [], { traceId });
 
         return {
+          attempts: [],
           campaign: undefined,
           completions: [],
           evidence: [],
@@ -2634,6 +2635,26 @@ export const createPostgresCampaignDurableStore = ({
         ),
         mapEvidenceRow,
       );
+      const attempts = await readSnapshotPages(
+        (offset) => queryWith(
+          client,
+          operation,
+          `
+            SELECT ${VERIFICATION_ATTEMPT_COLUMNS}
+            FROM campaign_os.verification_attempts
+            WHERE campaign_id = $1 AND wallet_address = $2
+            ORDER BY
+              task_id COLLATE "C" ASC,
+              updated_at DESC,
+              created_at DESC,
+              id COLLATE "C" ASC
+            LIMIT $3 OFFSET $4
+          `,
+          [input.campaignId, input.walletAddress, boundedListLimit, offset],
+          { traceId },
+        ),
+        (row) => toSafeVerificationAttempt(mapVerificationAttemptRow(row)),
+      );
       const rankingParticipants = await readSnapshotPages(
         (offset) => queryWith(
           client,
@@ -2655,6 +2676,7 @@ export const createPostgresCampaignDurableStore = ({
         mapParticipantRankRow,
       );
       const snapshot: CampaignDurableStoreParticipantJourneySnapshot = {
+        attempts,
         campaign,
         completions,
         evidence,

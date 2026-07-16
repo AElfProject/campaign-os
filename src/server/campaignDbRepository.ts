@@ -3540,6 +3540,7 @@ export const createCampaignDbRepository = ({
 
     if (!campaign) {
       return {
+        attempts: [],
         campaign: undefined,
         completions: [],
         evidence: [],
@@ -3550,6 +3551,7 @@ export const createCampaignDbRepository = ({
     }
 
     return structuredClone({
+      attempts: [],
       campaign,
       completions: Array.from(taskCompletionsById.values())
         .filter((completion) => completion.campaignId === campaignId)
@@ -3950,6 +3952,7 @@ export const createCampaignDbRepository = ({
       }
 
       return projectParticipantJourney({
+        attempts: snapshot.attempts,
         campaign: snapshot.campaign,
         completions: snapshot.completions,
         evidence: snapshot.evidence,

@@ -1075,6 +1075,7 @@ describe("PostgreSQL Campaign durable store", () => {
     }, { traceId: "trace-postgres-snapshot" });
 
     expect(snapshot).toMatchObject({
+      attempts: [],
       campaign: { id: "campaign-postgres-0001" },
       completions: [{ walletAddress }],
       evidence: [{ walletAddress }],
@@ -1104,6 +1105,7 @@ describe("PostgreSQL Campaign durable store", () => {
       expect.stringContaining("FROM campaign_os.campaign_participants"),
       expect.stringContaining("FROM campaign_os.campaign_task_completions"),
       expect.stringContaining("FROM campaign_os.campaign_task_evidence"),
+      expect.stringContaining("FROM campaign_os.verification_attempts"),
       expect.stringContaining("ORDER BY total_points DESC"),
       "COMMIT",
     ]);
@@ -1112,10 +1114,12 @@ describe("PostgreSQL Campaign durable store", () => {
     expectParameterized(pool.calls[3]!, ["campaign-postgres-0001", walletAddress]);
     expectParameterized(pool.calls[4]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
     expectParameterized(pool.calls[5]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
-    expectParameterized(pool.calls[6]!, ["campaign-postgres-0001", 100, 0]);
-    expect(pool.calls[6]?.text).toContain("created_at ASC");
-    expect(pool.calls[6]?.text).toContain("id COLLATE \"C\" ASC");
-    expect(pool.calls[6]?.text).toContain("wallet_address COLLATE \"C\" ASC");
+    expectParameterized(pool.calls[6]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
+    expect(pool.calls[6]?.text).toContain("updated_at DESC");
+    expectParameterized(pool.calls[7]!, ["campaign-postgres-0001", 100, 0]);
+    expect(pool.calls[7]?.text).toContain("created_at ASC");
+    expect(pool.calls[7]?.text).toContain("id COLLATE \"C\" ASC");
+    expect(pool.calls[7]?.text).toContain("wallet_address COLLATE \"C\" ASC");
     expect(pool.calls.every((call) => !call.text.match(/UPDATE\s+campaign_os\.campaign_participants/i))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
   });
@@ -1207,6 +1211,7 @@ describe("PostgreSQL Campaign durable store", () => {
       campaignId: "missing-campaign",
       walletAddress: "ELF_2F4MissingSnapshotWallet",
     }, { traceId: "trace-postgres-snapshot-missing" })).resolves.toEqual({
+      attempts: [],
       campaign: undefined,
       completions: [],
       evidence: [],

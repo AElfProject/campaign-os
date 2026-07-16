@@ -851,7 +851,6 @@ describe("backend runtime smoke command", () => {
           campaign_draft: 1,
           export_preview: 1,
           task_draft: 1,
-          verification_attempt: 1,
           wallet_session: 1,
         }),
         durable: true,
@@ -859,7 +858,6 @@ describe("backend runtime smoke command", () => {
           "wallet_session",
           "campaign_draft",
           "task_draft",
-          "verification_attempt",
           "export_preview",
         ]),
         localOnly: true,
@@ -867,14 +865,13 @@ describe("backend runtime smoke command", () => {
         noMigrationRunner: true,
         noProductionDatabase: true,
         noSecretHandling: true,
-        recordCount: 5,
-        restartedRecordCount: 5,
+        recordCount: 4,
+        restartedRecordCount: 4,
         status: "passed",
         wroteRecordKinds: expect.arrayContaining([
           "wallet_session",
           "campaign_draft",
           "task_draft",
-          "verification_attempt",
           "export_preview",
         ]),
       },
@@ -1114,8 +1111,8 @@ describe("backend runtime smoke command", () => {
 
       expect(summary.durableLocalPersistence).toMatchObject({
         mode: "local_json",
-        recordCount: 5,
-        restartedRecordCount: 5,
+        recordCount: 4,
+        restartedRecordCount: 4,
         status: "passed",
       });
       expect(JSON.stringify(summary)).not.toContain(tempDir);

@@ -16,6 +16,8 @@ import type {
   CampaignDbTaskDraft,
   CampaignDbTaskEvidenceRecord,
 } from "./campaignDbRepository";
+import { createCanonicalTaskVerificationRevision } from "./taskVerification";
+import type { TaskVerificationAttemptSafeRecord } from "./taskVerificationAttemptStore";
 
 export interface ParticipantJourneyRepositoryMetadata {
   readonly adapterId: string;
@@ -137,6 +139,7 @@ export interface ParticipantJourneyProjection {
 }
 
 export interface ParticipantJourneyProjectionInput {
+  readonly attempts: readonly TaskVerificationAttemptSafeRecord[];
   readonly campaign: CampaignDbDraft;
   readonly completions: readonly CampaignDbTaskCompletion[];
   readonly evidence: readonly CampaignDbTaskEvidenceRecord[];
@@ -288,6 +291,79 @@ const safeEvidenceRef = (value: string | undefined): string | null =>
     ? value
     : null;
 
+const compareAttemptRecency = (
+  left: TaskVerificationAttemptSafeRecord,
+  right: TaskVerificationAttemptSafeRecord,
+): number => {
+  const updatedAtComparison = compareExactText(right.updatedAt, left.updatedAt);
+
+  if (updatedAtComparison !== 0) {
+    return updatedAtComparison;
+  }
+
+  const createdAtComparison = compareExactText(right.createdAt, left.createdAt);
+
+  return createdAtComparison !== 0
+    ? createdAtComparison
+    : compareExactText(left.id, right.id);
+};
+
+const journeyStatusForAttempt = (
+  status: TaskVerificationAttemptSafeRecord["status"],
+): CampaignDbTaskCompletionStatus | null => {
+  switch (status) {
+    case "requested":
+    case "running":
+    case "pending":
+      return "pending";
+    case "failed":
+      return "failed";
+    case "manual_review":
+      return "manual_review";
+    case "completed":
+    default:
+      return null;
+  }
+};
+
+const matchesCurrentTaskRevision = (
+  attempt: TaskVerificationAttemptSafeRecord,
+  task: CampaignDbTaskDraft,
+): "invalid" | "match" | "stale" => {
+  if (attempt.taskRevision !== (task.revision ?? 1)) {
+    return "stale";
+  }
+
+  if (
+    (task.verificationType !== "ON_CHAIN" && task.verificationType !== "DAPP_API")
+    || attempt.verificationType !== task.verificationType
+  ) {
+    return "invalid";
+  }
+
+  try {
+    const canonicalTask = createCanonicalTaskVerificationRevision({
+      campaignId: task.campaignId,
+      evidenceRule: task.evidenceRule,
+      points: task.points,
+      required: task.required,
+      revision: task.revision ?? 1,
+      taskId: task.id,
+      traceId: "participant-journey-attempt-linkage",
+      updatedAt: task.updatedAt,
+      verificationType: task.verificationType,
+      walletPolicy: task.walletCompatibility,
+    });
+
+    return canonicalTask.taskRevisionDigest === attempt.taskRevisionDigest
+      && canonicalTask.evidenceRuleDigest === attempt.evidenceRuleDigest
+      ? "match"
+      : "invalid";
+  } catch {
+    return "invalid";
+  }
+};
+
 export const projectParticipantJourney = (
   input: ParticipantJourneyProjectionInput,
 ): ParticipantJourneyProjection => {
@@ -314,6 +390,7 @@ export const projectParticipantJourney = (
   };
 
   const canonicalTasks: CampaignDbTaskDraft[] = [];
+  const canonicalTasksById = new Map<string, CampaignDbTaskDraft>();
   const taskIds = new Set<string>();
   const duplicateTaskIds = new Set<string>();
 
@@ -331,6 +408,7 @@ export const projectParticipantJourney = (
 
     taskIds.add(task.id);
     canonicalTasks.push(task);
+    canonicalTasksById.set(task.id, task);
   }
 
   const completionsByTaskId = new Map<string, CampaignDbTaskCompletion>();
@@ -377,6 +455,56 @@ export const projectParticipantJourney = (
     evidenceByTaskId.set(evidence.taskId, evidence);
   }
 
+  const currentAttemptsByTaskId = new Map<string, TaskVerificationAttemptSafeRecord[]>();
+  const currentAttemptsById = new Map<string, TaskVerificationAttemptSafeRecord>();
+  const currentAttemptTaskById = new Map<string, string>();
+  const invalidAttemptTaskIds = new Set<string>();
+
+  for (const attempt of input.attempts) {
+    if (attempt.walletAddress !== input.subject.walletAddress) {
+      continue;
+    }
+
+    const task = canonicalTasksById.get(attempt.taskId);
+    if (attempt.campaignId !== campaignId || !task) {
+      addDiagnostic("OUT_OF_SCOPE_RECORD_IGNORED", "snapshot");
+      continue;
+    }
+
+    const revisionPosture = matchesCurrentTaskRevision(attempt, task);
+    if (revisionPosture === "stale") {
+      continue;
+    }
+
+    const previousTaskId = currentAttemptTaskById.get(attempt.id);
+    const invalidLinkage = revisionPosture === "invalid"
+      || attempt.accountType !== input.subject.accountType
+      || attempt.walletSource !== input.subject.walletSource
+      || previousTaskId !== undefined;
+
+    if (invalidLinkage) {
+      invalidAttemptTaskIds.add(task.id);
+      if (previousTaskId) {
+        invalidAttemptTaskIds.add(previousTaskId);
+      }
+      addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
+      if (previousTaskId && previousTaskId !== task.id) {
+        addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", previousTaskId);
+      }
+      continue;
+    }
+
+    currentAttemptTaskById.set(attempt.id, task.id);
+    currentAttemptsById.set(attempt.id, attempt);
+    const taskAttempts = currentAttemptsByTaskId.get(task.id) ?? [];
+    taskAttempts.push(attempt);
+    currentAttemptsByTaskId.set(task.id, taskAttempts);
+  }
+
+  for (const attempts of currentAttemptsByTaskId.values()) {
+    attempts.sort(compareAttemptRecency);
+  }
+
   const scopedParticipant = input.participant?.campaignId === campaignId
     && input.participant.walletAddress === input.subject.walletAddress
     ? input.participant
@@ -406,6 +534,8 @@ export const projectParticipantJourney = (
   const progress = canonicalTasks.map((task): ParticipantJourneyTaskProgress => {
     const completion = completionsByTaskId.get(task.id);
     const evidence = evidenceByTaskId.get(task.id);
+    const currentAttempts = currentAttemptsByTaskId.get(task.id) ?? [];
+    const latestAttempt = currentAttempts[0];
     const compatible = isParticipantAccountTypeCompatible(
       input.campaign.walletPolicy,
       input.subject.accountType,
@@ -415,7 +545,7 @@ export const projectParticipantJourney = (
       || duplicateEvidenceTaskIds.has(task.id);
 
     if (!compatible) {
-      if (completion || evidence) {
+      if (completion || evidence || currentAttempts.length > 0) {
         hasIncompatiblePersistedProgress = true;
         addDiagnostic("WALLET_INCOMPATIBLE_PROGRESS_IGNORED", "task", task.id);
       }
@@ -444,6 +574,7 @@ export const projectParticipantJourney = (
     }
 
     let inconsistent = inconsistentDuplicate
+      || invalidAttemptTaskIds.has(task.id)
       || (participantMissingWithProgress && Boolean(completion || evidence));
 
     if (completion && !evidence) {
@@ -498,15 +629,40 @@ export const projectParticipantJourney = (
         inconsistent = true;
       }
 
-      if (evidence.liveProviderExecuted && (
-        completion.status !== "completed"
-        || !completion.verificationAttemptId
-        || completion.verificationAttemptId !== evidence.verificationAttemptId
-        || !["AEFINDER", "AELFSCAN", "DAPP_API"].includes(evidence.evidenceSource)
-      )) {
-        addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
-        inconsistent = true;
+      const completionAttemptId = completion.verificationAttemptId;
+      const evidenceAttemptId = evidence.verificationAttemptId;
+      const hasAttemptLinkage = completionAttemptId !== undefined
+        || evidenceAttemptId !== undefined;
+
+      if (evidence.liveProviderExecuted || hasAttemptLinkage) {
+        const linkedAttempt = completionAttemptId
+          ? currentAttemptsById.get(completionAttemptId)
+          : undefined;
+        if (
+          completion.status !== "completed"
+          || !evidence.liveProviderExecuted
+          || !completionAttemptId
+          || completionAttemptId !== evidenceAttemptId
+          || !linkedAttempt
+          || linkedAttempt.status !== "completed"
+          || linkedAttempt.evidenceHash !== evidence.evidenceHash
+          || linkedAttempt.evidenceRef !== evidence.evidenceRef
+          || linkedAttempt.evidenceSource !== evidence.evidenceSource
+          || !["AEFINDER", "AELFSCAN", "DAPP_API"].includes(evidence.evidenceSource)
+        ) {
+          addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
+          inconsistent = true;
+        }
       }
+    }
+
+    if (
+      !completion
+      && !evidence
+      && currentAttempts.some((attempt) => attempt.status === "completed")
+    ) {
+      addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
+      inconsistent = true;
     }
 
     if (inconsistent) {
@@ -533,7 +689,10 @@ export const projectParticipantJourney = (
       };
     }
 
-    const status = completion?.status ?? "not_started";
+    const attemptStatus = !completion && !evidence && latestAttempt
+      ? journeyStatusForAttempt(latestAttempt.status)
+      : null;
+    const status = completion?.status ?? attemptStatus ?? "not_started";
     const exposesEvidence = status === "completed" && Boolean(evidence);
 
     return {
@@ -556,10 +715,10 @@ export const projectParticipantJourney = (
         ? evidence
           ? maxTimestamp(completion.updatedAt, evidence.updatedAt)
           : completion.updatedAt
-        : null,
+        : latestAttempt?.updatedAt ?? null,
       verificationAttemptId: exposesEvidence
         ? evidence?.verificationAttemptId ?? completion?.verificationAttemptId ?? null
-        : completion?.verificationAttemptId ?? null,
+        : completion?.verificationAttemptId ?? latestAttempt?.id ?? null,
       verificationType: task.verificationType,
       walletCompatibility: task.walletCompatibility,
     };
