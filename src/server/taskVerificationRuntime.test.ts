@@ -815,6 +815,74 @@ describe("task verification runtime", () => {
     expect(runtime.state()).toMatchObject({ accepting: false, activeCallCount: 0 });
   });
 
+  it("propagates concrete transport timeout and drains before persistence close", async () => {
+    const events: string[] = [];
+    const fake = fakeStore({ events });
+    fake.store.close = vi.fn(async () => {
+      events.push("persistence:close");
+    });
+    const runtimeConfig = config();
+    const providerBinding = runtimeConfig.bindings[0]!;
+    let resolveLookup: ((value: string) => void) | undefined;
+    const lookupGate = new Promise<string>((resolve) => {
+      resolveLookup = resolve;
+    });
+    const fetchImplementation = vi.fn();
+    const transport = createProviderHttpFetchTransport({
+      drainTimeoutMs: 20,
+      fetch: fetchImplementation as typeof fetch,
+      materialResolver: createProviderHttpExecutionMaterialResolver({
+        binding: providerBinding,
+        environment: "local",
+        lookup: {
+          get() {
+            events.push("lookup:start");
+            return lookupGate.then((value) => {
+              events.push("lookup:settled");
+              return value;
+            });
+          },
+        },
+      }),
+    });
+    const runtime = new TaskVerificationRuntime({
+      attemptStore: fake.store,
+      config: runtimeConfig,
+      drainTimeoutMs: 100,
+      finalizationWriteFactory: writeFactory,
+      now: () => "2026-07-16T00:00:01.000Z",
+      providerHttpRuntime: providerRuntime,
+      transport,
+    });
+    const execution = runtime.execute({ ...authority(), traceId: TRACE_ID });
+    await vi.waitFor(() => expect(events).toContain("lookup:start"));
+
+    const firstClose = runtime.close();
+    expect(runtime.close()).toBe(firstClose);
+    await expect(firstClose).resolves.toEqual({
+      activeCallCount: 1,
+      status: "timed_out",
+    });
+    await expect(execution).resolves.toMatchObject({ outcome: "pending" });
+    expect(runtime.state()).toMatchObject({ activeCallCount: 1, controllerCount: 0 });
+    expect(fake.store.close).not.toHaveBeenCalled();
+    expect(fetchImplementation).not.toHaveBeenCalled();
+
+    resolveLookup?.("http://127.0.0.1:4179/late");
+    await vi.waitFor(() => expect(transport.state().activeCallCount).toBe(0));
+    const secondClose = runtime.close();
+    void secondClose.then(() => events.push("runtime:drained"));
+    await expect(secondClose).resolves.toEqual({ activeCallCount: 0, status: "drained" });
+    expect(fake.store.close).not.toHaveBeenCalled();
+    await fake.store.close();
+
+    expect(events.slice(-3)).toEqual([
+      "lookup:settled",
+      "runtime:drained",
+      "persistence:close",
+    ]);
+  });
+
   it("retains timed-out durable work and lets a later idempotent close drain it", async () => {
     const fake = fakeStore();
     const events: string[] = [];

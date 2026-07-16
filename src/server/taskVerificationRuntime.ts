@@ -143,6 +143,11 @@ interface ActiveRuntimeCall {
   promise: Promise<TaskVerificationRuntimeResult>;
 }
 
+interface SubordinateTransportCloseResult {
+  readonly activeCallCount: number;
+  readonly status: "drained" | "timed_out";
+}
+
 const SAFE_TRACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class TaskVerificationRuntime {
@@ -252,7 +257,7 @@ export class TaskVerificationRuntime {
   state(): TaskVerificationRuntimeState {
     return Object.freeze({
       accepting: this.accepting,
-      activeCallCount: this.activeCalls.size,
+      activeCallCount: this.activeCalls.size + activeTransportCallCount(this.transport),
       controllerCount: this.abortControllers.size,
     });
   }
@@ -595,19 +600,38 @@ export class TaskVerificationRuntime {
   }
 
   private async drain(): Promise<TaskVerificationRuntimeCloseResult> {
-    const transportClose = closeTransport(this.transport);
     const calls = [...this.activeCalls].map(({ promise }) => promise);
-    const drain = Promise.allSettled([...calls, transportClose]).then(() => "drained" as const);
+    let transportCloseResult: SubordinateTransportCloseResult | undefined;
+    const transportClose = closeTransport(this.transport).then((result) => {
+      transportCloseResult = result;
+      return result;
+    });
+    const drain = Promise.all([
+      Promise.allSettled(calls),
+      transportClose,
+    ]).then(([, result]) => result.status);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<"timed_out">((resolve) => {
       timer = setTimeout(() => resolve("timed_out"), this.drainTimeoutMs);
     });
-    const status = await Promise.race([drain, timeout]);
+    const drainStatus = await Promise.race([drain, timeout]);
     if (timer !== undefined) {
       clearTimeout(timer);
     }
+
+    const observedTransportCount = activeTransportCallCount(this.transport);
+    const subordinateActiveCallCount = transportCloseResult?.status === "timed_out"
+      ? transportCloseResult.activeCallCount
+      : transportCloseResult?.status === "drained"
+        ? observedTransportCount
+        : Math.max(observedTransportCount, hasTransportClose(this.transport) ? 1 : 0);
+    const activeCallCount = this.activeCalls.size + subordinateActiveCallCount;
+    const status = drainStatus === "drained" && activeCallCount === 0
+      ? "drained"
+      : "timed_out";
+
     return Object.freeze({
-      activeCallCount: this.activeCalls.size,
+      activeCallCount,
       status,
     });
   }
@@ -904,13 +928,76 @@ function normalizeBound(
     : fallback;
 }
 
-async function closeTransport(transport: ProviderHttpTransport | undefined): Promise<unknown> {
-  if (!transport || typeof (transport as { close?: unknown }).close !== "function") {
-    return undefined;
+async function closeTransport(
+  transport: ProviderHttpTransport | undefined,
+): Promise<SubordinateTransportCloseResult> {
+  if (!hasTransportClose(transport)) {
+    return Object.freeze({ activeCallCount: 0, status: "drained" as const });
   }
   try {
-    return await (transport as ProviderHttpTransport & { close: () => Promise<unknown> }).close();
+    const result = await transport.close();
+    return normalizeTransportCloseResult(result, activeTransportCallCount(transport));
   } catch {
-    return undefined;
+    return Object.freeze({
+      activeCallCount: Math.max(1, activeTransportCallCount(transport)),
+      status: "timed_out" as const,
+    });
   }
+}
+
+function hasTransportClose(
+  transport: ProviderHttpTransport | undefined,
+): transport is ProviderHttpTransport & { close: () => Promise<unknown> } {
+  return Boolean(transport && typeof (transport as { close?: unknown }).close === "function");
+}
+
+function activeTransportCallCount(transport: ProviderHttpTransport | undefined): number {
+  if (!transport || typeof (transport as { state?: unknown }).state !== "function") {
+    return 0;
+  }
+  try {
+    const state = (transport as ProviderHttpTransport & { state: () => unknown }).state();
+    if (typeof state !== "object" || state === null) {
+      return 0;
+    }
+    const activeCallCount = (state as { activeCallCount?: unknown }).activeCallCount;
+    return typeof activeCallCount === "number"
+      && Number.isSafeInteger(activeCallCount)
+      && activeCallCount >= 0
+      ? activeCallCount
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function normalizeTransportCloseResult(
+  value: unknown,
+  observedActiveCallCount: number,
+): SubordinateTransportCloseResult {
+  if (typeof value === "object" && value !== null) {
+    const result = value as { activeCallCount?: unknown; status?: unknown };
+    if (result.status === "drained" || result.status === "timed_out") {
+      const reportedActiveCallCount = typeof result.activeCallCount === "number"
+        && Number.isSafeInteger(result.activeCallCount)
+        && result.activeCallCount >= 0
+        ? result.activeCallCount
+        : 0;
+      const activeCallCount = Math.max(reportedActiveCallCount, observedActiveCallCount);
+      if (result.status === "drained" && activeCallCount === 0) {
+        return Object.freeze({ activeCallCount: 0, status: "drained" as const });
+      }
+      return Object.freeze({
+        activeCallCount: Math.max(1, activeCallCount),
+        status: "timed_out" as const,
+      });
+    }
+  }
+
+  return observedActiveCallCount === 0
+    ? Object.freeze({ activeCallCount: 0, status: "drained" as const })
+    : Object.freeze({
+      activeCallCount: observedActiveCallCount,
+      status: "timed_out" as const,
+    });
 }

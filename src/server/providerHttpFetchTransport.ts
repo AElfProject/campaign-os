@@ -166,8 +166,14 @@ export const createProviderHttpFetchTransport = (
     for (const call of activeCalls) {
       call.abort();
     }
-    closePromise = drainActiveWork(activeCalls, pendingResolvers, drainTimeoutMs);
-    return closePromise;
+    const draining = drainActiveWork(activeCalls, pendingResolvers, drainTimeoutMs);
+    closePromise = draining;
+    void draining.then((result) => {
+      if (result.status === "timed_out" && closePromise === draining) {
+        closePromise = undefined;
+      }
+    });
+    return draining;
   };
 
   const transport = execute as ProviderHttpFetchTransport;

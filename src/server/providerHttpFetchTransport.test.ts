@@ -927,6 +927,10 @@ describe("provider HTTP fetch transport", () => {
 
     resolveLookup?.("http://127.0.0.1:4179/late");
     await vi.waitFor(() => expect(transport.state().activeCallCount).toBe(0));
+    await expect(transport.close()).resolves.toEqual({
+      activeCallCount: 0,
+      status: "drained",
+    });
     await expect(resolver(request, canonical.material)).resolves.toMatchObject({
       diagnostic: { code: "PROVIDER_HTTP_DYNAMIC_REQUEST_REUSED" },
       ok: false,
