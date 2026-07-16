@@ -1211,7 +1211,13 @@ const executeRequest = async (
     }
 
     const resolvedTraceId = responseTraceId(response, parsed, traceId);
-    if (input.operation === "verifyTask" && containsForbiddenVerificationKey(parsed)) {
+    if (
+      input.operation === "verifyTask"
+      && (
+        !isCanonicalVerificationEnvelope(parsed, response.status)
+        || response.ok !== (parsed.ok === true)
+      )
+    ) {
       return bridgeFailure("BRIDGE_RESPONSE_INVALID", "response", resolvedTraceId, {
         httpStatus: response.status,
       });
@@ -1612,7 +1618,123 @@ const normalizeJourney = (
       };
 };
 
-const verificationEnvelopeKeys = new Set(["data", "ok", "traceId"]);
+const verificationSuccessEnvelopeKeys = new Set([
+  "data",
+  "ok",
+  "runtime",
+  "safety",
+  "timestamp",
+  "traceId",
+]);
+const verificationFailureEnvelopeKeys = new Set([
+  "error",
+  "ok",
+  "runtime",
+  "safety",
+  "timestamp",
+  "traceId",
+]);
+const verificationRuntimeKeys = new Set(["mode", "name", "routeCount", "version"]);
+const verificationErrorKeys = new Set(["code", "details", "message", "status"]);
+const verificationRuntimeErrorCodes = new Set([
+  "AUTH_FORBIDDEN",
+  "AUTH_SESSION_INVALID",
+  "AUTH_SESSION_REQUIRED",
+  "AUTH_SUBJECT_MISMATCH",
+  "INTERNAL_RUNTIME_ERROR",
+  "INVALID_CAMPAIGN",
+  "INVALID_REQUEST",
+  "INVALID_TASK",
+  "MALFORMED_JSON",
+  "METHOD_NOT_ALLOWED",
+  "PERSISTENCE_UNAVAILABLE",
+  "ROUTE_NOT_FOUND",
+  "UNSUPPORTED_EXPORT_MODE",
+  "UNSUPPORTED_LOCALE",
+]);
+const verificationSafetyKeys = new Set([
+  "localOnly",
+  "noContractWrite",
+  "noExportFile",
+  "noLiveApi",
+  "noMigrationRunner",
+  "noProductionDatabase",
+  "noRewardCustody",
+  "noRewardDistribution",
+  "noSecretHandling",
+  "noStorageWrite",
+  "noWalletSignature",
+  "seededDataOnly",
+]);
+const canonicalVerificationSafetyKeys = [...verificationSafetyKeys];
+const canonicalTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+
+const isCanonicalVerificationRuntime = (value: unknown): boolean => isRecord(value)
+  && hasOnlyKeys(value, verificationRuntimeKeys, ["mode", "name", "routeCount", "version"])
+  && value.mode === "local_seeded"
+  && value.name === "campaign-os-api-runtime"
+  && positiveInteger(value.routeCount) !== undefined
+  && Boolean(text(value.version, 80)?.match(safeProviderFamilyPattern));
+
+const isCanonicalVerificationSafety = (value: unknown): boolean => isRecord(value)
+  && hasOnlyKeys(value, verificationSafetyKeys, canonicalVerificationSafetyKeys)
+  && canonicalVerificationSafetyKeys.every((key) => value[key] === true);
+
+const isCanonicalVerificationTimestamp = (value: unknown): boolean => {
+  const timestamp = text(value, 40);
+  if (!timestamp || !canonicalTimestampPattern.test(timestamp)) {
+    return false;
+  }
+  const epochMs = Date.parse(timestamp);
+  return Number.isFinite(epochMs) && new Date(epochMs).toISOString() === timestamp;
+};
+
+const isCanonicalVerificationErrorMessage = (value: unknown): boolean => isRecord(value)
+  && hasOnlyKeys(value, supportedLocales, ["en-US"])
+  && Object.values(value).every((message) => text(message, 256) !== undefined);
+
+const isCanonicalVerificationError = (
+  value: unknown,
+  httpStatus: number | undefined,
+): boolean => {
+  if (!isRecord(value) || httpStatus === undefined) {
+    return false;
+  }
+  const errorStatus = positiveInteger(value.status);
+
+  return hasOnlyKeys(value, verificationErrorKeys, ["code", "message", "status"])
+    && enumValue(value.code, verificationRuntimeErrorCodes) !== undefined
+    && isCanonicalVerificationErrorMessage(value.message)
+    && (value.details === undefined || isRecord(value.details))
+    && errorStatus !== undefined
+    && errorStatus >= 400
+    && errorStatus <= 599
+    && errorStatus === httpStatus;
+};
+
+const isCanonicalVerificationEnvelope = (
+  body: Record<string, unknown>,
+  httpStatus?: number,
+): boolean => {
+  const success = body.ok === true;
+  const failure = body.ok === false;
+  if (!success && !failure) {
+    return false;
+  }
+  const businessSurface = success ? body.data : body.error;
+  const envelopeKeys = success ? verificationSuccessEnvelopeKeys : verificationFailureEnvelopeKeys;
+
+  return hasOnlyKeys(body, envelopeKeys, [...envelopeKeys])
+    && (success
+      ? isRecord(businessSurface)
+      : isCanonicalVerificationError(businessSurface, httpStatus))
+    && !containsForbiddenVerificationKey(businessSurface)
+    && isCanonicalVerificationRuntime(body.runtime)
+    && isCanonicalVerificationSafety(body.safety)
+    && isCanonicalVerificationTimestamp(body.timestamp)
+    && safeTraceId(body.traceId) !== undefined;
+};
+
 const verificationDataKeys = new Set([
   "boundary",
   "campaignDb",
@@ -1943,8 +2065,7 @@ const normalizeVerification = (
   const data = dataRecord(body);
   const payload = data?.payload;
   if (
-    containsForbiddenVerificationKey(body)
-    || !hasOnlyKeys(body, verificationEnvelopeKeys, ["data", "ok", "traceId"])
+    !isCanonicalVerificationEnvelope(body)
     || body.ok !== true
     || !data
     || !hasOnlyKeys(data, verificationDataKeys, ["payload"])

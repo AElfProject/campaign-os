@@ -1870,6 +1870,100 @@ describe("Participant journey workflow", () => {
       .toBe("failed");
   });
 
+  it("keeps a shared retry degraded while any terminal receipt remains non-terminal in Journey authority", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const lastGood = ready.lastGoodJourney;
+    const taskAToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: taskAToken,
+      type: "verify_requested",
+    });
+    const taskBToken = nextParticipantJourneyRequestToken(state, "verify", taskBId);
+    state = participantJourneyWorkflowReducer(state, {
+      taskId: taskBId,
+      token: taskBToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "completed", taskId: taskAId }),
+      token: taskAToken,
+      type: "verify_succeeded",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({
+        attemptId: "verification-attempt-b",
+        outcome: "completed",
+        taskId: taskBId,
+      }),
+      token: taskBToken,
+      type: "verify_succeeded",
+    });
+
+    const initialRefreshToken = nextParticipantJourneyRequestToken(state, "journey", taskAId);
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "refresh",
+      token: initialRefreshToken,
+      type: "journey_requested",
+    });
+    const initialProjection = journeyWithTasks([taskAId, taskBId]);
+    const initialConflictProjection: ParticipantJourneyProjection = {
+      ...initialProjection,
+      tasks: initialProjection.tasks.map((task) => ({
+        ...task,
+        action: "completed",
+        completionId: task.taskId === taskBId ? "completion-db-mismatch" : "completion-db-1",
+        evidenceId: task.taskId === taskBId ? "evidence-db-mismatch" : "evidence-db-1",
+        evidenceSource: "SOCIAL_API",
+        pointsAwarded: 100,
+        status: "completed",
+        updatedAt: "2026-07-16T08:00:00.000Z",
+      })),
+    };
+    state = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(initialConflictProjection),
+      token: initialRefreshToken,
+      type: "journey_succeeded",
+    });
+
+    expect(state.status).toBe("degraded");
+    expect(selectParticipantJourneyTaskAttempt(state, taskAId)?.refresh?.status).toBe("failed");
+    expect(selectParticipantJourneyTaskAttempt(state, taskBId)?.refresh?.status).toBe("failed");
+    const sharedRetryToken = nextParticipantJourneyRequestToken(state, "journey");
+    expect(sharedRetryToken.taskId).toBeNull();
+
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "retry",
+      token: sharedRetryToken,
+      type: "journey_requested",
+    });
+    const terminalTaskA = journeyForOutcome("completed", taskAId);
+    const nonTerminalTaskB = journeyWithTasks([taskBId]).tasks[0];
+    const retryProjection: ParticipantJourneyProjection = {
+      ...terminalTaskA,
+      campaign: { ...terminalTaskA.campaign, taskCount: 2 },
+      tasks: [terminalTaskA.tasks[0], nonTerminalTaskB],
+    };
+    const stillConflicted = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(retryProjection),
+      token: sharedRetryToken,
+      type: "journey_succeeded",
+    });
+
+    expect(stillConflicted.status).toBe("degraded");
+    expect(stillConflicted.journey).toBe(lastGood);
+    expect(stillConflicted.lastGoodJourney).toBe(lastGood);
+    expect(stillConflicted.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_AUTHORITY_CONFLICT");
+    expect(stillConflicted.activeRequests.journey).toBeNull();
+    expect(selectParticipantJourneyRetryOperation(stillConflicted)).toBe("journey");
+    expect(selectParticipantJourneyTaskAttempt(stillConflicted, taskBId)).toMatchObject({
+      receipt: { outcome: "completed" },
+      refresh: { status: "failed" },
+      status: "unavailable",
+    });
+    expect(nextParticipantJourneyRequestToken(stillConflicted, "journey").taskId).toBeNull();
+  });
+
   it.each(["failed", "manual_review"] as const)(
     "fails closed when %s optional Completion linkage conflicts with Journey authority",
     (outcome) => {

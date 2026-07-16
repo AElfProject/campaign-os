@@ -1193,7 +1193,6 @@ const terminalAttemptStatus = (
 
 const conflictingTerminalReceiptTaskId = (
   state: ParticipantJourneyWorkflowState,
-  refreshToken: ParticipantJourneyRequestToken,
   projection: ParticipantJourneyProjection,
 ): string | null => {
   const tasksById = new Map(projection.tasks.map((task) => [task.taskId, task]));
@@ -1208,10 +1207,7 @@ const conflictingTerminalReceiptTaskId = (
     if (!task) {
       continue;
     }
-    const ownsRefresh = taskId === refreshToken.taskId
-      && attempt.refresh.status === "in_flight";
-    const hasTerminalProjection = terminalAttemptStatus(task.status) !== null;
-    if ((ownsRefresh || hasTerminalProjection) && !authorityMatchesReceipt(task, receipt)) {
+    if (!authorityMatchesReceipt(task, receipt)) {
       return taskId;
     }
   }
@@ -1493,7 +1489,6 @@ export const participantJourneyWorkflowReducer = (
 
     const conflictTaskId = conflictingTerminalReceiptTaskId(
       state,
-      event.token,
       event.result.journey,
     );
     if (conflictTaskId) {

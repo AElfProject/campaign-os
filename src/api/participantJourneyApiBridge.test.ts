@@ -64,6 +64,54 @@ const verificationAttemptId = "attempt-db-live-1";
 const verificationEvidenceHash = "b".repeat(64);
 const verificationEvidenceRef = "evidence-ref:participant-bridge-live-1";
 
+const canonicalRuntimeEnvelopeMetadata = () => ({
+  runtime: {
+    mode: "local_seeded",
+    name: "campaign-os-api-runtime",
+    routeCount: 72,
+    version: "0.1.0-local",
+  },
+  safety: {
+    localOnly: true,
+    noContractWrite: true,
+    noExportFile: true,
+    noLiveApi: true,
+    noMigrationRunner: true,
+    noProductionDatabase: true,
+    noRewardCustody: true,
+    noRewardDistribution: true,
+    noSecretHandling: true,
+    noStorageWrite: true,
+    noWalletSignature: true,
+    seededDataOnly: true,
+  },
+  timestamp: "2026-07-16T04:00:00.000Z",
+});
+
+const canonicalFailureEnvelope = (
+  status = 503,
+  code = "PERSISTENCE_UNAVAILABLE",
+  traceId = `trace-http-${status}`,
+) => ({
+  ...canonicalRuntimeEnvelopeMetadata(),
+  error: {
+    code,
+    details: {
+      diagnosticCode: "POSTGRES_UNAVAILABLE",
+      field: "verification",
+      retryable: status === 503,
+    },
+    message: {
+      "en-US": "The verification request could not be completed.",
+      "zh-CN": "Verification 请求无法完成。",
+      "zh-TW": "Verification 請求無法完成。",
+    },
+    status,
+  },
+  ok: false as const,
+  traceId,
+});
+
 const feedItem = {
   campaignId,
   goal: "Complete the durable campaign",
@@ -209,6 +257,7 @@ const verificationEnvelope = (
   payload = verification(),
   traceId = "trace-body",
 ) => ({
+  ...canonicalRuntimeEnvelopeMetadata(),
   data: {
     campaignDb: payload.repository,
     campaignDbCompletion: {
@@ -295,6 +344,7 @@ const liveCompletedPayload = () => ({
 const liveCompletedEnvelope = (
   traceId = "trace-live-completed",
 ) => ({
+  ...canonicalRuntimeEnvelopeMetadata(),
   data: {
     boundary: { "en-US": "Campaign DB repository boundary." },
     campaignDb: { ...postgresRepository },
@@ -336,6 +386,7 @@ const attemptOnlyEnvelope = (
   outcome: "failed" | "manual_review" | "pending" = "pending",
   traceId = `trace-live-${outcome}`,
 ) => ({
+  ...canonicalRuntimeEnvelopeMetadata(),
   data: {
     boundary: { "en-US": "Campaign DB repository boundary." },
     campaignDb: { ...postgresRepository },
@@ -1100,6 +1151,39 @@ describe("Participant live verification bridge contract", () => {
     });
   });
 
+  it.each([
+    ["runtime mode", (wire: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(wire.runtime, { mode: "production" });
+    }],
+    ["runtime route count", (wire: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(wire.runtime, { routeCount: -1 });
+    }],
+    ["safety assertion", (wire: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(wire.safety, { noSecretHandling: false });
+    }],
+    ["safety key set", (wire: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(wire.safety, { endpoint: "https://private-provider.example" });
+    }],
+    ["timestamp", (wire: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(wire, { timestamp: "not-an-iso-timestamp" });
+    }],
+    ["required runtime metadata", (wire: ReturnType<typeof liveCompletedEnvelope>) => {
+      Reflect.deleteProperty(wire, "runtime");
+    }],
+  ] as const)("rejects malformed canonical envelope %s metadata", async (_name, mutate) => {
+    const wire = liveCompletedEnvelope();
+    mutate(wire);
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire)))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+  });
+
   it.each(["failed", "manual_review"] as const)(
     "accepts a zero-point 200 %s attempt without fabricating provider Evidence",
     async (outcome) => {
@@ -1485,30 +1569,24 @@ describe("Participant live verification bridge contract", () => {
   });
 
   it.each([
-    [401, "SESSION_INVALID", "SESSION_STALE", true, false, undefined],
-    [403, "PARTICIPANT_FORBIDDEN", "ROLE_SCOPE_FORBIDDEN", false, false, undefined],
-    [404, "TASK_NOT_FOUND", "TASK_SCOPE_NOT_FOUND", false, false, undefined],
-    [409, "ATTEMPT_CONFLICT", "ATTEMPT_VERSION_CONFLICT", false, true, 250],
-    [413, "RESPONSE_TOO_LARGE", "RESPONSE_BOUND_EXCEEDED", false, false, undefined],
-    [422, "EVIDENCE_INVALID", "EVIDENCE_LINKAGE_INVALID", false, false, undefined],
+    [401, "AUTH_SESSION_INVALID", "SESSION_STALE", true, false, undefined],
+    [403, "AUTH_FORBIDDEN", "ROLE_SCOPE_FORBIDDEN", false, false, undefined],
+    [404, "INVALID_TASK", "TASK_SCOPE_NOT_FOUND", false, false, undefined],
+    [409, "INVALID_REQUEST", "ATTEMPT_VERSION_CONFLICT", false, true, 250],
+    [413, "INVALID_REQUEST", "RESPONSE_BOUND_EXCEEDED", false, false, undefined],
+    [422, "INVALID_REQUEST", "EVIDENCE_LINKAGE_INVALID", false, false, undefined],
     [503, "PERSISTENCE_UNAVAILABLE", "POSTGRES_UNAVAILABLE", false, true, 1_000],
   ] as const)(
     "maps HTTP %s without conflating transport status and a business success",
     async (status, code, diagnosticCode, reconnectRequired, retryable, retryAfterMs) => {
-      const errorResponse = response({
-        error: {
-          code,
-          details: {
-            diagnosticCode,
-            field: status === 404 ? "taskId" : "verification",
-            retryable,
-            ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-          },
-          message: "Safe public error.",
-        },
-        ok: false,
-        traceId: `trace-http-${status}`,
-      }, { status, traceId: `trace-http-${status}` });
+      const wire = canonicalFailureEnvelope(status, code);
+      Object.assign(wire.error.details, {
+        diagnosticCode,
+        field: status === 404 ? "taskId" : "verification",
+        retryable,
+        ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+      });
+      const errorResponse = response(wire, { status, traceId: `trace-http-${status}` });
 
       const result = await bridge(vi.fn().mockResolvedValue(errorResponse))
         .verifyTask(taskId, context());
@@ -1530,12 +1608,54 @@ describe("Participant live verification bridge contract", () => {
         traceId: `trace-http-${status}`,
       });
       expect(result).not.toHaveProperty("outcome");
-      expect(JSON.stringify(result)).not.toContain("Safe public error");
+      expect(JSON.stringify(result)).not.toContain("verification request could not be completed");
     },
   );
 
+  it.each([
+    ["missing code", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Reflect.deleteProperty(wire.error, "code");
+    }],
+    ["unknown code", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Object.assign(wire.error, { code: "UNKNOWN_RUNTIME_FAILURE" });
+    }],
+    ["non-localized message", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Object.assign(wire.error, { message: "Safe public error." });
+    }],
+    ["missing English message", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Reflect.deleteProperty(wire.error.message, "en-US");
+    }],
+    ["missing status", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Reflect.deleteProperty(wire.error, "status");
+    }],
+    ["status mismatch", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Object.assign(wire.error, { status: 500 });
+    }],
+    ["unexpected error key", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Object.assign(wire.error, { unexpected: true });
+    }],
+    ["non-record details", (wire: ReturnType<typeof canonicalFailureEnvelope>) => {
+      Object.assign(wire.error, { details: "retryable" });
+    }],
+  ] as const)("rejects malformed canonical failure envelope %s", async (_name, mutate) => {
+    const wire = canonicalFailureEnvelope();
+    mutate(wire);
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire, { status: 503 })))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      httpStatus: 503,
+      ok: false,
+      phase: "response",
+    });
+    expect(result).not.toHaveProperty("safeDetails");
+  });
+
   it("fails closed on forbidden material keys in a typed HTTP error envelope", async () => {
     const result = await bridge(vi.fn().mockResolvedValue(response({
+      ...canonicalRuntimeEnvelopeMetadata(),
       error: {
         code: "PERSISTENCE_UNAVAILABLE",
         details: {
@@ -1543,7 +1663,12 @@ describe("Participant live verification bridge contract", () => {
           retryable: true,
           stackTrace: "/Users/private/provider.ts",
         },
-        message: "Safe public error.",
+        message: {
+          "en-US": "The verification request could not be completed.",
+          "zh-CN": "Verification 请求无法完成。",
+          "zh-TW": "Verification 請求無法完成。",
+        },
+        status: 503,
       },
       ok: false,
       traceId: "trace-http-forbidden-error",

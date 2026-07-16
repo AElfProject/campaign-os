@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import {
+  createParticipantJourneyApiBridge,
+  type ParticipantJourneyApiFetch,
+} from "../api/participantJourneyApiBridge";
 import { createCampaignOsLocalService } from "../domain/campaignService";
 import { campaignDetail } from "../domain/fixtures";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
@@ -1148,6 +1152,37 @@ const createCampaignOsApiRuntime = (options: CreateCampaignOsApiRuntimeOptions =
     walletSessionActivationPolicy:
       options.walletSessionActivationPolicy ?? "repository_trusted",
   });
+
+const createParticipantBridgeRuntimeFetch = (
+  runtime: CampaignOsApiRuntime,
+): ParticipantJourneyApiFetch => (async (input, init) => {
+  const requestUrl = new URL(
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url,
+  );
+  const requestHeaders: Record<string, string> = {};
+  new Headers(init?.headers).forEach((value, key) => {
+    requestHeaders[key] = value;
+  });
+  const runtimeResponse = await runtime.handle({
+    ...(typeof init?.body === "string" ? { body: init.body } : {}),
+    headers: requestHeaders,
+    method: init?.method ?? "GET",
+    path: `${requestUrl.pathname}${requestUrl.search}`,
+  });
+  const responseHeaders = new Headers(runtimeResponse.headers);
+  if (!responseHeaders.has("content-type")) {
+    responseHeaders.set("content-type", "application/json");
+  }
+
+  return new Response(JSON.stringify(runtimeResponse.body), {
+    headers: responseHeaders,
+    status: runtimeResponse.status,
+  });
+}) as ParticipantJourneyApiFetch;
 
 const createReadyTaskVerificationConfig = (): TaskVerificationConfig =>
   resolveTaskVerificationConfig({
@@ -5088,6 +5123,26 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(transport).toHaveBeenCalledTimes(1);
+    const participantSession = issuedProjectOwnerSession("2F4Wp04DirectParticipant");
+    issuedProjectOwnerSessions.set(participantSession.sessionId, participantSession);
+    const bridgedPending = await createParticipantJourneyApiBridge({
+      config: { baseUrl: "http://campaign-os-runtime.test" },
+      fetchImpl: createParticipantBridgeRuntimeFetch(runtime),
+    }).verifyTask(task.id, {
+      mode: "durable",
+      selectedCampaignId: campaign.id,
+      session: participantSession,
+    });
+    expect(bridgedPending).toMatchObject({
+      httpStatus: 202,
+      ok: true,
+      outcome: "pending",
+      status: "pending",
+      verification: {
+        attempt: { status: "pending" },
+        repository: { mode: "postgres" },
+      },
+    });
     await runtime.close();
   });
 
@@ -5281,7 +5336,29 @@ describe("Campaign OS API runtime", () => {
       expect(JSON.stringify(response.body)).not.toContain("evidence-hash:");
       expectNoForbiddenResponseKeys(response.body);
     }
-    expect(execute).toHaveBeenCalledTimes(2);
+    const participantSession = issuedProjectOwnerSession(walletAddress);
+    issuedProjectOwnerSessions.set(participantSession.sessionId, participantSession);
+    const bridgedCompleted = await createParticipantJourneyApiBridge({
+      config: { baseUrl: "http://campaign-os-runtime.test" },
+      fetchImpl: createParticipantBridgeRuntimeFetch(runtime),
+    }).verifyTask(task.id, {
+      mode: "durable",
+      selectedCampaignId: campaign.id,
+      session: participantSession,
+    });
+    expect(bridgedCompleted).toMatchObject({
+      httpStatus: 200,
+      ok: true,
+      outcome: "completed",
+      status: "completed",
+      verification: {
+        attempt: { id: attemptId, status: "completed" },
+        completion: { id: completion.id },
+        evidence: { id: evidence.id },
+        repository: { mode: "postgres" },
+      },
+    });
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(upsertTaskVerification).not.toHaveBeenCalled();
     await runtime.close();
   });
@@ -5795,6 +5872,31 @@ describe("Campaign OS API runtime", () => {
     expect(upsertTaskVerification).not.toHaveBeenCalled();
     expectNoForbiddenResponseKeys(verification.body);
     expectNoForbiddenFragments(verification.body, ["db.internal", "/Users/", "raw_signature", "password"]);
+    const participantSession = issuedProjectOwnerSession(
+      "2F4ParticipantFailure",
+      issuedSessionIdFor("2F4ParticipantFailure"),
+      {
+        accountType: "EOA",
+        walletName: "Portkey EOA Extension",
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+    );
+    issuedProjectOwnerSessions.set(participantSession.sessionId, participantSession);
+    const bridgedFailure = await createParticipantJourneyApiBridge({
+      config: { baseUrl: "http://campaign-os-runtime.test" },
+      fetchImpl: createParticipantBridgeRuntimeFetch(unavailableReadRuntime),
+    }).verifyTask(task.id, {
+      mode: "durable",
+      selectedCampaignId: campaign.id,
+      session: participantSession,
+    });
+    expect(bridgedFailure).toMatchObject({
+      code: "PERSISTENCE_UNAVAILABLE",
+      httpStatus: 503,
+      ok: false,
+      phase: "response",
+      status: "degraded",
+    });
     await unavailableReadRuntime.close();
 
     const unavailableJourneyRuntime = createCampaignOsApiRuntime({
