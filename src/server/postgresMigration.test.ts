@@ -269,6 +269,15 @@ describe("PostgreSQL migration runtime", () => {
       "campaign_os_verification_attempts_participant_journey_idx",
       "campaign_os_verification_attempts_state_dispatch_result_check",
       "campaign_os.valid_verification_attempt_diagnostic_codes",
+      "campaign_os.protect_terminal_verification_attempt",
+      "verification_attempt_terminal_immutability",
+      "CREATE TABLE campaign_os.verification_attempt_finalization_results",
+      "verification_attempt_finalization_result_validation",
+      "verification_attempt_finalization_results_append_only",
+      "verification_attempt_finalization_results_truncate_append_only",
+      "NEW.completion_snapshot = to_jsonb(completion)",
+      "NEW.evidence_snapshot = to_jsonb(evidence)",
+      "NEW.participant_snapshot = to_jsonb(participant)",
       "campaign_os_campaign_task_evidence_live_provider_check",
       "live_provider_executed = false",
       "status = 'completed'",
@@ -312,6 +321,12 @@ describe("PostgreSQL migration runtime", () => {
       "DROP TABLE campaign_os.verification_attempts",
     );
     expect(liveProviderTaskVerification?.downSql).toContain(
+      "DROP TABLE campaign_os.verification_attempt_finalization_results",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "DROP TRIGGER IF EXISTS verification_attempt_terminal_immutability",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
       "DROP TABLE campaign_os.campaign_task_revisions",
     );
     expect(liveProviderTaskVerification?.downSql).toContain(
@@ -324,7 +339,7 @@ describe("PostgreSQL migration runtime", () => {
       /ADD CONSTRAINT campaign_task_evidence_live_provider_executed_check\s+CHECK \(live_provider_executed = false\)/,
     );
     expect(liveProviderTaskVerification?.checksum).toBe(
-      "5f69f378547d221307cbc0f525edda568cf6a8606b38c3106d8bac004396c009",
+      "75578042d64ce87a17d511149bb9055a85be2693befaaa8904aa58391a0e5f81",
     );
 
     const factTables = [
@@ -1201,10 +1216,9 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
       );
     }
 
-    await insertCompletedAttempt();
     await expectSqlError(
       "UPDATE campaign_os.verification_attempts SET evidence_ref = $2 WHERE id = $1",
-      ["attempt-live-evidence", "https://unsafe.example/evidence"],
+      ["attempt-codec-parity", "https://unsafe.example/evidence"],
       "23514",
     );
   });
@@ -1282,16 +1296,50 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
       ["completion-live-evidence"],
       "23514",
     );
+    await expectSqlError(
+      `UPDATE campaign_os.verification_attempts
+       SET status = 'failed', evidence_hash = NULL, evidence_ref = NULL, evidence_source = NULL
+       WHERE id = $1`,
+      ["attempt-live-evidence"],
+      "55000",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.verification_attempts SET provider_code = 'NO_MATCH' WHERE id = $1",
+      ["attempt-live-evidence"],
+      "55000",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.verification_attempts SET evidence_ref = $2 WHERE id = $1",
+      ["attempt-live-evidence", "provider-evidence:rewritten"],
+      "55000",
+    );
+    await expectSqlError(
+      "DELETE FROM campaign_os.verification_attempts WHERE id = $1",
+      ["attempt-live-evidence"],
+      "55000",
+    );
 
-    const evidence = await sqlClient.query(
-      `SELECT evidence_ref, points_awarded, completion_id
-       FROM campaign_os.campaign_task_evidence WHERE id = $1`,
+    const durableFacts = await sqlClient.query(
+      `SELECT
+        attempt.status AS attempt_status,
+        attempt.provider_code,
+        attempt.evidence_ref AS attempt_evidence_ref,
+        evidence.evidence_ref,
+        evidence.points_awarded,
+        evidence.completion_id
+       FROM campaign_os.verification_attempts AS attempt
+       JOIN campaign_os.campaign_task_evidence AS evidence
+         ON evidence.verification_attempt_id = attempt.id
+       WHERE evidence.id = $1`,
       ["evidence-live-evidence"],
     );
-    expect(evidence.rows[0]).toEqual({
+    expect(durableFacts.rows[0]).toEqual({
+      attempt_evidence_ref: "provider-evidence:migration-0004",
+      attempt_status: "completed",
       completion_id: "completion-live-evidence",
       evidence_ref: "provider-evidence:migration-0004",
       points_awarded: 120,
+      provider_code: "MATCH_CONFIRMED",
     });
   });
 

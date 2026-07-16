@@ -99,6 +99,20 @@ ALTER TABLE campaign_os.campaign_task_completions
   DROP CONSTRAINT IF EXISTS campaign_os_campaign_task_completions_verification_attempt_fk,
   DROP COLUMN IF EXISTS verification_attempt_id;
 
+DROP TRIGGER IF EXISTS verification_attempt_finalization_results_append_only
+  ON campaign_os.verification_attempt_finalization_results;
+DROP TRIGGER IF EXISTS verification_attempt_finalization_results_truncate_append_only
+  ON campaign_os.verification_attempt_finalization_results;
+DROP FUNCTION IF EXISTS campaign_os.reject_verification_attempt_finalization_result_mutation();
+
+DROP TRIGGER IF EXISTS verification_attempt_finalization_result_validation
+  ON campaign_os.verification_attempt_finalization_results;
+DROP FUNCTION IF EXISTS campaign_os.validate_verification_attempt_finalization_result();
+DROP TABLE campaign_os.verification_attempt_finalization_results;
+
+DROP TRIGGER IF EXISTS verification_attempt_terminal_immutability
+  ON campaign_os.verification_attempts;
+DROP FUNCTION IF EXISTS campaign_os.protect_terminal_verification_attempt();
 DROP TABLE campaign_os.verification_attempts;
 DROP FUNCTION IF EXISTS campaign_os.valid_verification_attempt_diagnostic_codes(jsonb);
 DROP TABLE campaign_os.campaign_task_revisions;

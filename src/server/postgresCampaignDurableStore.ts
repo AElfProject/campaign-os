@@ -130,6 +130,10 @@ interface TaskVerificationRevisionExpectation {
   readonly taskRevisionDigest: string;
 }
 
+type TaskVerificationFinalizationWriteResult = NonNullable<
+  FinalizeTaskVerificationAttemptResult["writeResult"]
+>;
+
 const taskMatchesVerificationRevision = (
   task: CampaignDbTaskDraft,
   expected: TaskVerificationRevisionExpectation,
@@ -845,6 +849,18 @@ const mapEvidenceRow = (raw: unknown): CampaignDbTaskEvidenceRecord => {
     ...withOptional("verificationAttemptId", verificationAttemptId),
     walletAddress: decodeString(row, "wallet_address"),
     walletSource: decodeEnum(row, "wallet_source", WALLET_SOURCES),
+  };
+};
+
+const mapVerificationAttemptFinalizationResultRow = (
+  raw: unknown,
+): TaskVerificationFinalizationWriteResult => {
+  const row = decodeRow(raw);
+
+  return {
+    completion: mapCompletionRow(readField(row, "completion_snapshot")),
+    evidence: mapEvidenceRow(readField(row, "evidence_snapshot")),
+    participant: withoutParticipantRank(mapParticipantRow(readField(row, "participant_snapshot"))),
   };
 };
 
@@ -2036,62 +2052,24 @@ export const createPostgresCampaignDurableStore = ({
     if (attempt.status !== "completed") {
       return undefined;
     }
-    const completionResult = await queryWith(
+    const snapshotResult = await queryWith(
       client,
       "finalizeTaskVerificationAttempt",
       `
-        SELECT ${COMPLETION_COLUMNS}
-        FROM campaign_os.campaign_task_completions
-        WHERE verification_attempt_id = $1
+        SELECT completion_snapshot, evidence_snapshot, participant_snapshot
+        FROM campaign_os.verification_attempt_finalization_results
+        WHERE attempt_id = $1
         LIMIT 1
       `,
       [attempt.id],
       { traceId },
     );
-    const evidenceResult = await queryWith(
-      client,
+    return requiredOne(
+      snapshotResult.rows,
+      mapVerificationAttemptFinalizationResultRow,
       "finalizeTaskVerificationAttempt",
-      `
-        SELECT ${EVIDENCE_COLUMNS}
-        FROM campaign_os.campaign_task_evidence
-        WHERE verification_attempt_id = $1
-        LIMIT 1
-      `,
-      [attempt.id],
-      { traceId },
+      traceId,
     );
-    const participantResult = await queryWith(
-      client,
-      "finalizeTaskVerificationAttempt",
-      `
-        SELECT ${PARTICIPANT_COLUMNS}
-        FROM campaign_os.campaign_participants
-        WHERE campaign_id = $1 AND wallet_address = $2
-        LIMIT 1
-      `,
-      [attempt.campaignId, attempt.walletAddress],
-      { traceId },
-    );
-    return {
-      completion: requiredOne(
-        completionResult.rows,
-        mapCompletionRow,
-        "finalizeTaskVerificationAttempt",
-        traceId,
-      ),
-      evidence: requiredOne(
-        evidenceResult.rows,
-        mapEvidenceRow,
-        "finalizeTaskVerificationAttempt",
-        traceId,
-      ),
-      participant: withoutParticipantRank(requiredOne(
-        participantResult.rows,
-        mapParticipantRow,
-        "finalizeTaskVerificationAttempt",
-        traceId,
-      )),
-    };
   };
 
   const finalizeTaskVerificationAttempt = async (
@@ -2404,7 +2382,7 @@ export const createPostgresCampaignDurableStore = ({
           "finalizeTaskVerificationAttempt",
           traceId,
         );
-        const persistedParticipant = await upsertParticipantWith(
+        await upsertParticipantWith(
           client,
           {
             ...withoutParticipantRank(write.participant),
@@ -2413,11 +2391,56 @@ export const createPostgresCampaignDurableStore = ({
           { traceId },
           "finalizeTaskVerificationAttempt",
         );
-        writeResult = {
-          completion,
-          evidence,
-          participant: withoutParticipantRank(persistedParticipant),
-        };
+        const snapshotResult = await queryWith(
+          client,
+          "finalizeTaskVerificationAttempt",
+          `
+            INSERT INTO campaign_os.verification_attempt_finalization_results (
+              attempt_id,
+              completion_snapshot,
+              evidence_snapshot,
+              participant_snapshot,
+              created_at
+            )
+            SELECT
+              $1,
+              to_jsonb(completion),
+              to_jsonb(evidence),
+              to_jsonb(participant),
+              $6
+            FROM campaign_os.campaign_task_completions AS completion
+            JOIN campaign_os.campaign_task_evidence AS evidence
+              ON evidence.id = $3
+              AND evidence.campaign_id = completion.campaign_id
+              AND evidence.task_id = completion.task_id
+              AND evidence.wallet_address = completion.wallet_address
+              AND evidence.completion_id = completion.id
+              AND evidence.verification_attempt_id = $1
+            JOIN campaign_os.campaign_participants AS participant
+              ON participant.campaign_id = $4
+              AND participant.wallet_address = $5
+            WHERE completion.id = $2
+              AND completion.campaign_id = $4
+              AND completion.wallet_address = $5
+              AND completion.verification_attempt_id = $1
+            RETURNING completion_snapshot, evidence_snapshot, participant_snapshot
+          `,
+          [
+            existing.id,
+            completion.id,
+            evidence.id,
+            existing.campaignId,
+            existing.walletAddress,
+            input.completedAt,
+          ],
+          { traceId },
+        );
+        writeResult = requiredOne(
+          snapshotResult.rows,
+          mapVerificationAttemptFinalizationResultRow,
+          "finalizeTaskVerificationAttempt",
+          traceId,
+        );
       }
 
       return {

@@ -477,6 +477,30 @@ CREATE INDEX campaign_os_verification_attempts_recovery_idx
 CREATE INDEX campaign_os_verification_attempts_provider_degradation_idx
   ON campaign_os.verification_attempts (provider_ref, retry_posture, updated_at DESC, id);
 
+CREATE FUNCTION campaign_os.protect_terminal_verification_attempt()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.dispatch_state = 'result_observed'
+    OR OLD.status IN ('completed', 'failed', 'manual_review')
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Terminal Verification Attempt history is immutable.';
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER verification_attempt_terminal_immutability
+BEFORE UPDATE OR DELETE ON campaign_os.verification_attempts
+FOR EACH ROW EXECUTE FUNCTION campaign_os.protect_terminal_verification_attempt();
+
 ALTER TABLE campaign_os.campaign_task_completions
   ADD COLUMN verification_attempt_id text,
   ADD CONSTRAINT campaign_os_campaign_task_completions_verification_attempt_fk
@@ -507,6 +531,91 @@ ALTER TABLE campaign_os.campaign_task_evidence
 CREATE INDEX campaign_os_campaign_task_evidence_verification_attempt_idx
   ON campaign_os.campaign_task_evidence (verification_attempt_id)
   WHERE verification_attempt_id IS NOT NULL;
+
+CREATE TABLE campaign_os.verification_attempt_finalization_results (
+  attempt_id text PRIMARY KEY,
+  completion_snapshot jsonb NOT NULL,
+  evidence_snapshot jsonb NOT NULL,
+  participant_snapshot jsonb NOT NULL,
+  created_at timestamptz NOT NULL,
+  CONSTRAINT campaign_os_verification_attempt_finalization_results_attempt_fk
+    FOREIGN KEY (attempt_id)
+    REFERENCES campaign_os.verification_attempts (id)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT campaign_os_verification_attempt_finalization_results_snapshot_check CHECK (
+    jsonb_typeof(completion_snapshot) = 'object'
+    AND jsonb_typeof(evidence_snapshot) = 'object'
+    AND jsonb_typeof(participant_snapshot) = 'object'
+    AND octet_length(completion_snapshot::text) BETWEEN 2 AND 32768
+    AND octet_length(evidence_snapshot::text) BETWEEN 2 AND 32768
+    AND octet_length(participant_snapshot::text) BETWEEN 2 AND 32768
+  )
+);
+
+CREATE FUNCTION campaign_os.validate_verification_attempt_finalization_result()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  PERFORM 1
+  FROM campaign_os.verification_attempts AS attempt
+  JOIN campaign_os.campaign_task_completions AS completion
+    ON completion.verification_attempt_id = attempt.id
+    AND completion.campaign_id = attempt.campaign_id
+    AND completion.task_id = attempt.task_id
+    AND completion.wallet_address = attempt.wallet_address
+  JOIN campaign_os.campaign_task_evidence AS evidence
+    ON evidence.verification_attempt_id = attempt.id
+    AND evidence.campaign_id = attempt.campaign_id
+    AND evidence.task_id = attempt.task_id
+    AND evidence.wallet_address = attempt.wallet_address
+    AND evidence.completion_id = completion.id
+  JOIN campaign_os.campaign_participants AS participant
+    ON participant.campaign_id = attempt.campaign_id
+    AND participant.wallet_address = attempt.wallet_address
+  WHERE attempt.id = NEW.attempt_id
+    AND attempt.status = 'completed'
+    AND attempt.dispatch_state = 'result_observed'
+    AND completion.status = 'completed'
+    AND evidence.status = 'completed'
+    AND evidence.live_provider_executed
+    AND NEW.completion_snapshot = to_jsonb(completion)
+    AND NEW.evidence_snapshot = to_jsonb(evidence)
+    AND NEW.participant_snapshot = to_jsonb(participant)
+    AND NEW.created_at = attempt.completed_at;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'Verification Attempt finalization snapshot must match committed provider facts.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER verification_attempt_finalization_result_validation
+BEFORE INSERT ON campaign_os.verification_attempt_finalization_results
+FOR EACH ROW EXECUTE FUNCTION campaign_os.validate_verification_attempt_finalization_result();
+
+CREATE FUNCTION campaign_os.reject_verification_attempt_finalization_result_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION USING
+    ERRCODE = '55000',
+    MESSAGE = 'Verification Attempt finalization snapshots are append-only.';
+END;
+$$;
+
+CREATE TRIGGER verification_attempt_finalization_results_append_only
+BEFORE UPDATE OR DELETE ON campaign_os.verification_attempt_finalization_results
+FOR EACH ROW EXECUTE FUNCTION campaign_os.reject_verification_attempt_finalization_result_mutation();
+
+CREATE TRIGGER verification_attempt_finalization_results_truncate_append_only
+BEFORE TRUNCATE ON campaign_os.verification_attempt_finalization_results
+FOR EACH STATEMENT EXECUTE FUNCTION campaign_os.reject_verification_attempt_finalization_result_mutation();
 
 CREATE FUNCTION campaign_os.validate_live_provider_task_evidence()
 RETURNS trigger

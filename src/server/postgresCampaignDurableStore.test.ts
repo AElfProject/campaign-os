@@ -2511,6 +2511,7 @@ type AttemptFinalizeFaultPoint =
   | "evidence"
   | "points_sum"
   | "participant"
+  | "snapshot"
   | "commit";
 
 const matchesAttemptFinalizeFault = (point: AttemptFinalizeFaultPoint, sql: string) => {
@@ -2526,6 +2527,10 @@ const matchesAttemptFinalizeFault = (point: AttemptFinalizeFaultPoint, sql: stri
       return sql.includes("SELECT COALESCE(SUM(points_awarded)");
     case "participant":
       return sql.startsWith("INSERT INTO campaign_os.campaign_participants");
+    case "snapshot":
+      return sql.startsWith(
+        "INSERT INTO campaign_os.verification_attempt_finalization_results",
+      );
     case "commit":
       return sql === "COMMIT";
   }
@@ -2739,11 +2744,37 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
   }, 60_000);
 
   beforeEach(async () => {
-    const pool = requiredDatabasePool();
-    await pool.query("DELETE FROM campaign_os.campaign_task_evidence");
-    await pool.query("DELETE FROM campaign_os.campaign_task_completions");
-    await pool.query("DELETE FROM campaign_os.verification_attempts");
-    await pool.query("DELETE FROM campaign_os.campaign_participants");
+    const client = await requiredDatabasePool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempt_finalization_results
+         DISABLE TRIGGER verification_attempt_finalization_results_append_only`,
+      );
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempts
+         DISABLE TRIGGER verification_attempt_terminal_immutability`,
+      );
+      await client.query("DELETE FROM campaign_os.verification_attempt_finalization_results");
+      await client.query("DELETE FROM campaign_os.campaign_task_evidence");
+      await client.query("DELETE FROM campaign_os.campaign_task_completions");
+      await client.query("DELETE FROM campaign_os.verification_attempts");
+      await client.query("DELETE FROM campaign_os.campaign_participants");
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempts
+         ENABLE TRIGGER verification_attempt_terminal_immutability`,
+      );
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempt_finalization_results
+         ENABLE TRIGGER verification_attempt_finalization_results_append_only`,
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   });
 
   afterAll(async () => {
@@ -3185,14 +3216,13 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
       requestDigest: ATTEMPT_REQUEST_DIGEST,
       traceId: traceV1,
     });
-    const firstFinalized = await store.taskVerificationAttempts!.finalize(
-      verificationFinalizeInputForTask(first.owner, traceV1, taskV1, {
-        evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
-        evidenceRef: `provider-evidence:${suffix}:v1`,
-        idSuffix: `${suffix}-v1`,
-        responseDigest: ATTEMPT_RESPONSE_DIGEST,
-      }),
-    );
+    const firstFinalizeInput = verificationFinalizeInputForTask(first.owner, traceV1, taskV1, {
+      evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+      evidenceRef: `provider-evidence:${suffix}:v1`,
+      idSuffix: `${suffix}-v1`,
+      responseDigest: ATTEMPT_RESPONSE_DIGEST,
+    });
+    const firstFinalized = await store.taskVerificationAttempts!.finalize(firstFinalizeInput);
     expect(firstFinalized.kind).toBe("committed");
 
     const taskV2 = task({
@@ -3275,6 +3305,98 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
         task_revision: 2,
       },
     ]);
+    await expect(store.taskVerificationAttempts!.finalize(firstFinalizeInput)).resolves.toEqual({
+      ...firstFinalized,
+      kind: "terminal_replay",
+    });
+    await store.close();
+  });
+
+  it("replays the immutable Participant projection after another Task changes points", async () => {
+    const firstTask = task({
+      id: "task-postgres-participant-snapshot-first",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const secondTask = task({
+      id: "task-postgres-participant-snapshot-second",
+      points: 75,
+      updatedAt: "2026-07-11T00:01:00.000Z",
+    });
+    await seedVerificationTask(firstTask);
+    await seedVerificationTask(secondTask);
+    let attemptSequence = 0;
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => `attempt-postgres-participant-snapshot-${++attemptSequence}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-participant-snapshot-${attemptSequence}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+
+    const finalizeTask = async (
+      taskDraft: CampaignDbTaskDraft,
+      traceId: string,
+      digestSeed: string,
+      suffix: string,
+    ) => {
+      const acquired = await store.taskVerificationAttempts!.begin(
+        verificationBeginInput(verificationIdentityForTask(traceId, taskDraft), traceId),
+      );
+      expect(acquired.kind).toBe("acquired");
+      if (acquired.kind !== "acquired") {
+        throw new Error("Expected Participant snapshot test owner.");
+      }
+      await store.taskVerificationAttempts!.markTransportStarted({
+        owner: acquired.owner,
+        requestDigest: digestSeed.repeat(64),
+        traceId,
+      });
+      const finalizeInput = verificationFinalizeInputForTask(
+        acquired.owner,
+        traceId,
+        taskDraft,
+        {
+          evidenceHash: String(Number(digestSeed) + 2).repeat(64),
+          evidenceRef: `provider-evidence:${suffix}`,
+          idSuffix: suffix,
+          responseDigest: String(Number(digestSeed) + 1).repeat(64),
+        },
+      );
+      const finalized = await store.taskVerificationAttempts!.finalize(finalizeInput);
+      expect(finalized.kind).toBe("committed");
+      return { finalizeInput, finalized };
+    };
+
+    const first = await finalizeTask(
+      firstTask,
+      "trace-postgres-participant-snapshot-first",
+      "1",
+      "participant-snapshot-first",
+    );
+    expect(first.finalized.writeResult?.participant.totalPoints).toBe(120);
+    await expect(requiredDatabasePool().query(
+      `UPDATE campaign_os.verification_attempt_finalization_results
+       SET participant_snapshot = jsonb_set(participant_snapshot, '{total_points}', '999'::jsonb)
+       WHERE attempt_id = $1`,
+      [first.finalized.attempt.id],
+    )).rejects.toMatchObject({ code: "55000" });
+    await expect(requiredDatabasePool().query(
+      `DELETE FROM campaign_os.verification_attempt_finalization_results
+       WHERE attempt_id = $1`,
+      [first.finalized.attempt.id],
+    )).rejects.toMatchObject({ code: "55000" });
+    const second = await finalizeTask(
+      secondTask,
+      "trace-postgres-participant-snapshot-second",
+      "4",
+      "participant-snapshot-second",
+    );
+    expect(second.finalized.writeResult?.participant.totalPoints).toBe(195);
+
+    await expect(store.taskVerificationAttempts!.finalize(first.finalizeInput)).resolves.toEqual({
+      ...first.finalized,
+      kind: "terminal_replay",
+    });
     await store.close();
   });
 
@@ -3515,6 +3637,7 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
     "evidence",
     "points_sum",
     "participant",
+    "snapshot",
     "commit",
   ] as const)("rolls back every %s finalize fault with no partial canonical rows", async (faultPoint) => {
     const traceId = `trace-postgres-attempt-fault-${faultPoint}`;
@@ -3556,7 +3679,8 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
         (SELECT dispatch_state FROM campaign_os.verification_attempts LIMIT 1) AS dispatch_state,
         (SELECT COUNT(*) FROM campaign_os.campaign_task_completions) AS completions,
         (SELECT COUNT(*) FROM campaign_os.campaign_task_evidence) AS evidence,
-        (SELECT COUNT(*) FROM campaign_os.campaign_participants) AS participants`,
+        (SELECT COUNT(*) FROM campaign_os.campaign_participants) AS participants,
+        (SELECT COUNT(*) FROM campaign_os.verification_attempt_finalization_results) AS snapshots`,
     );
     expect(persisted.rows[0]).toMatchObject({
       attempt_status: "running",
@@ -3564,6 +3688,7 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
       dispatch_state: "started",
       evidence: "0",
       participants: "0",
+      snapshots: "0",
     });
     await store.close();
   });
