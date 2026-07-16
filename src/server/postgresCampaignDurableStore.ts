@@ -1515,6 +1515,7 @@ export const createPostgresCampaignDurableStore = ({
       | "finalizeTaskVerificationAttempt"
       | "getParticipantJourneySnapshot"
       | "markTaskVerificationTransportStarted"
+      | "reset"
       | "upsertTaskVerification"
     >,
     traceId: string,
@@ -1531,6 +1532,7 @@ export const createPostgresCampaignDurableStore = ({
       | "beginTaskVerificationAttempt"
       | "finalizeTaskVerificationAttempt"
       | "markTaskVerificationTransportStarted"
+      | "reset"
     >,
     traceId: string,
     execute: (client: PostgresCampaignStoreClient) => Promise<TValue>,
@@ -3214,21 +3216,92 @@ export const createPostgresCampaignDurableStore = ({
         });
       }
 
-      await query(
-        "reset",
-        `
-          TRUNCATE TABLE
-            campaign_os.campaign_task_evidence,
-            campaign_os.campaign_task_completions,
-            campaign_os.verification_attempts,
-            campaign_os.campaign_referral_bindings,
-            campaign_os.campaign_participants,
-            campaign_os.campaign_tasks,
-            campaign_os.campaigns
-        `,
-        [],
-        { traceId },
-      );
+      await withAttemptTransaction("reset", traceId, async (client) => {
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.verification_attempt_finalization_results
+           DISABLE TRIGGER verification_attempt_finalization_results_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.campaign_task_revisions
+           DISABLE TRIGGER campaign_task_revisions_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.campaign_review_decisions
+           DISABLE TRIGGER campaign_review_decisions_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.campaign_export_artifacts
+           DISABLE TRIGGER campaign_export_artifacts_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `
+            TRUNCATE TABLE
+              campaign_os.verification_attempt_finalization_results,
+              campaign_os.campaign_review_decisions,
+              campaign_os.campaign_export_artifacts,
+              campaign_os.campaign_task_evidence,
+              campaign_os.campaign_task_completions,
+              campaign_os.verification_attempts,
+              campaign_os.campaign_referral_bindings,
+              campaign_os.campaign_participants,
+              campaign_os.campaign_task_revisions,
+              campaign_os.campaign_tasks,
+              campaign_os.campaigns
+          `,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.campaign_export_artifacts
+           ENABLE TRIGGER campaign_export_artifacts_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.campaign_review_decisions
+           ENABLE TRIGGER campaign_review_decisions_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.campaign_task_revisions
+           ENABLE TRIGGER campaign_task_revisions_truncate_append_only`,
+          [],
+          { traceId },
+        );
+        await queryWith(
+          client,
+          "reset",
+          `ALTER TABLE campaign_os.verification_attempt_finalization_results
+           ENABLE TRIGGER verification_attempt_finalization_results_truncate_append_only`,
+          [],
+          { traceId },
+        );
+      });
     },
     upsertParticipant: (participant, context) =>
       upsertParticipantWith(pool, participant, context),

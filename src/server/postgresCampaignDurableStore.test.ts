@@ -2284,11 +2284,30 @@ describe("PostgreSQL Campaign durable store", () => {
 
     await testStore.reset();
 
-    expect(testPool.calls).toHaveLength(1);
-    expect(testPool.calls[0]?.text).toMatch(/^TRUNCATE TABLE/);
-    expect(testPool.calls[0]?.text).toContain("campaign_os.campaign_task_evidence");
-    expect(testPool.calls[0]?.text).toContain("campaign_os.campaigns");
-    expect(testPool.calls[0]?.values).toEqual([]);
+    expect(testPool.calls.map(({ text }) => text)).toEqual([
+      "BEGIN",
+      expect.stringContaining(
+        "DISABLE TRIGGER verification_attempt_finalization_results_truncate_append_only",
+      ),
+      expect.stringContaining("DISABLE TRIGGER campaign_task_revisions_truncate_append_only"),
+      expect.stringContaining("DISABLE TRIGGER campaign_review_decisions_truncate_append_only"),
+      expect.stringContaining("DISABLE TRIGGER campaign_export_artifacts_truncate_append_only"),
+      expect.stringMatching(/^TRUNCATE TABLE/),
+      expect.stringContaining("ENABLE TRIGGER campaign_export_artifacts_truncate_append_only"),
+      expect.stringContaining("ENABLE TRIGGER campaign_review_decisions_truncate_append_only"),
+      expect.stringContaining("ENABLE TRIGGER campaign_task_revisions_truncate_append_only"),
+      expect.stringContaining(
+        "ENABLE TRIGGER verification_attempt_finalization_results_truncate_append_only",
+      ),
+      "COMMIT",
+    ]);
+    expect(testPool.calls[5]?.text).toContain(
+      "campaign_os.verification_attempt_finalization_results",
+    );
+    expect(testPool.calls[5]?.text).toContain("campaign_os.campaign_task_revisions");
+    expect(testPool.calls[5]?.text).toContain("campaign_os.campaign_task_evidence");
+    expect(testPool.calls[5]?.text).toContain("campaign_os.campaigns");
+    expect(testPool.calls.every(({ values }) => values.length === 0)).toBe(true);
   });
 
   it.each([
@@ -2505,16 +2524,17 @@ describe("PostgreSQL Campaign durable store", () => {
   });
 });
 
-type AttemptFinalizeFaultPoint =
+type PostgresFaultPoint =
   | "attempt_update"
   | "completion"
   | "evidence"
   | "points_sum"
   | "participant"
   | "snapshot"
+  | "reset_truncate"
   | "commit";
 
-const matchesAttemptFinalizeFault = (point: AttemptFinalizeFaultPoint, sql: string) => {
+const matchesPostgresFault = (point: PostgresFaultPoint, sql: string) => {
   switch (point) {
     case "attempt_update":
       return sql.startsWith("UPDATE campaign_os.verification_attempts")
@@ -2531,6 +2551,9 @@ const matchesAttemptFinalizeFault = (point: AttemptFinalizeFaultPoint, sql: stri
       return sql.startsWith(
         "INSERT INTO campaign_os.verification_attempt_finalization_results",
       );
+    case "reset_truncate":
+      return sql.startsWith("TRUNCATE TABLE")
+        && sql.includes("campaign_os.verification_attempt_finalization_results");
     case "commit":
       return sql === "COMMIT";
   }
@@ -2538,12 +2561,12 @@ const matchesAttemptFinalizeFault = (point: AttemptFinalizeFaultPoint, sql: stri
 
 class FaultInjectingPostgresPool implements PostgresCampaignStorePool {
   readonly end = vi.fn(async () => undefined);
-  private faultPoint: AttemptFinalizeFaultPoint | undefined;
+  private faultPoint: PostgresFaultPoint | undefined;
   private faulted = false;
 
   constructor(private readonly delegate: Pool) {}
 
-  arm(point: AttemptFinalizeFaultPoint) {
+  arm(point: PostgresFaultPoint) {
     this.faultPoint = point;
     this.faulted = false;
   }
@@ -2561,7 +2584,7 @@ class FaultInjectingPostgresPool implements PostgresCampaignStorePool {
         if (
           this.faultPoint
           && !this.faulted
-          && matchesAttemptFinalizeFault(this.faultPoint, normalized)
+          && matchesPostgresFault(this.faultPoint, normalized)
         ) {
           this.faulted = true;
           throw Object.assign(new Error(`private fault at ${this.faultPoint}`), { code: "XX000" });
@@ -2838,6 +2861,94 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
       "SELECT to_regclass('campaign_os.verification_attempts') AS attempt_table",
     );
     expect(retained.rows[0]?.attempt_table).toBeTruthy();
+    await store.close();
+  });
+
+  it("resets finalized provider facts only in test mode and restores snapshot protection", async () => {
+    let sequence = 0;
+    const store = createPostgresCampaignDurableStore({
+      allowTestReset: true,
+      attemptId: () => `attempt-postgres-reset-lifecycle-${++sequence}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-reset-lifecycle-${sequence}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const finalizePositive = async (traceId: string) => {
+      const acquired = await store.taskVerificationAttempts!.begin(
+        verificationBeginInput(verificationIdentity(traceId), traceId),
+      );
+      expect(acquired.kind).toBe("acquired");
+      if (acquired.kind !== "acquired") {
+        throw new Error("Expected reset lifecycle owner.");
+      }
+      await store.taskVerificationAttempts!.markTransportStarted({
+        owner: acquired.owner,
+        requestDigest: ATTEMPT_REQUEST_DIGEST,
+        traceId,
+      });
+      const finalized = await store.taskVerificationAttempts!.finalize(
+        verificationFinalizeInput(acquired.owner, traceId),
+      );
+      expect(finalized.kind).toBe("committed");
+      return finalized.attempt.id;
+    };
+    const expectSnapshotProtection = async (attemptId: string) => {
+      await expect(requiredDatabasePool().query(
+        `UPDATE campaign_os.verification_attempt_finalization_results
+         SET participant_snapshot = jsonb_set(
+           participant_snapshot,
+           '{total_points}',
+           '999'::jsonb
+         )
+         WHERE attempt_id = $1`,
+        [attemptId],
+      )).rejects.toMatchObject({ code: "55000" });
+      await expect(requiredDatabasePool().query(
+        `DELETE FROM campaign_os.verification_attempt_finalization_results
+         WHERE attempt_id = $1`,
+        [attemptId],
+      )).rejects.toMatchObject({ code: "55000" });
+      await expect(requiredDatabasePool().query(
+        "TRUNCATE TABLE campaign_os.verification_attempt_finalization_results",
+      )).rejects.toMatchObject({ code: "55000" });
+    };
+
+    const firstAttemptId = await finalizePositive("trace-postgres-reset-lifecycle-first");
+    const faultPool = new FaultInjectingPostgresPool(requiredDatabasePool());
+    faultPool.arm("reset_truncate");
+    const failingResetStore = createPostgresCampaignDurableStore({
+      allowTestReset: true,
+      ownsPool: false,
+      pool: faultPool,
+    });
+    await expect(failingResetStore.reset()).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "reset",
+    });
+    await failingResetStore.close();
+    await expectSnapshotProtection(firstAttemptId);
+
+    await store.reset();
+    await expect(store.manifest({ traceId: "trace-postgres-reset-lifecycle-manifest" }))
+      .resolves.toMatchObject({
+        completionRecordCount: 0,
+        participantRecordCount: 0,
+        recordCount: 0,
+        referralBindingRecordCount: 0,
+        taskEvidenceRecordCount: 0,
+        taskRecordCount: 0,
+        verificationAttemptRecordCount: 0,
+      });
+    await expect(requiredDatabasePool().query(
+      `SELECT COUNT(*)::integer AS count
+       FROM campaign_os.verification_attempt_finalization_results`,
+    )).resolves.toMatchObject({ rows: [{ count: 0 }] });
+
+    await store.create(campaign(), { traceId: "trace-postgres-reset-lifecycle-campaign" });
+    await store.createTaskDraft(task(), { traceId: "trace-postgres-reset-lifecycle-task" });
+    const secondAttemptId = await finalizePositive("trace-postgres-reset-lifecycle-second");
+    await expectSnapshotProtection(secondAttemptId);
     await store.close();
   });
 
