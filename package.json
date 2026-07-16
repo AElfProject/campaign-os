@@ -7,6 +7,8 @@
     "dev": "vite",
     "server:dev": "vite-node src/server/server.ts --listen",
     "server:migrate": "vite-node --script src/server/postgresMigrationCli.ts",
+    "server:provider-sandbox": "vite-node --script src/server/providerVerificationSandbox.ts --listen",
+    "server:provider-stage": "vite-node --script src/server/providerVerificationStageRuntime.ts --listen",
     "server:smoke": "vite-node src/server/backendRuntimeSmoke.ts --run",
     "server:start": "vite-node src/server/server.ts --listen",
     "build": "tsc -b && vite build",

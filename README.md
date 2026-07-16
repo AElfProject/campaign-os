@@ -106,6 +106,35 @@ VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED=1 \
 npm run dev
 ```
 
+真实 provider transport 只通过独立的 disposable stage launcher 显式启用。先启动 loopback sandbox：
+
+Real provider transport is enabled explicitly only through the disposable stage launcher. Start the loopback sandbox first:
+
+```bash
+CAMPAIGN_OS_PROVIDER_SANDBOX_HOST=127.0.0.1 \
+CAMPAIGN_OS_PROVIDER_SANDBOX_PORT=5195 \
+npm run server:provider-sandbox
+```
+
+API terminal 必须同时继承上面的 PostgreSQL 和 standalone `'*'` preview 配置，再提供两个当前 schema 的 binding：
+
+The API terminal must also inherit the PostgreSQL and standalone `'*'` preview configuration above, then provide two bindings using the current schema:
+
+```bash
+export CAMPAIGN_OS_STAGE_DISPOSABLE_DATABASE_ACK=disposable-stage-approved
+export CAMPAIGN_OS_STAGE_PROVIDER_URL=http://127.0.0.1:5195/verify
+export CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT=explicitly-enabled
+export CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON='[
+  {"degradationPolicy":"pending","enabled":true,"endpointEnvKey":"CAMPAIGN_OS_STAGE_PROVIDER_URL","endpointId":"aefinder-aelfscan-indexer-query","evidenceSource":"AELFSCAN","id":"stage-on-chain-v1","maxAttempts":3,"maxResponseBytes":16384,"providerFamily":"aefinder","providerGroupId":"aefinder-aelfscan-indexers","requestMappingId":"provider-http-request-map:on-chain-indexer-v1","responseMappingId":"provider-http-response-map:on-chain-indexer-v1","revision":1,"timeoutMs":1000,"verificationType":"ON_CHAIN"},
+  {"degradationPolicy":"pending","enabled":true,"endpointEnvKey":"CAMPAIGN_OS_STAGE_PROVIDER_URL","endpointId":"dapp-api-verification-status","evidenceSource":"DAPP_API","id":"stage-dapp-api-v1","maxAttempts":3,"maxResponseBytes":16384,"providerFamily":"ebridge","providerGroupId":"dapp-api-adapters","requestMappingId":"provider-http-request-map:dapp-api-status-v1","responseMappingId":"provider-http-response-map:dapp-api-status-v1","revision":1,"timeoutMs":1000,"verificationType":"DAPP_API"}
+]'
+npm run server:provider-stage
+```
+
+该 launcher 默认不启动，并在监听前要求显式 disposable database acknowledgement，同时拒绝非 loopback PostgreSQL、mixed/缺失 preview scope、非专用 stage env key、非 HTTP loopback endpoint、静态 header/body/credential 或缺少任一 verification type。启动成功还必须通过真实 `/api/health` 探测；输出不会包含 provider URL、database URL 或 raw material。普通 `server:start` 不构造 provider fetch transport。
+
+The launcher is inert by default and requires an explicit disposable-database acknowledgement before rejecting non-loopback PostgreSQL, mixed or missing preview scope, non-dedicated stage environment keys, non-HTTP loopback endpoints, static header/body/credential material, or a missing verification type before listening. A successful start also requires a real `/api/health` probe; output excludes the provider URL, database URL, and raw material. Ordinary `server:start` does not construct the provider fetch transport.
+
 Stage mode只提供allowlisted safe fixtures，并隔离legacy seeded Project/Admin success surfaces。关闭frontend flag会恢复普通UI；清空
 Participant preview env会立即恢复draft deny-all。回滚不得删除已持久化的Campaign、Completion、Decision或Artifact。
 
@@ -115,9 +144,9 @@ Campaigns, Completions, Decisions, or Artifacts.
 
 ## Migrations
 
-Migration runner 按顺序加载 `0001_campaign_runtime`、additive `0002_admin_review_export` 和 additive `0003_admin_review_rank_projection`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。
+Migration runner 按顺序加载 `0001_campaign_runtime`、additive `0002_admin_review_export`、additive `0003_admin_review_rank_projection` 和 additive `0004_live_provider_task_verification`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。
 
-The migration runner loads `0001_campaign_runtime`, additive `0002_admin_review_export`, and additive `0003_admin_review_rank_projection` in order. Run read-only plan/validate first; `apply` requires a separate explicit approval flag. API server startup never runs migrations automatically.
+The migration runner loads `0001_campaign_runtime`, additive `0002_admin_review_export`, additive `0003_admin_review_rank_projection`, and additive `0004_live_provider_task_verification` in order. Run read-only plan/validate first; `apply` requires a separate explicit approval flag. API server startup never runs migrations automatically.
 
 ```bash
 npm run server:migrate -- --plan
@@ -137,17 +166,21 @@ npm test
 CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1 \
   CAMPAIGN_OS_TEST_DATABASE_URL="$LOCAL_CAMPAIGN_OS_DATABASE_URL" \
   npm run test:postgres
+CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1 \
+  CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1 \
+  CAMPAIGN_OS_TEST_DATABASE_URL="$LOCAL_CAMPAIGN_OS_DATABASE_URL" \
+  npm run test:postgres
 npm run server:smoke
 npm run build
 ```
 
-`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` 禁止把缺失 URL、skipped suite 或 zero executed tests 记为成功。`server:smoke` 验证默认关闭的 Admin route fail closed；enabled Admin PostgreSQL workflow 由 required integration suite 验证。
+`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` 禁止把缺失 URL、skipped suite 或 zero executed tests 记为成功。增加 `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` 后，suite 必须通过真实 loopback TCP/HTTP 和 fetch transport dispatch；缺 PostgreSQL gate 或 URL 会明确失败。`server:smoke` 验证默认关闭的 provider/Admin path fail closed；required integration suite 验证启用后的 PostgreSQL workflow。
 
-`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` prevents a missing URL, skipped suite, or zero executed tests from being reported as success. `server:smoke` verifies that the default-disabled Admin route fails closed; the required integration suite verifies the enabled Admin PostgreSQL workflow.
+`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` prevents a missing URL, skipped suite, or zero executed tests from being reported as success. Adding `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` requires real loopback TCP/HTTP dispatch through the fetch transport and fails when the PostgreSQL gate or URL is absent. `server:smoke` verifies that default-disabled provider/Admin paths fail closed; the required integration suite verifies the enabled PostgreSQL workflows.
 
-Integration 验收覆盖真实 `0001`/`0002`/`0003` migrations、Owner create、Participant A/B verify、Admin decision/winner、exact CSV/JSON artifact、并发幂等、跨 Campaign 隔离、完整 restart、旧 session 失效、fresh session 恢复、Pool shutdown 和性能边界。
+Integration 验收覆盖真实 `0001`/`0002`/`0003`/`0004` migrations、Owner create、Participant A/B verify、Admin decision/winner、exact CSV/JSON artifact、并发幂等、跨 Campaign 隔离、完整 restart、旧 session 失效、fresh session 恢复、active provider finalize-before-pool-close、Pool shutdown 和性能边界。
 
-Integration acceptance covers real `0001`/`0002`/`0003` migrations, Owner creation, Participant A/B verification, Admin decisions and winners, exact CSV/JSON artifacts, concurrent idempotency, cross-Campaign isolation, full restart, old-session invalidation, fresh-session recovery, Pool shutdown, and performance bounds.
+Integration acceptance covers real `0001`/`0002`/`0003`/`0004` migrations, Owner creation, Participant A/B verification, Admin decisions and winners, exact CSV/JSON artifacts, concurrent idempotency, cross-Campaign isolation, full restart, old-session invalidation, fresh-session recovery, active-provider finalization before pool close, pool shutdown, and performance bounds.
 
 ## Rollback
 

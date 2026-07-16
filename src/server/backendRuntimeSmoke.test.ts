@@ -1,4 +1,5 @@
 import { access, mkdtemp, rm } from "node:fs/promises";
+import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,9 +7,9 @@ import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyti
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
-import { runBackendRuntimeSmoke } from "./backendRuntimeSmoke";
+import { runBackendRuntimeSmoke, runBackendRuntimeSmokeCli } from "./backendRuntimeSmoke";
 import { apiRuntimeContractRoutes } from "./routes";
-import { startCampaignOsApiServer } from "./server";
+import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
 
 const productionDatabaseRequiredReferenceKeys = [
   "CAMPAIGN_OS_DATABASE_PACKAGE",
@@ -51,6 +52,33 @@ const expectNoSecretLeak = (value: unknown) => {
   for (const fragment of secretFragments) {
     expect(serialized).not.toContain(fragment);
   }
+};
+
+const getConnectionCount = (server: Server): Promise<number> =>
+  new Promise((resolve, reject) => {
+    server.getConnections((error, count) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(count);
+    });
+  });
+
+const createCapturedLogger = () => {
+  const errors: string[] = [];
+  const logs: string[] = [];
+  const logger: Pick<Console, "error" | "log"> = {
+    error: (...values: unknown[]) => {
+      errors.push(values.map(String).join(" "));
+    },
+    log: (...values: unknown[]) => {
+      logs.push(values.map(String).join(" "));
+    },
+  };
+
+  return { errors, logger, logs };
 };
 
 const expectedSchedulerRuntimeFoundation = {
@@ -844,6 +872,12 @@ describe("backend runtime smoke command", () => {
           status: 200,
         },
       },
+      composition: {
+        contractsCheckPassed: true,
+        entrypointId: "campaign-os-backend-service",
+        healthCheckPassed: true,
+        routeCount: apiRuntimeContractRoutes.length,
+      },
       host: "127.0.0.1",
       durableLocalPersistence: {
         adapterLabel: expect.stringMatching(/^local_json:/),
@@ -968,6 +1002,12 @@ describe("backend runtime smoke command", () => {
         queuePlanCount: 9,
         status: "local_ready",
         valid: true,
+      },
+      resourceCleanup: {
+        activeRequestCount: 0,
+        httpConnectionCount: 0,
+        httpServerListening: false,
+        shutdownState: "stopped",
       },
       requiredBeforeMvpRelease: [],
       observabilityExporterFoundation: expectedObservabilityExporterFoundation,
@@ -1098,6 +1138,116 @@ describe("backend runtime smoke command", () => {
     expectNoSecretLeak(summary);
   });
 
+  it("verifies the real backend composition, safe output, and released HTTP resources", async () => {
+    const runtimeLogs = createCapturedLogger();
+    let serverHandle: CampaignOsApiServerHandle | undefined;
+    const summary = await runBackendRuntimeSmoke({
+      logger: runtimeLogs.logger,
+      serverFactory: async (options) => {
+        serverHandle = await startCampaignOsApiServer(options);
+        return serverHandle;
+      },
+    });
+
+    if (!serverHandle) {
+      throw new Error("Backend runtime smoke did not start the real API server.");
+    }
+
+    expect(summary.composition).toEqual({
+      contractsCheckPassed: true,
+      entrypointId: "campaign-os-backend-service",
+      healthCheckPassed: true,
+      routeCount: apiRuntimeContractRoutes.length,
+    });
+    expect(summary.providerClientReadiness).toMatchObject({
+      activationStatus: "disabled",
+      liveProviderCallsAttempted: false,
+      productionReady: false,
+      providerClientsEnabled: false,
+      providerClientsProvided: false,
+      providerHttpRuntime: {
+        activationStatus: "disabled",
+        liveHttpCallsAttempted: false,
+        productionReady: false,
+        transportProvided: false,
+      },
+    });
+    expect(summary.resourceCleanup).toEqual({
+      activeRequestCount: 0,
+      httpConnectionCount: 0,
+      httpServerListening: false,
+      shutdownState: "stopped",
+    });
+    expect(serverHandle.server.listening).toBe(false);
+    expect(serverHandle.getReadiness().shutdownState).toMatchObject({
+      activeRequestCount: 0,
+      state: "stopped",
+    });
+    await expect(getConnectionCount(serverHandle.server)).resolves.toBe(0);
+
+    const cliLogs = createCapturedLogger();
+    const exitCode = await runBackendRuntimeSmokeCli({
+      logger: cliLogs.logger,
+      smokeRunner: async () => summary,
+    });
+    const expectedSafeOutput = {
+      composition: summary.composition,
+      event: "backend_runtime_smoke.completed",
+      providerVerification: {
+        defaultEnabled: false,
+        liveCallAttempted: false,
+        productionProviderApproved: false,
+        status: "disabled",
+        transportProvided: false,
+      },
+      resources: summary.resourceCleanup,
+      status: "passed",
+      traceIds: summary.traceIds,
+    };
+
+    expect(runtimeLogs.errors).toEqual([]);
+    expect(runtimeLogs.logs).toHaveLength(1);
+    expect(JSON.parse(runtimeLogs.logs[0] ?? "{}")).toEqual(expectedSafeOutput);
+    expect(exitCode).toBe(0);
+    expect(cliLogs.errors).toEqual([]);
+    expect(cliLogs.logs).toHaveLength(1);
+    expect(JSON.parse(cliLogs.logs[0] ?? "{}")).toEqual(expectedSafeOutput);
+
+    const serializedLogs = [...runtimeLogs.logs, ...cliLogs.logs].join("\n");
+    expect(serializedLogs).not.toMatch(
+      /https?:\/\/|\/api\/|CAMPAIGN_OS_|credential-ref|authorization|raw[-_ ]?payload|sandbox|stack/i,
+    );
+  });
+
+  it("emits a bounded CLI failure without raw errors or stacks", async () => {
+    const cliLogs = createCapturedLogger();
+    const unsafeError = new Error(
+      "Provider failed at http://user:password@127.0.0.1:5195/verify?token=raw-provider-token "
+      + "CAMPAIGN_OS_STAGE_PROVIDER_CREDENTIAL_REF=credential-ref:stage-provider raw payload",
+    );
+    unsafeError.stack = `Error: ${unsafeError.message}\n    at /Users/private/provider-runtime.ts:42:1`;
+
+    const exitCode = await runBackendRuntimeSmokeCli({
+      logger: cliLogs.logger,
+      smokeRunner: async () => {
+        throw unsafeError;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(cliLogs.logs).toEqual([]);
+    expect(cliLogs.errors).toHaveLength(1);
+    expect(JSON.parse(cliLogs.errors[0] ?? "{}")).toEqual({
+      errorCode: "BACKEND_RUNTIME_SMOKE_FAILED",
+      event: "backend_runtime_smoke.failed",
+      status: "failed",
+      traceId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+    expect(cliLogs.errors.join("\n")).not.toMatch(
+      /https?:\/\/|CAMPAIGN_OS_|credential-ref|authorization|raw[-_ ]?payload|token=|\/Users\/|stack/i,
+    );
+  });
+
   it("keeps durable local smoke output free of persistence paths", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-smoke-path-redaction-"));
 
@@ -1167,6 +1317,24 @@ describe("backend runtime smoke command", () => {
         };
       },
     })).rejects.toBe(stopFailure);
+
+    if (!generatedPersistenceDir) {
+      throw new Error("Smoke server did not receive an automatically generated persistence directory.");
+    }
+
+    await expect(access(generatedPersistenceDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("removes the generated persistence directory when server startup fails", async () => {
+    const startFailure = new Error("Injected smoke server start failure.");
+    let generatedPersistenceDir: string | undefined;
+
+    await expect(runBackendRuntimeSmoke({
+      serverFactory: async (options) => {
+        generatedPersistenceDir = options?.env?.CAMPAIGN_OS_PERSISTENCE_DIR;
+        throw startFailure;
+      },
+    })).rejects.toBe(startFailure);
 
     if (!generatedPersistenceDir) {
       throw new Error("Smoke server did not receive an automatically generated persistence directory.");

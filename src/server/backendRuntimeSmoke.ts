@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,14 @@ export interface BackendRuntimeSmokeOptions {
   port?: number;
   serverFactory?: typeof startCampaignOsApiServer;
   shutdownTimeoutMs?: number;
+}
+
+export interface BackendRuntimeSmokeCliOptions {
+  logger?: Pick<Console, "error" | "log">;
+  smokeOptions?: BackendRuntimeSmokeOptions;
+  smokeRunner?: (
+    options?: BackendRuntimeSmokeOptions,
+  ) => Promise<BackendRuntimeSmokeSummary>;
 }
 
 class BackendRuntimeSmokeCleanupError extends Error {
@@ -625,6 +634,7 @@ export interface BackendRuntimeSmokeSummary {
     contracts: BackendRuntimeSmokeCheck;
     health: BackendRuntimeSmokeCheck;
   };
+  composition: BackendRuntimeSmokeCompositionSummary;
   host: string;
   durableLocalPersistence: BackendRuntimeSmokeDurableLocalPersistenceSummary;
   liveSideEffectsEnabled: boolean;
@@ -646,6 +656,7 @@ export interface BackendRuntimeSmokeSummary {
   productionReady: boolean;
   providerIndexerFoundation: BackendRuntimeSmokeProviderIndexerFoundationSummary;
   queueRuntimeFoundation: BackendRuntimeSmokeQueueRuntimeFoundationSummary;
+  resourceCleanup: BackendRuntimeSmokeResourceCleanupSummary;
   requiredBeforeMvpRelease: string[];
   requiredBeforeProduction: string[];
   schedulerRuntimeFoundation: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
@@ -659,6 +670,35 @@ export interface BackendRuntimeSmokeSummary {
   workerIdempotencyStoreFoundation: BackendRuntimeSmokeWorkerIdempotencyStoreFoundationSummary;
   workerLeaseStoreFoundation: BackendRuntimeSmokeWorkerLeaseStoreFoundationSummary;
   workerSchedulerFoundation: BackendRuntimeSmokeWorkerSchedulerFoundationSummary;
+}
+
+export interface BackendRuntimeSmokeCompositionSummary {
+  contractsCheckPassed: true;
+  entrypointId: "campaign-os-backend-service";
+  healthCheckPassed: true;
+  routeCount: number;
+}
+
+export interface BackendRuntimeSmokeResourceCleanupSummary {
+  activeRequestCount: 0;
+  httpConnectionCount: 0;
+  httpServerListening: false;
+  shutdownState: "stopped";
+}
+
+export interface BackendRuntimeSmokeSafeOutput {
+  composition: BackendRuntimeSmokeCompositionSummary;
+  event: "backend_runtime_smoke.completed";
+  providerVerification: {
+    defaultEnabled: false;
+    liveCallAttempted: false;
+    productionProviderApproved: false;
+    status: "disabled";
+    transportProvided: false;
+  };
+  resources: BackendRuntimeSmokeResourceCleanupSummary;
+  status: "passed";
+  traceIds: BackendRuntimeSmokeSummary["traceIds"];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -2433,6 +2473,51 @@ const withDurableLocalPersistenceEnv = async (
   };
 };
 
+const removeGeneratedPersistenceDir = async (cleanupDir: string | undefined): Promise<void> => {
+  if (cleanupDir) {
+    await rm(cleanupDir, { force: true, recursive: true });
+  }
+};
+
+const getBackendRuntimeConnectionCount = (
+  server: CampaignOsApiServerHandle,
+): Promise<number> =>
+  new Promise((resolve, reject) => {
+    server.server.getConnections((error, count) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(count);
+    });
+  });
+
+const stopAndAssertBackendRuntimeResourcesReleased = async (
+  server: CampaignOsApiServerHandle,
+): Promise<BackendRuntimeSmokeResourceCleanupSummary> => {
+  await server.stop();
+
+  const httpConnectionCount = await getBackendRuntimeConnectionCount(server);
+  const shutdownState = server.getReadiness().shutdownState;
+
+  if (
+    server.server.listening
+    || httpConnectionCount !== 0
+    || shutdownState.activeRequestCount !== 0
+    || shutdownState.state !== "stopped"
+  ) {
+    throw new BackendRuntimeSmokeCleanupError(1);
+  }
+
+  return {
+    activeRequestCount: 0,
+    httpConnectionCount: 0,
+    httpServerListening: false,
+    shutdownState: "stopped",
+  };
+};
+
 const readPersistenceHealth = (payload: SmokePayload): Record<string, unknown> | undefined =>
   readNestedRecord(payload.data, ["persistence"]);
 
@@ -2672,14 +2757,12 @@ const runDurableLocalPersistenceSmoke = async ({
   env,
   fetchImpl,
   host,
-  logger,
   server,
   shutdownTimeoutMs,
 }: {
   env: Record<string, string | undefined>;
   fetchImpl: typeof fetch;
   host: string;
-  logger: BackendRuntimeSmokeOptions["logger"];
   server: CampaignOsApiServerHandle;
   shutdownTimeoutMs?: number;
 }): Promise<BackendRuntimeSmokeDurableLocalPersistenceSummary> => {
@@ -2773,12 +2856,12 @@ const runDurableLocalPersistenceSmoke = async ({
   );
 
   assertDurableLocalPersistenceHealth(firstPersistence, 4);
-  await server.stop();
+  await stopAndAssertBackendRuntimeResourcesReleased(server);
 
   const restartedServer = await startCampaignOsApiServer({
     env,
     host,
-    logger,
+    logger: false,
     port: 0,
     shutdownTimeoutMs,
   });
@@ -2809,7 +2892,7 @@ const runDurableLocalPersistenceSmoke = async ({
       wroteRecordKinds,
     };
   } finally {
-    await restartedServer.stop();
+    await stopAndAssertBackendRuntimeResourcesReleased(restartedServer);
   }
 };
 
@@ -3441,15 +3524,33 @@ export const runBackendRuntimeSmoke = async ({
   shutdownTimeoutMs,
 }: BackendRuntimeSmokeOptions = {}): Promise<BackendRuntimeSmokeSummary> => {
   const durableEnv = await withDurableLocalPersistenceEnv(env);
-  const server = await serverFactory({
-    env: durableEnv.env,
-    host,
-    logger,
-    port,
-    shutdownTimeoutMs,
-  });
+  let server: CampaignOsApiServerHandle;
 
-  let summaryDraft: Omit<BackendRuntimeSmokeSummary, "shutdownState"> | undefined;
+  try {
+    server = await serverFactory({
+      env: durableEnv.env,
+      host,
+      logger: false,
+      port,
+      shutdownTimeoutMs,
+    });
+  } catch (error) {
+    try {
+      await removeGeneratedPersistenceDir(durableEnv.cleanupDir);
+    } catch {
+      throw new BackendRuntimeSmokeCleanupError(1);
+    }
+
+    throw error;
+  }
+
+  const backendEntrypointId = server.getReadiness().readiness.backend.entrypointId;
+
+  let resourceCleanup: BackendRuntimeSmokeResourceCleanupSummary | undefined;
+  let summaryDraft: Omit<
+    BackendRuntimeSmokeSummary,
+    "resourceCleanup" | "shutdownState"
+  > | undefined;
 
   try {
     const health = await createSmokeCheck({
@@ -3520,6 +3621,7 @@ export const runBackendRuntimeSmoke = async ({
       || !contracts.check.ok
       || !health.check.activationPresent
       || !contracts.check.activationPresent
+      || backendEntrypointId !== "campaign-os-backend-service"
       || !isExplicitFalse(activation, "productionReady")
       || !isExplicitFalse(activation, "liveSideEffectsEnabled")
       || !isReleaseScopeSmokeReady(activation, deploymentHandoff)
@@ -3571,7 +3673,6 @@ export const runBackendRuntimeSmoke = async ({
       env: durableEnv.env,
       fetchImpl,
       host,
-      logger,
       server,
       shutdownTimeoutMs,
     });
@@ -3585,6 +3686,12 @@ export const runBackendRuntimeSmoke = async ({
         contracts: contracts.check,
         health: health.check,
       },
+      composition: {
+        contractsCheckPassed: true,
+        entrypointId: "campaign-os-backend-service",
+        healthCheckPassed: true,
+        routeCount: productionBackendReadiness.routeCount,
+      },
       durableLocalPersistence,
       host,
       liveSideEffectsEnabled: getBoolean(activation, "liveSideEffectsEnabled"),
@@ -3596,9 +3703,9 @@ export const runBackendRuntimeSmoke = async ({
       productionBackendReadiness,
       providerClientReadiness,
       port: new URL(server.url).port ? Number(new URL(server.url).port) : 0,
-          projectOwnerFundingProofReviewBridge: projectOwnerFundingProofReviewBridgeSample,
-          productionDatabaseHandoffReadiness: productionDatabaseHandoffReadinessSample,
-          rewardDistributionHandoffRuntime: rewardDistributionHandoffRuntimeSample,
+      projectOwnerFundingProofReviewBridge: projectOwnerFundingProofReviewBridgeSample,
+      productionDatabaseHandoffReadiness: productionDatabaseHandoffReadinessSample,
+      rewardDistributionHandoffRuntime: rewardDistributionHandoffRuntimeSample,
       futureProduction: getStringArray(deploymentHandoff, "futureProduction"),
       futureProductionBlockerIds: getStringArray(activation, "futureProductionBlockerIds"),
       mvpReleaseBlockerIds: getStringArray(activation, "mvpReleaseBlockerIds"),
@@ -3624,17 +3731,15 @@ export const runBackendRuntimeSmoke = async ({
     let cleanupError: unknown;
 
     try {
-      await server.stop();
+      resourceCleanup = await stopAndAssertBackendRuntimeResourcesReleased(server);
     } catch (error) {
       stopError = error;
     }
 
-    if (durableEnv.cleanupDir) {
-      try {
-        await rm(durableEnv.cleanupDir, { force: true, recursive: true });
-      } catch (error) {
-        cleanupError = error;
-      }
+    try {
+      await removeGeneratedPersistenceDir(durableEnv.cleanupDir);
+    } catch (error) {
+      cleanupError = error;
     }
 
     if (stopError && cleanupError) {
@@ -3654,19 +3759,65 @@ export const runBackendRuntimeSmoke = async ({
     throw new Error("Campaign OS backend runtime smoke check did not produce a summary.");
   }
 
-  return {
+  if (!resourceCleanup) {
+    throw new BackendRuntimeSmokeCleanupError(1);
+  }
+
+  const summary: BackendRuntimeSmokeSummary = {
     ...summaryDraft,
-    shutdownState: server.getReadiness().shutdownState.state,
+    resourceCleanup,
+    shutdownState: resourceCleanup.shutdownState,
   };
+
+  if (logger) {
+    logger.log(JSON.stringify(createBackendRuntimeSmokeSafeOutput(summary)));
+  }
+
+  return summary;
+};
+
+const createBackendRuntimeSmokeSafeOutput = (
+  summary: BackendRuntimeSmokeSummary,
+): BackendRuntimeSmokeSafeOutput => ({
+  composition: summary.composition,
+  event: "backend_runtime_smoke.completed",
+  providerVerification: {
+    defaultEnabled: false,
+    liveCallAttempted: summary.providerClientReadiness.liveProviderCallsAttempted,
+    productionProviderApproved: summary.providerClientReadiness.productionReady,
+    status: "disabled",
+    transportProvided: false,
+  },
+  resources: summary.resourceCleanup,
+  status: summary.status,
+  traceIds: summary.traceIds,
+});
+
+export const runBackendRuntimeSmokeCli = async ({
+  logger = console,
+  smokeOptions,
+  smokeRunner = runBackendRuntimeSmoke,
+}: BackendRuntimeSmokeCliOptions = {}): Promise<0 | 1> => {
+  try {
+    const summary = await smokeRunner({
+      ...(smokeOptions ?? {}),
+      logger: false,
+    });
+    logger.log(JSON.stringify(createBackendRuntimeSmokeSafeOutput(summary)));
+    return 0;
+  } catch {
+    logger.error(JSON.stringify({
+      errorCode: "BACKEND_RUNTIME_SMOKE_FAILED",
+      event: "backend_runtime_smoke.failed",
+      status: "failed",
+      traceId: randomUUID(),
+    }));
+    return 1;
+  }
 };
 
 if (process.argv.includes("--run")) {
-  runBackendRuntimeSmoke()
-    .then((summary) => {
-      console.log(JSON.stringify(summary, null, 2));
-    })
-    .catch((error: unknown) => {
-      console.error("[campaign-os-api-runtime] smoke failed", error);
-      process.exitCode = 1;
-    });
+  void runBackendRuntimeSmokeCli().then((exitCode) => {
+    process.exitCode = exitCode;
+  });
 }

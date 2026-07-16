@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -8,36 +10,62 @@ import {
   runPostgresMigrations,
   type PostgresMigrationPool,
 } from "./postgresMigration";
+import {
+  createProviderHttpExecutionMaterialResolver,
+  type ProviderHttpExecutionMaterialResolver,
+} from "./providerHttpExecutionMaterial";
+import {
+  createProviderHttpFetchTransport,
+  type ProviderHttpFetchTransport,
+} from "./providerHttpFetchTransport";
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
-import type { ProviderHttpTransport } from "./providerHttpTransport";
+import {
+  startProviderVerificationSandbox,
+  type ProviderVerificationSandboxHandle,
+  type ProviderVerificationSandboxScenario,
+} from "./providerVerificationSandbox";
 import {
   startCampaignOsApiServer,
   type CampaignOsApiServerHandle,
 } from "./server";
 import type { ParticipantJourneyProjection } from "./participantJourney";
-import { resolveTaskVerificationConfig } from "./taskVerificationConfig";
+import {
+  resolveTaskVerificationConfig,
+  type TaskVerificationBinding,
+} from "./taskVerificationConfig";
 
 const TEST_DATABASE_URL = process.env.CAMPAIGN_OS_TEST_DATABASE_URL?.trim();
 const REQUIRE_POSTGRES_TESTS = process.env.CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS?.trim() === "1";
+const REQUIRE_PROVIDER_TESTS = process.env.CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS?.trim() === "1";
 
 if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
   throw new Error(
     "PostgreSQL acceptance requires CAMPAIGN_OS_TEST_DATABASE_URL when CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1.",
   );
 }
+if (REQUIRE_PROVIDER_TESTS && !REQUIRE_POSTGRES_TESTS) {
+  throw new Error(
+    "Provider acceptance requires CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1 when CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1.",
+  );
+}
+if (REQUIRE_PROVIDER_TESTS && !TEST_DATABASE_URL) {
+  throw new Error(
+    "Provider acceptance requires CAMPAIGN_OS_TEST_DATABASE_URL when CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1.",
+  );
+}
 
 const integrationSuite = TEST_DATABASE_URL ? describe : describe.skip;
 
-const CONTROLLED_TASK_VERIFICATION_BINDING_ID = "postgres-controlled-on-chain";
-const CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV = "CAMPAIGN_OS_POSTGRES_TEST_PROVIDER_ENDPOINT";
-const CONTROLLED_TASK_VERIFICATION_ENDPOINT = "http://127.0.0.1:4179/controlled-verification";
-const CONTROLLED_TASK_VERIFICATION_BINDING = Object.freeze({
+const STAGE_PROVIDER_URL_ENV = "CAMPAIGN_OS_STAGE_PROVIDER_URL";
+const CONTROLLED_ON_CHAIN_BINDING_ID = "postgres-stage-on-chain";
+const CONTROLLED_DAPP_API_BINDING_ID = "postgres-stage-dapp-api";
+const CONTROLLED_ON_CHAIN_BINDING = Object.freeze({
   degradationPolicy: "pending",
   enabled: true,
-  endpointEnvKey: CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV,
+  endpointEnvKey: STAGE_PROVIDER_URL_ENV,
   endpointId: "aefinder-aelfscan-indexer-query",
   evidenceSource: "AELFSCAN",
-  id: CONTROLLED_TASK_VERIFICATION_BINDING_ID,
+  id: CONTROLLED_ON_CHAIN_BINDING_ID,
   maxAttempts: 3,
   maxResponseBytes: 16_384,
   providerFamily: "aefinder",
@@ -47,16 +75,28 @@ const CONTROLLED_TASK_VERIFICATION_BINDING = Object.freeze({
   revision: 1,
   timeoutMs: 1_000,
   verificationType: "ON_CHAIN",
-});
-const CONTROLLED_TASK_VERIFICATION_CONFIG = resolveTaskVerificationConfig({
-  bindingsJson: JSON.stringify([CONTROLLED_TASK_VERIFICATION_BINDING]),
-  enablement: "explicitly-enabled",
-  env: {
-    [CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV]: CONTROLLED_TASK_VERIFICATION_ENDPOINT,
-  },
-  environment: "local",
-  providerHttpTransportProvided: true,
-});
+} satisfies TaskVerificationBinding);
+const CONTROLLED_DAPP_API_BINDING = Object.freeze({
+  degradationPolicy: "pending",
+  enabled: true,
+  endpointEnvKey: STAGE_PROVIDER_URL_ENV,
+  endpointId: "dapp-api-verification-status",
+  evidenceSource: "DAPP_API",
+  id: CONTROLLED_DAPP_API_BINDING_ID,
+  maxAttempts: 3,
+  maxResponseBytes: 16_384,
+  providerFamily: "ebridge",
+  providerGroupId: "dapp-api-adapters",
+  requestMappingId: "provider-http-request-map:dapp-api-status-v1",
+  responseMappingId: "provider-http-response-map:dapp-api-status-v1",
+  revision: 1,
+  timeoutMs: 1_000,
+  verificationType: "DAPP_API",
+} satisfies TaskVerificationBinding);
+const CONTROLLED_TASK_VERIFICATION_BINDINGS = Object.freeze([
+  CONTROLLED_ON_CHAIN_BINDING,
+  CONTROLLED_DAPP_API_BINDING,
+]);
 const CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME = createProviderHttpRuntimeSummary({
   env: {
     CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:postgres-controlled-provider",
@@ -76,54 +116,6 @@ const CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME = createProviderHttpRuntimeS
   profileId: "production-required",
   transportProvided: true,
 });
-type ControlledTaskVerificationOutcome = "completed" | "failed" | "manual_review" | "pending";
-const controlledTaskVerificationOutcomes = new Map<string, ControlledTaskVerificationOutcome>();
-const controlledTaskVerificationTransport: ProviderHttpTransport = (request) => {
-  const outcome = controlledTaskVerificationOutcomes.get(request.taskId) ?? "completed";
-  const evidenceHash = createHash("sha256")
-    .update(`${request.taskId}:${request.idempotencyRef}`)
-    .digest("hex");
-
-  if (outcome === "pending") {
-    return {
-      body: { status: "pending" },
-      durationMs: 1,
-      statusCode: 202,
-      timedOut: false,
-    };
-  }
-
-  if (outcome === "failed") {
-    return {
-      body: { status: "completed", verified: false },
-      durationMs: 1,
-      statusCode: 200,
-      timedOut: false,
-    };
-  }
-
-  if (outcome === "manual_review") {
-    return {
-      body: { status: "unrecognized" },
-      durationMs: 1,
-      statusCode: 200,
-      timedOut: false,
-    };
-  }
-
-  return {
-    body: {
-      eligible: true,
-      evidenceHash,
-      evidenceRef: `evidence-ref:postgres-controlled-${evidenceHash.slice(0, 24)}`,
-      status: "completed",
-      verified: true,
-    },
-    durationMs: 1,
-    statusCode: 200,
-    timedOut: false,
-  };
-};
 const controlledOnChainEvidenceRule = (
   rule: Record<string, string | number | boolean>,
 ): Record<string, string | number | boolean> => {
@@ -144,10 +136,20 @@ const controlledOnChainEvidenceRule = (
     expectedValue: true,
     ...(typeof rule.methodName === "string" ? { methodName: rule.methodName } : {}),
     ...(minimum !== undefined ? { minimum } : {}),
-    providerBindingId: CONTROLLED_TASK_VERIFICATION_BINDING_ID,
+    providerBindingId: CONTROLLED_ON_CHAIN_BINDING_ID,
     source: "AELFSCAN",
   };
 };
+const controlledDappApiEvidenceRule = (
+  rule: Record<string, string | number | boolean>,
+): Record<string, string | number | boolean> => ({
+  action: typeof rule.action === "string" ? rule.action : "completed",
+  expectedField: "eligible",
+  expectedType: "boolean",
+  expectedValue: true,
+  providerBindingId: CONTROLLED_DAPP_API_BINDING_ID,
+  source: "DAPP_API",
+});
 
 interface ApiEnvelope<T> {
   data?: T;
@@ -396,6 +398,7 @@ interface VerificationData {
 interface AttemptOnlyVerificationData {
   payload: {
     campaignId: string;
+    diagnosticCodes: string[];
     outcome: "failed" | "manual_review" | "pending";
     pointsAwarded: 0;
     status: "failed" | "manual_review" | "pending";
@@ -473,7 +476,15 @@ interface AdminReviewDetailData {
   snapshot: {
     campaignId: string;
     completions: Array<{ id: string; taskId: string }>;
-    evidence: Array<{ completionId?: string; id: string; taskId: string }>;
+    evidence: Array<{
+      completionId: string | null;
+      evidenceHash: string;
+      evidenceRef: string | null;
+      id: string;
+      liveProviderExecuted?: true;
+      taskId: string;
+      verificationAttemptId?: string;
+    }>;
     fingerprint: string;
     fingerprintVersion: string;
     participantId: string;
@@ -614,15 +625,21 @@ const timestampMillis = (value: unknown) =>
   value instanceof Date ? value.getTime() : Date.parse(String(value));
 
 integrationSuite("PostgreSQL Campaign API runtime", () => {
+  interface ProviderTransportStats {
+    callCount: number;
+  }
+
   const databaseName = `campaign_os_m239_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const adminOperatorAddress = `2F4PostgresReview${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const shutdownTimings: number[] = [];
   const timings: number[] = [];
   const servers = new Set<CampaignOsApiServerHandle>();
+  const transports = new Set<ProviderHttpFetchTransport>();
+  const transportByServer = new WeakMap<CampaignOsApiServerHandle, ProviderHttpFetchTransport>();
+  const transportStats = new WeakMap<ProviderHttpFetchTransport, ProviderTransportStats>();
   let adminPool: pg.Pool;
-  let adminMembershipCampaignIds: readonly string[] | null = null;
   let databaseUrl = "";
-  let participantPreviewCampaignIds = "";
+  let providerSandbox: ProviderVerificationSandboxHandle | undefined;
   let sslMode = "verify-full";
 
   const recordTiming = async <T>(
@@ -806,7 +823,16 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     selectedDatabaseUrl = databaseUrl,
     connectTimeoutMs = "5000",
   ) => {
+    if (!providerSandbox) {
+      throw new Error("Provider acceptance sandbox prerequisite is unavailable.");
+    }
     const env: Record<string, string | undefined> = {
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
+        active: true,
+        campaignIds: null,
+        roleIds: ["review_operator"],
+        subjectAddress: adminOperatorAddress,
+      }]),
       CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
       CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
       CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: connectTimeoutMs,
@@ -814,45 +840,129 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       CAMPAIGN_OS_DATABASE_POOL_MAX: "10",
       CAMPAIGN_OS_DATABASE_SSL_MODE: sslMode,
       CAMPAIGN_OS_DATABASE_URL: selectedDatabaseUrl,
-      CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON: JSON.stringify([
-        CONTROLLED_TASK_VERIFICATION_BINDING,
-      ]),
+      CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS: "*",
+      CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON: JSON.stringify(
+        CONTROLLED_TASK_VERIFICATION_BINDINGS,
+      ),
       CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "explicitly-enabled",
-      [CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV]: CONTROLLED_TASK_VERIFICATION_ENDPOINT,
+      [STAGE_PROVIDER_URL_ENV]: providerSandbox.verifyUrl,
     };
-    Object.defineProperty(env, "CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON", {
-      enumerable: true,
-      get: () => JSON.stringify([{
-        active: true,
-        campaignIds: adminMembershipCampaignIds,
-        roleIds: ["review_operator"],
-        subjectAddress: adminOperatorAddress,
-      }]),
-    });
-    Object.defineProperty(env, "CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS", {
-      enumerable: true,
-      get: () => participantPreviewCampaignIds,
-    });
-    const server = await startCampaignOsApiServer({
+    const taskVerificationConfig = resolveTaskVerificationConfig({
+      bindingsJson: env.CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON,
+      enablement: env.CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT,
       env,
-      logger: false,
-      port: 0,
-      runtimeFactory: (options) => createCampaignOsApiRuntime({
-        ...options,
-        taskVerificationConfig: CONTROLLED_TASK_VERIFICATION_CONFIG,
-        taskVerificationProviderRuntime: CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME,
-      }),
-      shutdownTimeoutMs: 10_000,
-      taskVerificationTransport: controlledTaskVerificationTransport,
+      environment: "local",
+      providerHttpTransportProvided: true,
     });
+    if (
+      !taskVerificationConfig.enabled
+      || !taskVerificationConfig.hasLiveBindings
+      || !taskVerificationConfig.valid
+    ) {
+      throw new Error("Provider acceptance prerequisite configuration is invalid.");
+    }
+    const onChainResolver = createProviderHttpExecutionMaterialResolver({
+      binding: CONTROLLED_ON_CHAIN_BINDING,
+      environment: "local",
+      lookup: { get: (key) => env[key] },
+    });
+    const dappApiResolver = createProviderHttpExecutionMaterialResolver({
+      binding: CONTROLLED_DAPP_API_BINDING,
+      environment: "local",
+      lookup: { get: (key) => env[key] },
+    });
+    const materialResolver: ProviderHttpExecutionMaterialResolver = (
+      plan,
+      requestMaterial,
+      context,
+    ) => (plan.verificationType === "DAPP_API" ? dappApiResolver : onChainResolver)(
+      plan,
+      requestMaterial,
+      context,
+    );
+    const stats: ProviderTransportStats = { callCount: 0 };
+    const transport = createProviderHttpFetchTransport({
+      drainTimeoutMs: 2_000,
+      fetch: (input, init) => {
+        stats.callCount += 1;
+        return globalThis.fetch(input, init);
+      },
+      materialResolver,
+    });
+    transportStats.set(transport, stats);
+    transports.add(transport);
+    let server: CampaignOsApiServerHandle;
+    try {
+      server = await startCampaignOsApiServer({
+        env,
+        logger: false,
+        port: 0,
+        runtimeFactory: (options) => createCampaignOsApiRuntime({
+          ...options,
+          taskVerificationConfig,
+          taskVerificationProviderRuntime: CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME,
+        }),
+        shutdownTimeoutMs: 10_000,
+        taskVerificationTransport: transport,
+      });
+    } catch (error) {
+      await transport.close();
+      transports.delete(transport);
+      throw error;
+    }
 
     servers.add(server);
+    transportByServer.set(server, transport);
     return server;
   };
 
   const stopServer = async (server: CampaignOsApiServerHandle) => {
     await recordTiming(() => server.stop(), shutdownTimings);
     servers.delete(server);
+    const transport = transportByServer.get(server);
+    if (transport) {
+      const closeResult = await transport.close();
+      const state = transport.state();
+      if (
+        closeResult.status !== "drained"
+        || closeResult.activeCallCount !== 0
+        || state.accepting
+        || state.activeCallCount !== 0
+      ) {
+        throw new Error("Provider acceptance transport did not drain during server shutdown.");
+      }
+      transports.delete(transport);
+    }
+  };
+
+  const requireServerTransport = (server: CampaignOsApiServerHandle) => {
+    const transport = transportByServer.get(server);
+    if (!transport) {
+      throw new Error("Provider acceptance server transport is unavailable.");
+    }
+    return transport;
+  };
+
+  const requireServerTransportStats = (server: CampaignOsApiServerHandle) => {
+    const stats = transportStats.get(requireServerTransport(server));
+    if (!stats) {
+      throw new Error("Provider acceptance transport stats are unavailable.");
+    }
+    return stats;
+  };
+
+  const waitForSandboxState = async (
+    predicate: (sandbox: ProviderVerificationSandboxHandle) => boolean,
+    timeoutMs = 2_000,
+  ) => {
+    const startedAt = performance.now();
+    while (performance.now() - startedAt <= timeoutMs) {
+      if (providerSandbox && predicate(providerSandbox)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("Provider acceptance sandbox state did not settle within the deadline.");
   };
 
   const waitForRuntimeDatabaseConnectionsToClose = async () => {
@@ -1140,6 +1250,15 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
   };
 
   beforeAll(async () => {
+    providerSandbox = await startProviderVerificationSandbox({
+      host: "127.0.0.1",
+      oversizedResponseBytes: 64 * 1_024,
+      port: 0,
+      shutdownTimeoutMs: 1_000,
+      streamChunkBytes: 4 * 1_024,
+      streamIntervalMs: 2,
+      timeoutFixtureMs: 10_000,
+    });
     const baseUrl = new URL(TEST_DATABASE_URL!);
     sslMode = process.env.CAMPAIGN_OS_DATABASE_SSL_MODE?.trim()
       || (isLoopback(baseUrl.hostname) ? "disable" : "verify-full");
@@ -1231,6 +1350,22 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       .map((result) => result.reason));
     servers.clear();
 
+    const transportResults = await Promise.allSettled(
+      Array.from(transports, (transport) => transport.close()),
+    );
+    cleanupErrors.push(...transportResults
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason));
+    transports.clear();
+
+    if (providerSandbox) {
+      try {
+        await providerSandbox.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+
     if (adminPool) {
       try {
         await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
@@ -1255,6 +1390,13 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     if (REQUIRE_POSTGRES_TESTS) {
       expect(TEST_DATABASE_URL).toBeDefined();
     }
+    if (REQUIRE_PROVIDER_TESTS) {
+      expect(REQUIRE_POSTGRES_TESTS).toBe(true);
+      expect(providerSandbox?.state()).toMatchObject({
+        accepting: true,
+        lifecycle: "listening",
+      });
+    }
   });
 
   it("recovers canonical Owner, Participant, Admin, and artifact facts after a full PostgreSQL restart", async () => {
@@ -1263,16 +1405,13 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       transportProvided: true,
       valid: true,
     });
-    expect(CONTROLLED_TASK_VERIFICATION_CONFIG).toMatchObject({
-      enabled: true,
-      hasLiveBindings: true,
-      status: "ready",
-      valid: true,
-    });
-    adminMembershipCampaignIds = null;
-    participantPreviewCampaignIds = "";
+    expect(CONTROLLED_TASK_VERIFICATION_BINDINGS).toHaveLength(2);
+    expect(CONTROLLED_TASK_VERIFICATION_BINDINGS.every(
+      ({ endpointEnvKey }) => endpointEnvKey === STAGE_PROVIDER_URL_ENV,
+    )).toBe(true);
     const runtimeWriteWindowStartedAt = Date.now();
     const firstServer = await startServer();
+    const firstTransport = requireServerTransport(firstServer);
     const sessionA = await issueProjectOwnerSession(
       firstServer,
       { fixtureId: "sess-aa-001" },
@@ -1297,8 +1436,6 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       method: "POST",
     });
     const campaignId = created.payload.id;
-    expect(adminMembershipCampaignIds).toBeNull();
-    adminMembershipCampaignIds = [campaignId];
     const task = await requestJson<TaskCreateData>(firstServer, `/api/campaigns/${campaignId}/tasks`, {
       body: JSON.stringify({
         evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1, source: "AELFSCAN" }),
@@ -1316,13 +1453,9 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expectedField: "verified",
       expectedType: "boolean",
       expectedValue: true,
-      providerBindingId: CONTROLLED_TASK_VERIFICATION_BINDING_ID,
+      providerBindingId: CONTROLLED_ON_CHAIN_BINDING_ID,
       source: "AELFSCAN",
     });
-    expect(CONTROLLED_TASK_VERIFICATION_CONFIG.resolveBinding(
-      String(task.payload.evidenceRule.providerBindingId),
-      "ON_CHAIN",
-    ).status).toBe("resolved");
     const previewDbBefore = await (async () => {
       const pool = createAuditPool();
 
@@ -1345,7 +1478,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       status: "ready",
     });
     expect(previewHealthBefore.taskVerificationRuntime).toEqual({
-      bindingCount: 1,
+      bindingCount: 2,
       enabled: true,
       providerStatus: "configured",
       requiredSchemaVersion: "0004_live_provider_task_verification",
@@ -1456,45 +1589,49 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/campaigns/${campaignId}/tasks`,
       {
         body: JSON.stringify({
-          evidenceRule: controlledOnChainEvidenceRule(supportedSuggestion.evidenceRule),
+          evidenceRule: controlledDappApiEvidenceRule({ action: "completed" }),
           points: supportedSuggestion.points,
-          required: supportedSuggestion.required,
-          templateCode: supportedSuggestion.templateCode,
-          verificationType: supportedSuggestion.verificationType,
-          walletCompatibility: supportedSuggestion.walletCompatibility,
+          required: false,
+          templateCode: "provider_dapp_completed",
+          verificationType: "DAPP_API",
+          walletCompatibility: "ANY",
         }),
         headers: sessionA.headers("trace-pg-runtime-adopt"),
         method: "POST",
       },
     );
     const adoptedTaskId = adoptedTask.campaignDbTask.taskId;
-    const hiddenCampaign = await requestJson<CampaignCreateData>(firstServer, "/api/campaigns", {
+    expect(adoptedTask.payload.evidenceRule).toMatchObject({
+      providerBindingId: CONTROLLED_DAPP_API_BINDING_ID,
+      source: "DAPP_API",
+    });
+    const policyCampaign = await requestJson<CampaignCreateData>(firstServer, "/api/campaigns", {
       body: JSON.stringify({
         duration: "2026-08-15/2026-08-28",
         endTime: "2026-08-28T23:59:59Z",
-        goal: "Remain hidden from Participant preview",
+        goal: "Exercise Participant wallet policy",
         ownerAddress,
-        projectId: "postgres-hidden-project",
-        rewardDescription: "This draft must stay server-only.",
+        projectId: "postgres-policy-project",
+        rewardDescription: "This draft exercises wallet compatibility.",
         startTime: "2026-08-15T00:00:00Z",
         walletPolicy: "EOA_ONLY",
       }),
-      headers: sessionA.headers("trace-pg-hidden-create"),
+      headers: sessionA.headers("trace-pg-policy-create"),
       method: "POST",
     });
-    const hiddenTask = await requestJson<TaskCreateData>(
+    const policyTask = await requestJson<TaskCreateData>(
       firstServer,
-      `/api/campaigns/${hiddenCampaign.payload.id}/tasks`,
+      `/api/campaigns/${policyCampaign.payload.id}/tasks`,
       {
         body: JSON.stringify({
           evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1, source: "AELFSCAN" }),
           points: 10,
           required: true,
-          templateCode: "hidden_campaign_task",
+          templateCode: "policy_campaign_task",
           verificationType: "ON_CHAIN",
           walletCompatibility: "ANY",
         }),
-        headers: sessionA.headers("trace-pg-hidden-task"),
+        headers: sessionA.headers("trace-pg-policy-task"),
         method: "POST",
       },
     );
@@ -1514,7 +1651,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     );
 
     expect(anonymousFeed.payload.items.map((item) => item.id)).not.toContain(campaignId);
-    expect(anonymousFeed.payload.items.map((item) => item.id)).not.toContain(hiddenCampaign.payload.id);
+    expect(anonymousFeed.payload.items.map((item) => item.id)).not.toContain(policyCampaign.payload.id);
     expect(anonymousDetail).toMatchObject({
       status: 404,
       envelope: {
@@ -1524,7 +1661,6 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
     });
 
-    participantPreviewCampaignIds = campaignId;
     const participantSessionA1 = await issueParticipantSession(
       firstServer,
       {
@@ -1578,17 +1714,17 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { headers: participantSessionA1.headers("trace-pg-participant-exact-compatibility") },
     );
 
-    expect(participantFeed.payload.items).toEqual([
-      expect.objectContaining({
-        id: campaignId,
-        repository: expect.objectContaining({
-          createdViaRepository: true,
-          storeId: "campaign-db",
-        }),
-        status: "draft",
-        visibility: "participant_preview",
+    expect(new Set(participantFeed.payload.items.map(({ id }) => id))).toEqual(
+      new Set([campaignId, policyCampaign.payload.id]),
+    );
+    expect(participantFeed.payload.items.find(({ id }) => id === campaignId)).toMatchObject({
+      repository: expect.objectContaining({
+        createdViaRepository: true,
+        storeId: "campaign-db",
       }),
-    ]);
+      status: "draft",
+      visibility: "participant_preview",
+    });
     expect(participantFeed.payload.participantPreview).toEqual({ campaignCount: 1, enabled: true });
     expect(exactCompatibilityClaims.payload).toMatchObject({
       eligible: false,
@@ -1718,7 +1854,6 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         method: "POST",
       }),
     );
-    participantPreviewCampaignIds = [campaignId, hiddenCampaign.payload.id].join(",");
     const walletPolicyMismatch = await expectNegativeCaseNoParticipantJourneyWrite(
       "wallet policy mismatch",
       {
@@ -1730,15 +1865,14 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
       () => requestApi(
         firstServer,
-        `/api/tasks/${hiddenTask.campaignDbTask.taskId}/verify`,
+        `/api/tasks/${policyTask.campaignDbTask.taskId}/verify`,
         {
-          body: JSON.stringify({ campaignId: hiddenCampaign.payload.id }),
+          body: JSON.stringify({ campaignId: policyCampaign.payload.id }),
           headers: aaParticipantSession.headers("trace-pg-participant-wallet-policy-mismatch"),
           method: "POST",
         },
       ),
     );
-    participantPreviewCampaignIds = campaignId;
     const crossCampaignTask = await expectNegativeCaseNoParticipantJourneyWrite(
       "cross-Campaign Task",
       {
@@ -1750,7 +1884,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
       () => requestApi(
         firstServer,
-        `/api/tasks/${hiddenTask.campaignDbTask.taskId}/verify`,
+        `/api/tasks/${policyTask.campaignDbTask.taskId}/verify`,
         {
           body: JSON.stringify({ campaignId }),
           headers: participantSessionA1.headers("trace-pg-participant-cross-campaign"),
@@ -1758,26 +1892,6 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         },
       ),
     );
-    const clientAllowlistEscalation = await expectNegativeCaseNoParticipantJourneyWrite(
-      "client preview allowlist escalation",
-      {
-        diagnosticCode: "INVALID_CAMPAIGN",
-        field: "campaignId",
-        outerCode: "INVALID_CAMPAIGN",
-        status: 404,
-        traceId: "trace-pg-participant-client-allowlist",
-      },
-      () => requestApi(
-        firstServer,
-        `/api/participant/campaigns/${hiddenCampaign.payload.id}/journey?previewCampaignId=${hiddenCampaign.payload.id}`,
-        {
-          headers: participantSessionA1.headers("trace-pg-participant-client-allowlist", {
-            "x-campaign-os-participant-preview-campaign-ids": hiddenCampaign.payload.id,
-          }),
-        },
-      ),
-    );
-
     for (const result of [
       bodyWalletSubstitution,
       queryWalletSubstitution,
@@ -1787,30 +1901,29 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       internalParticipantCredential,
       walletPolicyMismatch,
       crossCampaignTask,
-      clientAllowlistEscalation,
     ]) {
       expect(result.envelope.data).toBeUndefined();
     }
 
-    const firstVerification = await requestJson<VerificationData>(firstServer, `/api/tasks/${taskId}/verify`, {
-      body: JSON.stringify({
-        campaignId,
-      }),
-      headers: participantSessionA1.headers("trace-pg-participant-a-verify"),
-      method: "POST",
-    });
+    const providerCompletedBeforeA = providerSandbox!.count("completed");
+    const transportCallsBeforeA = requireServerTransportStats(firstServer).callCount;
+    const firstConcurrentVerifications = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      requestJson<VerificationData>(firstServer, `/api/tasks/${taskId}/verify`, {
+        body: JSON.stringify({ campaignId }),
+        headers: participantSessionA1.headers(`trace-pg-participant-a-first-${index}`),
+        method: "POST",
+      })));
+    expect(providerSandbox!.count("completed") - providerCompletedBeforeA).toBe(1);
+    expect(requireServerTransportStats(firstServer).callCount - transportCallsBeforeA).toBe(1);
+    const firstVerification = firstConcurrentVerifications[0]!;
     const sequentialRetry = await requestJson<VerificationData>(firstServer, `/api/tasks/${taskId}/verify`, {
       body: JSON.stringify({ campaignId }),
       headers: participantSessionA1.headers("trace-pg-participant-a-sequential-retry"),
       method: "POST",
     });
-    const concurrentRetries = await Promise.all(Array.from({ length: 20 }, (_, index) =>
-      requestJson<VerificationData>(firstServer, `/api/tasks/${taskId}/verify`, {
-        body: JSON.stringify({ campaignId }),
-        headers: participantSessionA1.headers(`trace-pg-participant-a-concurrent-${index}`),
-        method: "POST",
-      })));
-    const participantAVerifications = [firstVerification, sequentialRetry, ...concurrentRetries];
+    expect(providerSandbox!.count("completed") - providerCompletedBeforeA).toBe(1);
+    expect(requireServerTransportStats(firstServer).callCount - transportCallsBeforeA).toBe(1);
+    const participantAVerifications = [...firstConcurrentVerifications, sequentialRetry];
 
     expect(new Set(participantAVerifications.map(
       (item) => item.campaignDbCompletion.completionId,
@@ -1864,6 +1977,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       headers: participantSessionB1.headers("trace-pg-participant-b-verify"),
       method: "POST",
     });
+    expect(providerSandbox!.count("completed") - providerCompletedBeforeA).toBe(2);
+    expect(requireServerTransportStats(firstServer).callCount - transportCallsBeforeA).toBe(2);
     const participantJourneyA = await requestJson<ParticipantJourneyData>(
       firstServer,
       `/api/participant/campaigns/${campaignId}/journey`,
@@ -1993,14 +2108,21 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { headers: adminSessionA1.headers("trace-pg-admin-campaign-feed") },
     )).data;
     expect(adminCampaignFeed).toEqual({
-      campaigns: [{
+      campaigns: expect.arrayContaining([{
         campaignId,
         ownerAddress,
         participantCount: 2,
         projectId: created.payload.projectId,
         status: created.payload.status,
         taskCount: 2,
-      }],
+      }, {
+        campaignId: policyCampaign.payload.id,
+        ownerAddress,
+        participantCount: 0,
+        projectId: policyCampaign.payload.projectId,
+        status: policyCampaign.payload.status,
+        taskCount: 1,
+      }]),
       repository: {
         adapterId: "campaign-db-postgresql-adapter",
         durable: true,
@@ -2008,6 +2130,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         storeId: "campaign-db",
       },
     });
+    expect(adminCampaignFeed.campaigns).toHaveLength(2);
 
     const pendingAdminQueue = (await requestAdminJson<AdminQueueData>(
       firstServer,
@@ -2058,18 +2181,18 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/admin/campaigns/${campaignId}/reviews/${participantBId}`,
       { headers: adminSessionA1.headers("trace-pg-admin-b-detail") },
     )).data;
-    for (const [detailData, participantId, completionId, evidenceId] of [
+    expect(pendingA?.currentFingerprint).toBe(adminDetailA.snapshot.fingerprint);
+    expect(pendingB?.currentFingerprint).toBe(adminDetailB.snapshot.fingerprint);
+    for (const [detailData, participantId, verification] of [
       [
         adminDetailA,
         participantAId,
-        firstVerification.campaignDbCompletion.completionId,
-        firstVerification.campaignDbEvidence.evidenceId,
+        firstVerification,
       ],
       [
         adminDetailB,
         participantBId,
-        participantBVerification.campaignDbCompletion.completionId,
-        participantBVerification.campaignDbEvidence.evidenceId,
+        participantBVerification,
       ],
     ] as const) {
       expect(detailData).toMatchObject({
@@ -2085,8 +2208,20 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
           participantId,
         },
       });
-      expect(detailData.snapshot.completions.map(({ id }) => id)).toEqual([completionId]);
-      expect(detailData.snapshot.evidence.map(({ id }) => id)).toEqual([evidenceId]);
+      expect(detailData.snapshot.completions.map(({ id }) => id)).toEqual([
+        verification.campaignDbCompletion.completionId,
+      ]);
+      expect(detailData.snapshot.evidence).toEqual([
+        expect.objectContaining({
+          completionId: verification.campaignDbCompletion.completionId,
+          evidenceHash: verification.payload.evidenceHash,
+          evidenceRef: verification.payload.evidenceRef,
+          id: verification.campaignDbEvidence.evidenceId,
+          liveProviderExecuted: true,
+          taskId,
+          verificationAttemptId: verification.payload.verificationAttemptId,
+        }),
+      ]);
       expect(new Set(detailData.snapshot.tasks.map(({ id }) => id))).toEqual(
         new Set([taskId, adoptedTaskId]),
       );
@@ -2582,7 +2717,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       evidence_source: "AELFSCAN",
       external_dispatch_limit: 1,
       id: firstVerification.payload.verificationAttemptId,
-      max_attempts: CONTROLLED_TASK_VERIFICATION_BINDING.maxAttempts,
+      max_attempts: CONTROLLED_ON_CHAIN_BINDING.maxAttempts,
       status: "completed",
     });
     expect(beforeRestartSnapshot.participants.find(
@@ -2609,6 +2744,80 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expect(createdAt).toBeLessThanOrEqual(runtimeWriteWindowEndedAt + 1_000);
       expect(updatedAt).toBeGreaterThanOrEqual(createdAt);
     }
+    const finalizingShutdownCampaign = await requestJson<CampaignCreateData>(
+      firstServer,
+      "/api/campaigns",
+      {
+        body: JSON.stringify({
+          duration: "2026-09-01/2026-09-14",
+          endTime: "2026-09-14T23:59:59Z",
+          goal: "Finalize provider work before PostgreSQL shutdown",
+          ownerAddress,
+          projectId: "postgres-provider-finalize-project",
+          rewardDescription: "Provider graceful shutdown finalization fixture.",
+          startTime: "2026-09-01T00:00:00Z",
+          walletPolicy: "ANY",
+        }),
+        headers: sessionA.headers("trace-pg-finalize-campaign"),
+        method: "POST",
+      },
+    );
+    const finalizingShutdownTask = await requestJson<TaskCreateData>(
+      firstServer,
+      `/api/campaigns/${finalizingShutdownCampaign.payload.id}/tasks`,
+      {
+        body: JSON.stringify({
+          evidenceRule: controlledOnChainEvidenceRule({
+            methodName: "timeout",
+            source: "AELFSCAN",
+          }),
+          points: 25,
+          required: true,
+          templateCode: "provider_finalize_before_pool_close",
+          verificationType: "ON_CHAIN",
+          walletCompatibility: "ANY",
+        }),
+        headers: sessionA.headers("trace-pg-finalize-task"),
+        method: "POST",
+      },
+    );
+    const shutdownCampaign = await requestJson<CampaignCreateData>(
+      firstServer,
+      "/api/campaigns",
+      {
+        body: JSON.stringify({
+          duration: "2026-09-01/2026-09-14",
+          endTime: "2026-09-14T23:59:59Z",
+          goal: "Recover provider work interrupted after dispatch",
+          ownerAddress,
+          projectId: "postgres-provider-shutdown-project",
+          rewardDescription: "Provider shutdown recovery fixture.",
+          startTime: "2026-09-01T00:00:00Z",
+          walletPolicy: "ANY",
+        }),
+        headers: sessionA.headers("trace-pg-shutdown-campaign"),
+        method: "POST",
+      },
+    );
+    const shutdownTask = await requestJson<TaskCreateData>(
+      firstServer,
+      `/api/campaigns/${shutdownCampaign.payload.id}/tasks`,
+      {
+        body: JSON.stringify({
+          evidenceRule: controlledOnChainEvidenceRule({
+            methodName: "timeout",
+            source: "AELFSCAN",
+          }),
+          points: 25,
+          required: true,
+          templateCode: "provider_started_without_result",
+          verificationType: "ON_CHAIN",
+          walletCompatibility: "ANY",
+        }),
+        headers: sessionA.headers("trace-pg-shutdown-task"),
+        method: "POST",
+      },
+    );
     const adminRestartManifest = Object.freeze({
       artifactDetails: {
         csv: (await requestAdminJson<AdminArtifactDetailData>(
@@ -2671,12 +2880,142 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       )).data,
     });
     expect(adminRestartManifest.durableRows).toEqual({ artifactRows: 2, decisionRows: 2 });
+    const timeoutCountBeforeShutdown = providerSandbox!.count("timeout");
+    let finalizingShutdownVerificationSettled = false;
+    const finalizingShutdownVerification = requestApi<AttemptOnlyVerificationData>(
+      firstServer,
+      `/api/tasks/${finalizingShutdownTask.campaignDbTask.taskId}/verify`,
+      {
+        body: JSON.stringify({ campaignId: finalizingShutdownCampaign.payload.id }),
+        headers: participantSessionA1.headers("trace-pg-finalize-verify"),
+        method: "POST",
+      },
+    ).finally(() => {
+      finalizingShutdownVerificationSettled = true;
+    });
+    let shutdownVerificationSettled = false;
+    const shutdownVerification = requestApi<AttemptOnlyVerificationData>(
+      firstServer,
+      `/api/tasks/${shutdownTask.campaignDbTask.taskId}/verify`,
+      {
+        body: JSON.stringify({ campaignId: shutdownCampaign.payload.id }),
+        headers: participantSessionA1.headers("trace-pg-shutdown-verify"),
+        method: "POST",
+      },
+    ).finally(() => {
+      shutdownVerificationSettled = true;
+    });
+    await waitForSandboxState((sandbox) =>
+      sandbox.count("timeout") === timeoutCountBeforeShutdown + 2
+      && sandbox.state().activeRequestCount === 2);
+    const shutdownFixturePool = createAuditPool();
+    let shutdownAttemptId = "";
+    try {
+      const expired = await shutdownFixturePool.query<{ id: string }>(`
+        UPDATE campaign_os.verification_attempts
+        SET lease_expires_at = GREATEST(
+          updated_at + interval '1 millisecond',
+          clock_timestamp() + interval '50 milliseconds'
+        )
+        WHERE campaign_id = $1
+          AND task_id = $2
+          AND wallet_address = $3
+          AND status = 'running'
+          AND dispatch_state = 'started'
+        RETURNING id
+      `, [
+        shutdownCampaign.payload.id,
+        shutdownTask.campaignDbTask.taskId,
+        walletAddress,
+      ]);
+      expect(expired.rows).toHaveLength(1);
+      shutdownAttemptId = expired.rows[0]?.id ?? "";
+    } finally {
+      await shutdownFixturePool.end();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
     await stopServer(firstServer);
+    const finalizingShutdownResult = await finalizingShutdownVerification;
+    expect(finalizingShutdownResult).toMatchObject({
+      status: 202,
+      envelope: {
+        data: {
+          payload: {
+            campaignId: finalizingShutdownCampaign.payload.id,
+            outcome: "pending",
+            pointsAwarded: 0,
+            taskId: finalizingShutdownTask.campaignDbTask.taskId,
+            walletAddress,
+          },
+        },
+        ok: true,
+      },
+    });
+    const shutdownResult = await shutdownVerification;
+    expect(finalizingShutdownVerificationSettled).toBe(true);
+    expect(shutdownVerificationSettled).toBe(true);
+    expect(shutdownResult).toMatchObject({
+      status: 200,
+      envelope: {
+        data: {
+          payload: {
+            campaignId: shutdownCampaign.payload.id,
+            outcome: "manual_review",
+            pointsAwarded: 0,
+            taskId: shutdownTask.campaignDbTask.taskId,
+            walletAddress,
+          },
+        },
+        ok: true,
+      },
+    });
+    expect(firstTransport.state()).toEqual({ accepting: false, activeCallCount: 0 });
+    expect(providerSandbox!.state()).toMatchObject({
+      activeRequestCount: 0,
+      lifecycle: "listening",
+      timerCount: 0,
+    });
+    const providerCountAfterRuntimeAStop = providerSandbox!.count();
+    await expect(fetch(`${firstServer.url}/api/health`)).rejects.toBeInstanceOf(Error);
+    expect(providerSandbox!.count()).toBe(providerCountAfterRuntimeAStop);
     expect(shutdownTimings[shutdownTimings.length - 1]).toBeLessThanOrEqual(10_000);
     expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
 
-    adminMembershipCampaignIds = [campaignId, "000-nfr-campaign-001"];
+    const interruptedSnapshotPool = createAuditPool();
+    try {
+      const shutdownAttempts = await interruptedSnapshotPool.query<{
+        dispatch_state: string;
+        id: string;
+        status: string;
+      }>(`
+        SELECT id, status, dispatch_state
+        FROM campaign_os.verification_attempts
+        WHERE id IN ($1, $2)
+        ORDER BY id
+      `, [
+        finalizingShutdownResult.envelope.data!.payload.verificationAttemptId,
+        shutdownAttemptId,
+      ]);
+      expect(shutdownAttempts.rows.find(
+        ({ id }) => id === finalizingShutdownResult.envelope.data!.payload.verificationAttemptId,
+      )).toEqual({
+        dispatch_state: "result_observed",
+        id: finalizingShutdownResult.envelope.data!.payload.verificationAttemptId,
+        status: "pending",
+      });
+      expect(shutdownAttempts.rows.find(({ id }) => id === shutdownAttemptId)).toEqual({
+        dispatch_state: "started",
+        id: shutdownAttemptId,
+        status: "running",
+      });
+    } finally {
+      await interruptedSnapshotPool.end();
+    }
+
     const secondServer = await startServer();
+    const secondTransport = requireServerTransport(secondServer);
+    expect(secondTransport).not.toBe(firstTransport);
+    expect(secondTransport.state()).toEqual({ accepting: true, activeCallCount: 0 });
     const oldParticipantAAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
       "Runtime B rejects stale Participant A1",
       {
@@ -2784,6 +3123,98 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         walletSource: staleSession.data.payload.walletSource,
       });
       expect(freshSession.data.payload.sessionId).not.toBe(staleSession.data.payload.sessionId);
+    }
+    const providerCountBeforeRuntimeBReplay = providerSandbox!.count();
+    const transportCallsBeforeRuntimeBReplay = requireServerTransportStats(secondServer).callCount;
+    const terminalReplay = await requestJson<VerificationData>(
+      secondServer,
+      `/api/tasks/${taskId}/verify`,
+      {
+        body: JSON.stringify({ campaignId }),
+        headers: participantSessionA2.headers("trace-pg-runtime-b-terminal-replay"),
+        method: "POST",
+      },
+    );
+    expect(terminalReplay).toMatchObject({
+      campaignDbCompletion: {
+        completionId: firstVerification.campaignDbCompletion.completionId,
+        evidenceId: firstVerification.campaignDbEvidence.evidenceId,
+      },
+      campaignDbEvidence: {
+        evidenceHash: firstVerification.payload.evidenceHash,
+        evidenceId: firstVerification.campaignDbEvidence.evidenceId,
+        evidenceRef: firstVerification.payload.evidenceRef,
+      },
+      payload: {
+        pointsAwarded: task.payload.points,
+        status: "completed",
+        verificationAttemptId: firstVerification.payload.verificationAttemptId,
+      },
+    });
+    expect(providerSandbox!.count()).toBe(providerCountBeforeRuntimeBReplay);
+    expect(requireServerTransportStats(secondServer).callCount).toBe(
+      transportCallsBeforeRuntimeBReplay,
+    );
+
+    const unknownOutcomeRecovery = await requestJson<AttemptOnlyVerificationData>(
+      secondServer,
+      `/api/tasks/${shutdownTask.campaignDbTask.taskId}/verify`,
+      {
+        body: JSON.stringify({ campaignId: shutdownCampaign.payload.id }),
+        headers: participantSessionA2.headers("trace-pg-runtime-b-outcome-unknown"),
+        method: "POST",
+      },
+    );
+    expect(unknownOutcomeRecovery.payload).toMatchObject({
+      campaignId: shutdownCampaign.payload.id,
+      outcome: "manual_review",
+      pointsAwarded: 0,
+      status: "manual_review",
+      taskId: shutdownTask.campaignDbTask.taskId,
+      verificationAttemptId: shutdownAttemptId,
+      walletAddress,
+    });
+    expect(JSON.stringify(unknownOutcomeRecovery)).not.toContain("campaignDbEvidence");
+    expect(providerSandbox!.count()).toBe(providerCountBeforeRuntimeBReplay);
+    expect(requireServerTransportStats(secondServer).callCount).toBe(
+      transportCallsBeforeRuntimeBReplay,
+    );
+    const unknownOutcomeJourney = await requestJson<ParticipantJourneyData>(
+      secondServer,
+      `/api/participant/campaigns/${shutdownCampaign.payload.id}/journey`,
+      { headers: participantSessionA2.headers("trace-pg-runtime-b-outcome-unknown-journey") },
+    );
+    expect(unknownOutcomeJourney.payload.tasks.find(
+      ({ taskId: journeyTaskId }) => journeyTaskId === shutdownTask.campaignDbTask.taskId,
+    )).toMatchObject({
+      completionId: null,
+      evidenceId: null,
+      pointsAwarded: 0,
+      status: "manual_review",
+      verificationAttemptId: shutdownAttemptId,
+    });
+    const recoveredAttemptPool = createAuditPool();
+    try {
+      const recoveredAttempt = await recoveredAttemptPool.query<{
+        diagnostic_codes: string[];
+        dispatch_state: string;
+        id: string;
+        retry_posture: string;
+        status: string;
+      }>(`
+        SELECT id, status, dispatch_state, retry_posture, diagnostic_codes
+        FROM campaign_os.verification_attempts
+        WHERE id = $1
+      `, [shutdownAttemptId]);
+      expect(recoveredAttempt.rows).toEqual([{
+        diagnostic_codes: ["TASK_VERIFICATION_OUTCOME_UNKNOWN"],
+        dispatch_state: "started",
+        id: shutdownAttemptId,
+        retry_posture: "manual_review",
+        status: "manual_review",
+      }]);
+    } finally {
+      await recoveredAttemptPool.end();
     }
     const health = await requestJson<HealthData>(secondServer, "/api/health");
     const list = await requestJson<CampaignListData>(
@@ -3017,6 +3448,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(adminRuntimeBManifest).toEqual(adminRestartManifest);
 
     const participantFactsBeforeStaleMutation = await readCampaignSnapshotFromDatabase(campaignId);
+    const completedCountBeforeDappMutation = providerSandbox!.count("completed");
+    const transportCallsBeforeDappMutation = requireServerTransportStats(secondServer).callCount;
     const participantAStaleMutation = await requestJson<VerificationData>(
       secondServer,
       `/api/tasks/${adoptedTaskId}/verify`,
@@ -3032,6 +3465,15 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       status: "completed",
       taskId: adoptedTaskId,
       walletAddress,
+    });
+    expect(providerSandbox!.count("completed") - completedCountBeforeDappMutation).toBe(1);
+    expect(requireServerTransportStats(secondServer).callCount - transportCallsBeforeDappMutation)
+      .toBe(1);
+    expect(participantAStaleMutation.campaignDbEvidence).toMatchObject({
+      evidenceHash: participantAStaleMutation.payload.evidenceHash,
+      evidenceRef: participantAStaleMutation.payload.evidenceRef,
+      evidenceSource: "DAPP_API",
+      liveProviderExecuted: true,
     });
     expect(participantAStaleMutation.campaignDbCompletion.completionId).not.toBe(
       firstVerification.campaignDbCompletion.completionId,
@@ -3070,6 +3512,20 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         fingerprintVersion: "review-snapshot-v1",
       },
     });
+    expect(staleAdminQueue.items.find(
+      ({ participantId }) => participantId === participantAId,
+    )?.currentFingerprint).toBe(staleAdminDetailA.snapshot.fingerprint);
+    expect(staleAdminDetailA.snapshot.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        completionId: participantAStaleMutation.campaignDbCompletion.completionId,
+        evidenceHash: participantAStaleMutation.payload.evidenceHash,
+        evidenceRef: participantAStaleMutation.payload.evidenceRef,
+        id: participantAStaleMutation.campaignDbEvidence.evidenceId,
+        liveProviderExecuted: true,
+        taskId: adoptedTaskId,
+        verificationAttemptId: participantAStaleMutation.payload.verificationAttemptId,
+      }),
+    ]));
     expect(staleAdminDetailA.history).toHaveLength(1);
     expect(staleAdminQueue.items.find(({ participantId }) => participantId === participantAId))
       .toMatchObject({ reviewState: "stale" });
@@ -3563,7 +4019,6 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     );
     const atomicTaskId = atomicTask.campaignDbTask.taskId;
     const atomicWallet = "2F4AtomicVerificationWallet";
-    participantPreviewCampaignIds = [campaignId, secondCampaignId].join(",");
     const atomicParticipantSession = await issueParticipantSession(
       secondServer,
       { adapterName: "PortkeyExtensionWallet", address: atomicWallet },
@@ -3979,11 +4434,6 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       { adapterName: "PortkeyExtensionWallet", address: nfrParticipantAddress },
       "trace-pg-nfr-participant-session",
     );
-    participantPreviewCampaignIds = [
-      campaignId,
-      secondCampaignId,
-      "000-nfr-campaign-001",
-    ].join(",");
     const initialNfrJourney = await requestJson<ParticipantJourneyData>(
       secondServer,
       "/api/participant/campaigns/000-nfr-campaign-001/journey",
@@ -4104,9 +4554,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
   }, 120_000);
 
-  it("recovers pending, failed, and manual-review Journey posture from durable attempts after restart", async () => {
-    adminMembershipCampaignIds = null;
-    participantPreviewCampaignIds = "";
+  it("persists every provider failure posture without Evidence or points across restart", async () => {
     const ownerAddress = `2F4PostureOwner${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const participantAddress = `3E9PostureParticipant${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const firstServer = await startServer();
@@ -4133,22 +4581,71 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       method: "POST",
     });
     const campaignId = created.payload.id;
-    participantPreviewCampaignIds = campaignId;
     const outcomeCases = [
-      { expectedHttpStatus: 202, outcome: "pending" },
-      { expectedHttpStatus: 200, outcome: "failed" },
-      { expectedHttpStatus: 200, outcome: "manual_review" },
+      {
+        diagnosticCode: "PROVIDER_MATCH_NEGATIVE",
+        expectedHttpStatus: 200,
+        outcome: "failed",
+        scenario: "negative",
+      },
+      {
+        diagnosticCode: "PROVIDER_PENDING",
+        expectedHttpStatus: 202,
+        outcome: "pending",
+        scenario: "pending",
+      },
+      {
+        diagnosticCode: "PROVIDER_HTTP_TIMEOUT",
+        expectedHttpStatus: 202,
+        outcome: "pending",
+        scenario: "timeout",
+      },
+      {
+        diagnosticCode: "PROVIDER_HTTP_RATE_LIMITED",
+        expectedHttpStatus: 202,
+        outcome: "pending",
+        scenario: "429",
+      },
+      {
+        diagnosticCode: "PROVIDER_HTTP_PROVIDER_UNAVAILABLE",
+        expectedHttpStatus: 202,
+        outcome: "pending",
+        scenario: "5xx",
+      },
+      {
+        diagnosticCode: "PROVIDER_HTTP_MALFORMED_RESPONSE",
+        expectedHttpStatus: 200,
+        outcome: "manual_review",
+        scenario: "malformed",
+      },
+      {
+        diagnosticCode: "PROVIDER_HTTP_RESPONSE_TOO_LARGE",
+        expectedHttpStatus: 200,
+        outcome: "manual_review",
+        scenario: "oversized",
+      },
+      {
+        diagnosticCode: "PROVIDER_HTTP_RESPONSE_TOO_LARGE",
+        expectedHttpStatus: 200,
+        outcome: "manual_review",
+        scenario: "chunked",
+      },
     ] as const;
-    const taskCases = await Promise.all(outcomeCases.map(async ({ expectedHttpStatus, outcome }) => {
+    const taskCases = await Promise.all(outcomeCases.map(async ({
+      diagnosticCode,
+      expectedHttpStatus,
+      outcome,
+      scenario,
+    }) => {
       const createdTask = await requestJson<TaskCreateData>(
         firstServer,
         `/api/campaigns/${campaignId}/tasks`,
         {
           body: JSON.stringify({
-            evidenceRule: controlledOnChainEvidenceRule({ source: "AELFSCAN" }),
+            evidenceRule: controlledOnChainEvidenceRule({ methodName: scenario, source: "AELFSCAN" }),
             points: 40,
             required: true,
-            templateCode: `provider_${outcome}`,
+            templateCode: `provider_${scenario}`,
             verificationType: "ON_CHAIN",
             walletCompatibility: "ANY",
           }),
@@ -4157,10 +4654,11 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         },
       );
 
-      controlledTaskVerificationOutcomes.set(createdTask.campaignDbTask.taskId, outcome);
       return {
+        diagnosticCode,
         expectedHttpStatus,
         outcome,
+        scenario,
         taskId: createdTask.campaignDbTask.taskId,
       };
     }));
@@ -4170,134 +4668,142 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       "trace-pg-posture-participant-a",
     );
     const attempts = new Map<string, string>();
+    const scenarioCountsBefore = new Map<ProviderVerificationSandboxScenario, number>(
+      outcomeCases.map(({ scenario }) => [scenario, providerSandbox!.count(scenario)]),
+    );
 
-    try {
-      for (const taskCase of taskCases) {
-        const result = await requestApi<AttemptOnlyVerificationData>(
-          firstServer,
-          `/api/tasks/${taskCase.taskId}/verify`,
-          {
-            body: JSON.stringify({ campaignId }),
-            headers: firstParticipantSession.headers(`trace-pg-posture-verify-${taskCase.outcome}`),
-            method: "POST",
-          },
-        );
-
-        expect(result.status).toBe(taskCase.expectedHttpStatus);
-        expect(result.envelope).toMatchObject({ ok: true });
-        expect(result.envelope.data?.payload).toMatchObject({
-          campaignId,
-          outcome: taskCase.outcome,
-          pointsAwarded: 0,
-          status: taskCase.outcome,
-          taskId: taskCase.taskId,
-          walletAddress: participantAddress,
-        });
-        const attemptId = result.envelope.data?.payload.verificationAttemptId;
-        expect(attemptId).toEqual(expect.any(String));
-        attempts.set(taskCase.taskId, attemptId ?? "");
-        expect(JSON.stringify(result.envelope.data)).not.toContain("campaignDbCompletion");
-        expect(JSON.stringify(result.envelope.data)).not.toContain("campaignDbEvidence");
-      }
-
-      const firstJourney = await requestJson<ParticipantJourneyData>(
+    for (const taskCase of taskCases) {
+      const transportCallsBeforeScenario = requireServerTransportStats(firstServer).callCount;
+      const result = await requestApi<AttemptOnlyVerificationData>(
         firstServer,
-        `/api/participant/campaigns/${campaignId}/journey`,
-        { headers: firstParticipantSession.headers("trace-pg-posture-journey-a") },
+        `/api/tasks/${taskCase.taskId}/verify`,
+        {
+          body: JSON.stringify({ campaignId }),
+          headers: firstParticipantSession.headers(`trace-pg-posture-verify-${taskCase.scenario}`),
+          method: "POST",
+        },
       );
-      const firstPosture = new Map(firstJourney.payload.tasks.map((entry) => [entry.taskId, entry]));
 
-      for (const taskCase of taskCases) {
-        expect(firstPosture.get(taskCase.taskId)).toMatchObject({
-          completionId: null,
-          evidenceId: null,
-          pointsAwarded: 0,
-          status: taskCase.outcome,
-          verificationAttemptId: attempts.get(taskCase.taskId),
-        });
-      }
-      expect(firstJourney.payload).toMatchObject({
-        eligibility: { eligible: false, score: 0 },
-        participant: { participantId: null, totalPoints: 0 },
-        ranking: { rank: null, totalPoints: 0 },
+      expect(result.envelope).toMatchObject({ ok: true });
+      expect(result.envelope.data?.payload.diagnosticCodes, taskCase.scenario).toEqual([
+        taskCase.diagnosticCode,
+      ]);
+      expect(result.envelope.data?.payload).toMatchObject({
+        campaignId,
+        outcome: taskCase.outcome,
+        pointsAwarded: 0,
+        status: taskCase.outcome,
+        taskId: taskCase.taskId,
+        walletAddress: participantAddress,
       });
-
-      const auditPool = createAuditPool();
-      try {
-        const counts = await auditPool.query<{
-          completion_count: string;
-          evidence_count: string;
-          participant_count: string;
-        }>(`
-          SELECT
-            (SELECT COUNT(*)::text FROM campaign_os.campaign_participants
-              WHERE campaign_id = $1 AND wallet_address = $2) AS participant_count,
-            (SELECT COUNT(*)::text FROM campaign_os.campaign_task_completions
-              WHERE campaign_id = $1 AND wallet_address = $2) AS completion_count,
-            (SELECT COUNT(*)::text FROM campaign_os.campaign_task_evidence
-              WHERE campaign_id = $1 AND wallet_address = $2) AS evidence_count
-        `, [campaignId, participantAddress]);
-        const durableAttempts = await auditPool.query<{ id: string; status: string; task_id: string }>(`
-          SELECT id, status, task_id
-          FROM campaign_os.verification_attempts
-          WHERE campaign_id = $1 AND wallet_address = $2
-          ORDER BY task_id COLLATE "C" ASC
-        `, [campaignId, participantAddress]);
-
-        expect(counts.rows[0]).toEqual({
-          completion_count: "0",
-          evidence_count: "0",
-          participant_count: "0",
-        });
-        expect(durableAttempts.rows).toHaveLength(3);
-        expect(new Map(durableAttempts.rows.map((row) => [row.task_id, row]))).toEqual(
-          new Map(taskCases.map((taskCase) => [taskCase.taskId, {
-            id: attempts.get(taskCase.taskId),
-            status: taskCase.outcome,
-            task_id: taskCase.taskId,
-          }])),
-        );
-      } finally {
-        await auditPool.end();
-      }
-
-      await stopServer(firstServer);
-      expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
-      const secondServer = await startServer();
-      const secondParticipantSession = await issueParticipantSession(
-        secondServer,
-        { adapterName: "PortkeyExtensionWallet", address: participantAddress },
-        "trace-pg-posture-participant-b",
+      expect(providerSandbox!.count(taskCase.scenario), taskCase.scenario).toBe(
+        (scenarioCountsBefore.get(taskCase.scenario) ?? 0) + 1,
       );
-      const recoveredJourney = await requestJson<ParticipantJourneyData>(
-        secondServer,
-        `/api/participant/campaigns/${campaignId}/journey`,
-        { headers: secondParticipantSession.headers("trace-pg-posture-journey-b") },
-      );
-      const recoveredPosture = new Map(
-        recoveredJourney.payload.tasks.map((entry) => [entry.taskId, entry]),
-      );
-
-      for (const taskCase of taskCases) {
-        expect(recoveredPosture.get(taskCase.taskId)).toMatchObject({
-          completionId: null,
-          evidenceId: null,
-          pointsAwarded: 0,
-          status: taskCase.outcome,
-          verificationAttemptId: attempts.get(taskCase.taskId),
-        });
-      }
-      expect(recoveredJourney.payload).toMatchObject({
-        eligibility: { eligible: false, score: 0 },
-        participant: { participantId: null, totalPoints: 0 },
-        ranking: { rank: null, totalPoints: 0 },
-      });
-      await stopServer(secondServer);
-      expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
-    } finally {
-      for (const { taskId } of taskCases) {
-        controlledTaskVerificationOutcomes.delete(taskId);
-      }
+      expect(
+        requireServerTransportStats(firstServer).callCount - transportCallsBeforeScenario,
+        taskCase.scenario,
+      ).toBe(1);
+      expect(result.status, taskCase.scenario).toBe(taskCase.expectedHttpStatus);
+      const attemptId = result.envelope.data?.payload.verificationAttemptId;
+      expect(attemptId).toEqual(expect.any(String));
+      attempts.set(taskCase.taskId, attemptId ?? "");
+      expect(JSON.stringify(result.envelope.data)).not.toContain("campaignDbCompletion");
+      expect(JSON.stringify(result.envelope.data)).not.toContain("campaignDbEvidence");
     }
-  }, 60_000);
+
+    const firstJourney = await requestJson<ParticipantJourneyData>(
+      firstServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: firstParticipantSession.headers("trace-pg-posture-journey-a") },
+    );
+    const firstPosture = new Map(firstJourney.payload.tasks.map((entry) => [entry.taskId, entry]));
+
+    for (const taskCase of taskCases) {
+      expect(firstPosture.get(taskCase.taskId)).toMatchObject({
+        completionId: null,
+        evidenceId: null,
+        pointsAwarded: 0,
+        status: taskCase.outcome,
+        verificationAttemptId: attempts.get(taskCase.taskId),
+      });
+    }
+    expect(firstJourney.payload).toMatchObject({
+      eligibility: { eligible: false, score: 0 },
+      participant: { participantId: null, totalPoints: 0 },
+      ranking: { rank: null, totalPoints: 0 },
+    });
+
+    const auditPool = createAuditPool();
+    try {
+      const counts = await auditPool.query<{
+        completion_count: string;
+        evidence_count: string;
+        participant_count: string;
+      }>(`
+        SELECT
+          (SELECT COUNT(*)::text FROM campaign_os.campaign_participants
+            WHERE campaign_id = $1 AND wallet_address = $2) AS participant_count,
+          (SELECT COUNT(*)::text FROM campaign_os.campaign_task_completions
+            WHERE campaign_id = $1 AND wallet_address = $2) AS completion_count,
+          (SELECT COUNT(*)::text FROM campaign_os.campaign_task_evidence
+            WHERE campaign_id = $1 AND wallet_address = $2) AS evidence_count
+      `, [campaignId, participantAddress]);
+      const durableAttempts = await auditPool.query<{ id: string; status: string; task_id: string }>(`
+        SELECT id, status, task_id
+        FROM campaign_os.verification_attempts
+        WHERE campaign_id = $1 AND wallet_address = $2
+        ORDER BY task_id COLLATE "C" ASC
+      `, [campaignId, participantAddress]);
+
+      expect(counts.rows[0]).toEqual({
+        completion_count: "0",
+        evidence_count: "0",
+        participant_count: "0",
+      });
+      expect(durableAttempts.rows).toHaveLength(taskCases.length);
+      expect(new Map(durableAttempts.rows.map((row) => [row.task_id, row]))).toEqual(
+        new Map(taskCases.map((taskCase) => [taskCase.taskId, {
+          id: attempts.get(taskCase.taskId),
+          status: taskCase.outcome,
+          task_id: taskCase.taskId,
+        }])),
+      );
+    } finally {
+      await auditPool.end();
+    }
+
+    await stopServer(firstServer);
+    expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
+    const secondServer = await startServer();
+    const secondParticipantSession = await issueParticipantSession(
+      secondServer,
+      { adapterName: "PortkeyExtensionWallet", address: participantAddress },
+      "trace-pg-posture-participant-b",
+    );
+    const recoveredJourney = await requestJson<ParticipantJourneyData>(
+      secondServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: secondParticipantSession.headers("trace-pg-posture-journey-b") },
+    );
+    const recoveredPosture = new Map(
+      recoveredJourney.payload.tasks.map((entry) => [entry.taskId, entry]),
+    );
+
+    for (const taskCase of taskCases) {
+      expect(recoveredPosture.get(taskCase.taskId)).toMatchObject({
+        completionId: null,
+        evidenceId: null,
+        pointsAwarded: 0,
+        status: taskCase.outcome,
+        verificationAttemptId: attempts.get(taskCase.taskId),
+      });
+    }
+    expect(recoveredJourney.payload).toMatchObject({
+      eligibility: { eligible: false, score: 0 },
+      participant: { participantId: null, totalPoints: 0 },
+      ranking: { rank: null, totalPoints: 0 },
+    });
+    await stopServer(secondServer);
+    expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
+  }, 90_000);
 });

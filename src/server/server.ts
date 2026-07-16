@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { resolve } from "node:path";
 import {
   createCampaignOsApiServiceContract,
   type CampaignOsApiServiceContract,
@@ -548,7 +549,14 @@ export const startCampaignOsApiServer = async ({
   };
 };
 
-if (process.argv.includes("--listen")) {
+const CAMPAIGN_OS_API_SERVER_ENTRY_PATH = resolve(process.cwd(), "src/server/server.ts");
+
+export const isCampaignOsApiServerDirectExecution = (
+  entryPath = process.argv[1],
+): boolean => typeof entryPath === "string"
+  && resolve(entryPath) === CAMPAIGN_OS_API_SERVER_ENTRY_PATH;
+
+if (isCampaignOsApiServerDirectExecution() && process.argv.includes("--listen")) {
   startCampaignOsApiServer().catch((error: unknown) => {
     console.error("[campaign-os-api-runtime] failed to start", error);
     process.exitCode = 1;
