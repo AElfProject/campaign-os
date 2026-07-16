@@ -113,6 +113,24 @@ const expectNoSchedulerSecretLeak = (value: unknown) => {
 };
 
 describe("backend service readiness report", () => {
+  it("derives provider HTTP transport readiness from runtime composition, not env metadata", () => {
+    const env = {
+      CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:metadata-only-seam",
+    };
+    const withoutTransport = createBackendServiceReadinessReport({
+      configOptions: { env },
+    });
+    const withTransport = createBackendServiceReadinessReport({
+      configOptions: { env },
+      providerHttpTransportProvided: true,
+    });
+
+    expect(withoutTransport.providerClientReadiness.providerHttpRuntime.transportProvided)
+      .toBe(false);
+    expect(withTransport.providerClientReadiness.providerHttpRuntime.transportProvided)
+      .toBe(true);
+  });
+
   it("classifies Campaign mutations by durable effect instead of HTTP method", () => {
     expect(apiRuntimeContractRoutes.find((route) => route.id === "campaigns.tasks.generate")).toMatchObject({
       method: "POST",

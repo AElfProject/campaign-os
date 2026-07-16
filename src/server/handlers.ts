@@ -30,7 +30,6 @@ import {
   type LocalTaskDraft,
   type SummarizeCampaignRequest,
   type VerifyTaskRequest,
-  type VerifyTaskResponse,
 } from "../domain/campaignService";
 import {
   createDeliveryChecklistReadinessConsole,
@@ -110,7 +109,6 @@ import {
   type CampaignDbTaskCompletion,
   type CampaignDbTaskEvidenceRecord,
   type CampaignDbTaskDraft,
-  type CampaignDbTaskVerificationProjection,
   type CampaignDbI18nDraftProjection,
 } from "./campaignDbRepository";
 import { createBackendTopologyReport } from "./topology";
@@ -120,6 +118,7 @@ import {
   invalidCampaign,
   invalidRequest,
   invalidTask,
+  persistenceUnavailable,
   unsupportedExportMode,
   unsupportedLocale,
 } from "./errors";
@@ -128,6 +127,7 @@ import type {
   ApiRuntimeHandlerContext,
   ApiRuntimeHandlerTransportResult,
 } from "./apiRuntime";
+import { createCanonicalTaskVerificationRevision } from "./taskVerification";
 import {
   AdminReviewDomainError,
   projectAdminReviewCampaignFeed,
@@ -400,6 +400,7 @@ const issuedParticipantSubject = (context: ApiRuntimeHandlerContext) => {
 
   return {
     accountType: session.accountType,
+    sessionRef: session.sessionId,
     walletAddress: session.address,
     walletSource: session.walletSource,
   };
@@ -408,11 +409,27 @@ const issuedParticipantSubject = (context: ApiRuntimeHandlerContext) => {
 const verifyTaskRequest = (context: ApiRuntimeHandlerContext): VerifyTaskRequest => {
   const body = bodyRecord(context.body);
   const subject = issuedParticipantSubject(context);
+  const taskId = requiredRouteParam(context.params, "taskId");
+  if (Object.prototype.hasOwnProperty.call(body, "taskId")) {
+    if (body.taskId !== taskId) {
+      throw invalidTask(taskId);
+    }
+    throw invalidRequest("body", "Task ID is path-owned and cannot be supplied in the body.");
+  }
+  const allowedFields = new Set([
+    "accountType",
+    "campaignId",
+    "walletAddress",
+    "walletSource",
+  ]);
+  if (Object.keys(body).some((field) => !allowedFields.has(field))) {
+    throw invalidRequest("body", "Task verification request contains an unknown field.");
+  }
 
   return {
     accountType: subject.accountType,
     campaignId: requiredString(body, "campaignId"),
-    taskId: requiredRouteParam(context.params, "taskId"),
+    taskId,
     walletAddress: subject.walletAddress,
     walletSource: subject.walletSource,
   };
@@ -763,30 +780,30 @@ const toProviderId = (
 const createRepositoryCompletionResponse = (
   completion: CampaignDbTaskCompletion,
   task: CampaignDbTaskDraft,
-  evidence?: CampaignDbTaskEvidenceRecord,
+  evidence: CampaignDbTaskEvidenceRecord,
 ) => ({
   accountType: completion.accountType,
   campaignId: completion.campaignId,
-  canonicalEvidenceSource: toCanonicalEvidenceSource(evidence?.evidenceSource ?? completion.evidenceSource),
+  canonicalEvidenceSource: toCanonicalEvidenceSource(evidence.evidenceSource),
   evidence: {
-    capturedAt: evidence?.capturedAt ?? completion.updatedAt,
-    evidenceHash: evidence?.evidenceHash ?? completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
-    evidenceId: evidence?.id ?? completion.evidenceId ?? `campaign-db-evidence-${completion.id}`,
-    live: false,
-    source: toCanonicalEvidenceSource(evidence?.evidenceSource ?? completion.evidenceSource),
+    capturedAt: evidence.capturedAt,
+    evidenceHash: evidence.evidenceHash,
+    evidenceId: evidence.id,
+    live: evidence.liveProviderExecuted,
+    source: toCanonicalEvidenceSource(evidence.evidenceSource),
     sourceLabel: localized(
-      "Campaign DB local evidence",
-      "Campaign DB local evidence",
+      "Committed provider verification evidence",
+      "已提交的 provider 验证 evidence",
     ),
   },
-  ...(evidence?.id ?? completion.evidenceId ? { evidenceId: evidence?.id ?? completion.evidenceId } : {}),
-  ...(evidence?.evidenceRef ? { evidenceRef: evidence.evidenceRef } : {}),
-  evidenceHash: evidence?.evidenceHash ?? completion.evidenceHash ?? `evidence-hash:${completion.taskId}`,
-  evidenceSource: evidence?.evidenceSource ?? completion.evidenceSource,
-  liveContractExecuted: evidence?.liveContractExecuted ?? false,
-  liveProviderExecuted: evidence?.liveProviderExecuted ?? false,
-  liveRewardExecuted: evidence?.liveRewardExecuted ?? false,
-  liveStorageExecuted: evidence?.liveStorageExecuted ?? false,
+  evidenceId: evidence.id,
+  ...(evidence.evidenceRef ? { evidenceRef: evidence.evidenceRef } : {}),
+  evidenceHash: evidence.evidenceHash,
+  evidenceSource: evidence.evidenceSource,
+  liveContractExecuted: evidence.liveContractExecuted,
+  liveProviderExecuted: evidence.liveProviderExecuted,
+  liveRewardExecuted: evidence.liveRewardExecuted,
+  liveStorageExecuted: evidence.liveStorageExecuted,
   manualReview: {
     queued: completion.status === "manual_review",
     ...(completion.status === "manual_review"
@@ -805,20 +822,17 @@ const createRepositoryCompletionResponse = (
   pointsAwarded: completion.pointsAwarded,
   pointsAvailable: task.points,
   provider: {
-    fallbackReason: localized(
-      "Repository-created campaign uses deterministic local completion metadata.",
-      "Repository-created campaign uses deterministic local completion metadata.",
-    ),
     nextAdapterStep: localized(
-      "Connect live verification adapter in a later mission.",
-      "Connect live verification adapter in a later mission.",
+      "Use the committed verification result.",
+      "使用已提交的验证结果。",
     ),
-    providerId: toProviderId(completion.evidenceSource),
-    readiness: "local_only" as const,
+    providerId: toProviderId(evidence.evidenceSource),
+    readiness: "ready" as const,
   },
   riskFlags: [],
   status: completion.status,
   taskId: completion.taskId,
+  verificationAttemptId: completion.verificationAttemptId,
   walletAddress: completion.walletAddress,
   walletSource: completion.walletSource,
 });
@@ -3367,87 +3381,173 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
       traceId: context.traceId,
     });
-    let campaignDbCompletion: CampaignDbTaskCompletion | undefined;
-    let campaignDbEvidence: CampaignDbTaskEvidenceRecord | undefined;
-    let campaignDbRepository: CampaignDbTaskVerificationProjection["repository"] | undefined;
-    let result: LocalServiceResult<VerifyTaskResponse>;
-
-    if (campaignDbDraft) {
-      const access = requireParticipantCampaignAccess(context, campaignDbDraft);
-      const campaignDbTask = campaignDbDraft.tasks.find((task) => task.id === request.taskId);
-      const taskAccess = resolveParticipantCampaignTaskAccess({
-        campaignAccess: access,
-        campaignId: request.campaignId,
-        loadTask: () => campaignDbTask
-          ? { campaignId: campaignDbTask.campaignId, taskId: campaignDbTask.id }
-          : undefined,
-        taskId: request.taskId,
-      });
-
-      if (taskAccess.outcome !== "allowed" || !campaignDbTask) {
-        throw invalidTask(request.taskId);
-      }
-
-      if (
-        !isParticipantAccountTypeCompatible(campaignDbDraft.walletPolicy, request.accountType)
-        || !isParticipantAccountTypeCompatible(campaignDbTask.walletCompatibility, request.accountType)
-      ) {
-        throw invalidRequest(
-          "accountType",
-          "Issued Participant wallet type is incompatible with the Campaign or Task policy.",
-        );
-      }
-
-      const verification = await context.campaignDbRepository.upsertTaskVerification!({
-        accountType: request.accountType,
-        campaignId: request.campaignId,
-        evidenceHash: `evidence-hash:${campaignDbTask.id}`,
-        taskId: request.taskId,
-        walletAddress: request.walletAddress,
-        walletSource: request.walletSource,
-      }, {
-        traceId: context.traceId,
-      }) satisfies CampaignDbTaskVerificationProjection;
-      campaignDbCompletion = verification.completion;
-      campaignDbEvidence = verification.evidence;
-      campaignDbRepository = verification.repository;
-      result = {
-        boundary: campaignDbBoundary,
-        ok: true,
-        payload: createRepositoryCompletionResponse(campaignDbCompletion, campaignDbTask, campaignDbEvidence),
-      };
-    } else {
+    if (!campaignDbDraft) {
       throw invalidCampaign(request.campaignId);
     }
 
+    const access = requireParticipantCampaignAccess(context, campaignDbDraft);
+    const campaignDbTask = campaignDbDraft.tasks.find((task) => task.id === request.taskId);
+    const taskAccess = resolveParticipantCampaignTaskAccess({
+      campaignAccess: access,
+      campaignId: request.campaignId,
+      loadTask: () => campaignDbTask
+        ? { campaignId: campaignDbTask.campaignId, taskId: campaignDbTask.id }
+        : undefined,
+      taskId: request.taskId,
+    });
+
+    if (taskAccess.outcome !== "allowed" || !campaignDbTask) {
+      throw invalidTask(request.taskId);
+    }
+
+    if (
+      !isParticipantAccountTypeCompatible(campaignDbDraft.walletPolicy, request.accountType)
+      || !isParticipantAccountTypeCompatible(campaignDbTask.walletCompatibility, request.accountType)
+    ) {
+      throw invalidRequest(
+        "accountType",
+        "Issued Participant wallet type is incompatible with the Campaign or Task policy.",
+      );
+    }
+
+    const issuedSubject = issuedParticipantSubject(context);
+    const canonicalTask = createCanonicalTaskVerificationRevision({
+      campaignId: campaignDbTask.campaignId,
+      evidenceRule: campaignDbTask.evidenceRule,
+      points: campaignDbTask.points,
+      required: campaignDbTask.required,
+      revision: campaignDbTask.revision ?? 1,
+      taskId: campaignDbTask.id,
+      traceId: context.traceId,
+      updatedAt: campaignDbTask.updatedAt,
+      verificationType: campaignDbTask.verificationType,
+      walletPolicy: campaignDbTask.walletCompatibility,
+    });
+    const runtimeResult = await context.taskVerificationRuntime.execute({
+      issuedSubject,
+      task: canonicalTask,
+      traceId: context.traceId,
+    });
+
+    if (runtimeResult.outcome === "blocked") {
+      const diagnosticCode = runtimeResult.diagnosticCodes[0];
+      throw persistenceUnavailable(
+        diagnosticCode === "TASK_VERIFICATION_CONFIG_BLOCKED"
+          ? "taskVerificationRuntime.activate"
+          : `taskVerificationRuntime.${diagnosticCode ?? "blocked"}`,
+      );
+    }
+    if (!runtimeResult.attemptId || !runtimeResult.providerFamily) {
+      throw persistenceUnavailable("taskVerificationRuntime.attemptProjection");
+    }
+    const providerFamily = runtimeResult.providerFamily;
+
+    let campaignDbCompletion: CampaignDbTaskCompletion | undefined;
+    let campaignDbEvidence: CampaignDbTaskEvidenceRecord | undefined;
+    let payload: Record<string, unknown>;
+    if (runtimeResult.outcome === "completed") {
+      const committed = await context.campaignDbRepository.getById(request.campaignId, {
+        traceId: context.traceId,
+      });
+      campaignDbCompletion = committed?.completions.find((completion) =>
+        completion.taskId === request.taskId
+        && completion.walletAddress === request.walletAddress
+        && completion.status === "completed"
+        && completion.verificationAttemptId === runtimeResult.attemptId);
+      campaignDbEvidence = committed?.taskEvidence.find((evidence) =>
+        evidence.taskId === request.taskId
+        && evidence.walletAddress === request.walletAddress
+        && evidence.status === "completed"
+        && evidence.liveProviderExecuted
+        && evidence.verificationAttemptId === runtimeResult.attemptId);
+
+      if (
+        !campaignDbCompletion
+        || !campaignDbEvidence
+        || campaignDbCompletion.evidenceId !== campaignDbEvidence.id
+        || campaignDbCompletion.evidenceHash !== campaignDbEvidence.evidenceHash
+        || campaignDbEvidence.completionId !== campaignDbCompletion.id
+      ) {
+        throw persistenceUnavailable("taskVerificationRuntime.finalizeProjection");
+      }
+
+      payload = {
+        ...createRepositoryCompletionResponse(
+          campaignDbCompletion,
+          campaignDbTask,
+          campaignDbEvidence,
+        ),
+        authoritative: runtimeResult.authoritative,
+        diagnosticCodes: runtimeResult.diagnosticCodes,
+        outcome: runtimeResult.outcome,
+        providerFamily,
+        retryAfterMs: runtimeResult.retryAfterMs,
+        retryable: runtimeResult.retryable,
+        transportExecuted: runtimeResult.transportExecuted,
+      };
+    } else {
+      payload = {
+        authoritative: runtimeResult.authoritative,
+        campaignId: request.campaignId,
+        diagnosticCodes: runtimeResult.diagnosticCodes,
+        outcome: runtimeResult.outcome,
+        pointsAwarded: 0,
+        providerFamily,
+        retryAfterMs: runtimeResult.retryAfterMs,
+        retryable: runtimeResult.retryable,
+        status: runtimeResult.outcome,
+        taskId: request.taskId,
+        transportExecuted: runtimeResult.transportExecuted,
+        ...(runtimeResult.attemptId
+          ? { verificationAttemptId: runtimeResult.attemptId }
+          : {}),
+        walletAddress: request.walletAddress,
+        walletSource: request.walletSource,
+      };
+    }
+
     const response = await persistLocalResult(
-      result,
+      {
+        boundary: campaignDbBoundary,
+        ok: true,
+        payload,
+      },
       context,
-      (payload) => ({
-        accountType: payload.accountType,
-        campaignId: payload.campaignId,
+      () => ({
+        accountType: request.accountType,
+        campaignId: request.campaignId,
         kind: "verification_attempt",
         summary: {
-          evidenceSource: payload.evidenceSource,
-          pointsAwarded: payload.pointsAwarded,
-          riskFlags: payload.riskFlags,
-          status: payload.status,
+          diagnosticCodes: [...runtimeResult.diagnosticCodes],
+          outcome: runtimeResult.outcome,
+          pointsAwarded: runtimeResult.pointsAwarded,
+          providerFamily,
+          retryable: runtimeResult.retryable,
+          transportExecuted: runtimeResult.transportExecuted,
         },
-        taskId: payload.taskId,
-        walletAddress: payload.walletAddress,
-        walletSource: payload.walletSource,
+        taskId: request.taskId,
+        walletAddress: request.walletAddress,
+        walletSource: request.walletSource,
       }),
-      { tolerateAuditFailureAfterCommit: Boolean(campaignDbCompletion) },
+      { tolerateAuditFailureAfterCommit: true },
     );
 
-    return campaignDbCompletion
+    const projectedResponse = campaignDbCompletion && campaignDbEvidence
       ? {
         ...response,
-        ...(campaignDbRepository ? { campaignDb: createCampaignDbMetadata(campaignDbRepository) } : {}),
+        campaignDb: createCampaignDbMetadata(campaignDbDraft.repository),
         campaignDbCompletion: createCampaignDbCompletionMetadata(campaignDbCompletion),
-        ...(campaignDbEvidence ? { campaignDbEvidence: createCampaignDbEvidenceMetadata(campaignDbEvidence) } : {}),
+        campaignDbEvidence: createCampaignDbEvidenceMetadata(campaignDbEvidence),
       }
       : response;
+
+    return runtimeResult.outcome === "pending"
+      ? {
+        data: projectedResponse,
+        kind: "api_runtime_transport_result",
+        status: 202,
+      } satisfies ApiRuntimeHandlerTransportResult
+      : projectedResponse;
   },
   "campaigns.eligibility": async (context) => {
     const request = eligibilityRequest(context);

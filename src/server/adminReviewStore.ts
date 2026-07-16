@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const ADMIN_REVIEW_MIGRATION_ID = "0003_admin_review_rank_projection";
+export const ADMIN_REVIEW_MIGRATION_ID = "0004_live_provider_task_verification";
 export const ADMIN_REVIEW_SNAPSHOT_VERSION = "review-snapshot-v1";
 export const ADMIN_REVIEW_DECISION_PAYLOAD_VERSION = "review-decision-payload-v1";
 export const ADMIN_ARTIFACT_SOURCE_VERSION = "artifact-source-v1";
@@ -88,10 +88,12 @@ export interface AdminReviewEvidenceRow {
   evidenceRef?: string;
   evidenceSource: "AEFINDER" | "AELFSCAN" | "DAPP_API" | "MANUAL" | "SOCIAL_API";
   id: string;
+  liveProviderExecuted?: boolean;
   pointsAwarded: number;
   status: AdminReviewCompletionRow["status"];
   taskId: string;
   updatedAt: string;
+  verificationAttemptId?: string;
   walletAddress: string;
 }
 

@@ -104,6 +104,30 @@ import {
   createExportArtifactRegistry,
   type ExportArtifactRegistry,
 } from "./exportArtifactRegistry";
+import {
+  deriveTaskVerificationIdentity,
+  issueTrustedTaskVerificationIdentityInput,
+  type CanonicalTaskVerificationRevision,
+  type IssuedTaskVerificationSubjectInput,
+} from "./taskVerification";
+import {
+  resolveTaskVerificationConfig,
+  type TaskVerificationConfig,
+  type TaskVerificationConfigInput,
+} from "./taskVerificationConfig";
+import type {
+  ExecuteTaskVerificationRuntimeInput,
+  TaskVerificationRuntimeCloseResult,
+  TaskVerificationFinalizationWriteFactory,
+  TaskVerificationRuntimeResult,
+  TaskVerificationRuntimeState,
+} from "./taskVerificationRuntime";
+import {
+  createTaskVerificationRuntime,
+  type TaskVerificationRuntime,
+} from "./taskVerificationRuntime";
+import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
+import type { ProviderHttpTransport } from "./providerHttpTransport";
 
 export type ApiRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 
@@ -157,6 +181,7 @@ export interface ApiRuntimeHandlerContext {
   query: Record<string, string>;
   route: ApiRuntimeRouteContract;
   service: CampaignOsLocalService;
+  taskVerificationRuntime: ProtectedTaskVerificationRuntimePort;
   traceId: string;
   version: string;
   walletSessionRepository: WalletSessionRepository;
@@ -174,6 +199,47 @@ export interface CampaignOsApiRuntime {
   handle(request: ApiRuntimeRequest): Promise<ApiRuntimeResponse>;
 }
 
+export const TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION =
+  "0004_live_provider_task_verification";
+
+export type TaskVerificationRuntimePort = Pick<
+  TaskVerificationRuntime,
+  "close" | "execute" | "state"
+>;
+export type TaskVerificationRuntimeFactory = () => TaskVerificationRuntimePort;
+
+export interface ProtectedTaskVerificationExecuteInput {
+  issuedSubject: IssuedTaskVerificationSubjectInput;
+  task: CanonicalTaskVerificationRevision;
+  traceId: string;
+}
+
+export interface ProtectedTaskVerificationRuntimeResult
+  extends TaskVerificationRuntimeResult {
+  providerFamily?: TaskVerificationConfig["bindings"][number]["providerFamily"];
+  retryAfterMs: number;
+  retryable: boolean;
+  status: TaskVerificationRuntimeResult["outcome"];
+}
+
+export interface TaskVerificationRuntimeReadiness {
+  bindingCount: number;
+  enabled: boolean;
+  providerStatus: "active" | "configured" | "disabled";
+  requiredSchemaVersion: typeof TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION;
+  schemaStatus: "blocked" | "ready" | "unchecked";
+  status: "blocked" | "disabled" | "invalid" | "ready";
+}
+
+export interface ProtectedTaskVerificationRuntimePort {
+  close(): Promise<TaskVerificationRuntimeCloseResult>;
+  execute(
+    input: ProtectedTaskVerificationExecuteInput,
+  ): Promise<ProtectedTaskVerificationRuntimeResult>;
+  readiness(health?: CampaignDbRepositoryHealth): TaskVerificationRuntimeReadiness;
+  state(): TaskVerificationRuntimeState;
+}
+
 class ApiRuntimeResourceCloseError extends Error {
   readonly failureCount: number;
 
@@ -186,7 +252,7 @@ class ApiRuntimeResourceCloseError extends Error {
 
 export const API_RUNTIME_CLOSE_MAX_DEADLINE_MS = 10_000;
 
-type ApiRuntimeClosePhase = "request_drain" | "resource_close";
+type ApiRuntimeClosePhase = "provider_drain" | "request_drain" | "resource_close";
 
 const closeDeadlineExceeded = (
   phase: ApiRuntimeClosePhase,
@@ -221,6 +287,280 @@ const resolveCloseDeadlineMs = (value: number | undefined): number => {
   }
 
   return deadlineMs;
+};
+
+const blockedTaskVerificationResult = (
+  traceId: string,
+  diagnosticCode = "TASK_VERIFICATION_CONFIG_BLOCKED",
+): ProtectedTaskVerificationRuntimeResult => Object.freeze({
+  authoritative: false,
+  diagnosticCodes: Object.freeze([diagnosticCode]),
+  outcome: "blocked",
+  pointsAwarded: 0,
+  positiveMatch: false,
+  retryAfterMs: 0,
+  retryable: false,
+  status: "blocked",
+  traceId,
+  transportExecuted: false,
+});
+
+const projectProtectedTaskVerificationResult = (
+  result: TaskVerificationRuntimeResult,
+  binding: TaskVerificationConfig["bindings"][number],
+): ProtectedTaskVerificationRuntimeResult => Object.freeze({
+  ...result,
+  providerFamily: binding.providerFamily,
+  retryAfterMs: result.outcome === "pending" ? binding.timeoutMs : 0,
+  retryable: result.outcome === "pending",
+  status: result.outcome,
+});
+
+const taskVerificationRecordId = (
+  prefix: "completion" | "evidence" | "participant",
+  value: string,
+): string => `${prefix}-${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
+
+const createTaskVerificationFinalizationWrite:
+TaskVerificationFinalizationWriteFactory = (input) => {
+  const completionId = taskVerificationRecordId("completion", input.attemptId);
+  const evidenceId = taskVerificationRecordId("evidence", input.attemptId);
+  const participantId = taskVerificationRecordId(
+    "participant",
+    `${input.task.campaignId}:${input.identity.issuedSubject.walletAddress}`,
+  );
+  const subject = input.identity.issuedSubject;
+
+  return {
+    completion: {
+      accountType: subject.accountType,
+      campaignId: input.task.campaignId,
+      completedAt: input.completedAt,
+      createdAt: input.completedAt,
+      evidenceHash: input.evidence.evidenceHash,
+      evidenceId,
+      evidenceSource: input.evidence.evidenceSource,
+      id: completionId,
+      pointsAwarded: input.pointsAwarded,
+      status: "completed",
+      taskId: input.task.taskId,
+      updatedAt: input.completedAt,
+      verificationAttemptId: input.attemptId,
+      walletAddress: subject.walletAddress,
+      walletSource: subject.walletSource,
+    },
+    evidence: {
+      accountType: subject.accountType,
+      campaignId: input.task.campaignId,
+      capturedAt: input.completedAt,
+      completionId,
+      createdAt: input.completedAt,
+      diagnosticCodes: [...input.evidence.diagnosticCodes],
+      evidenceHash: input.evidence.evidenceHash,
+      evidenceRef: input.evidence.evidenceRef,
+      evidenceSource: input.evidence.evidenceSource,
+      id: evidenceId,
+      liveContractExecuted: false,
+      liveProviderExecuted: true,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      pointsAwarded: input.pointsAwarded,
+      status: "completed",
+      taskId: input.task.taskId,
+      updatedAt: input.completedAt,
+      verificationAttemptId: input.attemptId,
+      walletAddress: subject.walletAddress,
+      walletSource: subject.walletSource,
+    },
+    participant: {
+      accountType: subject.accountType,
+      campaignId: input.task.campaignId,
+      createdAt: input.completedAt,
+      id: participantId,
+      localePreference: "en-US",
+      riskFlags: [],
+      totalPoints: input.pointsAwarded,
+      updatedAt: input.completedAt,
+      walletAddress: subject.walletAddress,
+      walletSignatureStatus: "signed",
+      walletSource: subject.walletSource,
+      walletTypeVerified: subject.accountType !== "UNKNOWN",
+      walletVerifiedAt: input.completedAt,
+    },
+  };
+};
+
+const hasTaskVerificationAttemptStore = (
+  repository: CampaignDbRepository,
+): boolean => {
+  const store = repository.taskVerificationAttempts;
+
+  return Boolean(
+    store
+    && typeof store.begin === "function"
+    && typeof store.finalize === "function"
+    && typeof store.get === "function"
+    && typeof store.markTransportStarted === "function",
+  );
+};
+
+const hasRequiredTaskVerificationSchema = (
+  health: CampaignDbRepositoryHealth,
+): boolean => health.selectedMode === "postgres"
+  && health.campaignStore?.mode === "postgres"
+  && health.campaignStore.schemaVersion === TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION
+  && health.campaignStore.migrationStatus === "ready"
+  && health.campaignStore.status === "ready"
+  && health.campaignStore.appliedMigrationIds?.includes(
+    TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION,
+  ) === true;
+
+const createProtectedTaskVerificationRuntime = (options: {
+  config: TaskVerificationConfig;
+  repository: CampaignDbRepository;
+  runtimeFactory?: TaskVerificationRuntimeFactory;
+  safeRepository: CampaignDbRepository;
+  runtime?: TaskVerificationRuntimePort;
+}): ProtectedTaskVerificationRuntimePort => {
+  let accepting = true;
+  let activeRuntime = options.runtime;
+  let infrastructureReadiness: Promise<boolean> | undefined;
+  let observedSchemaStatus: TaskVerificationRuntimeReadiness["schemaStatus"] = "unchecked";
+  const runtimeConfigured = () => Boolean(activeRuntime || options.runtimeFactory);
+  const observeSchema = (health: CampaignDbRepositoryHealth): boolean => {
+    const ready = hasRequiredTaskVerificationSchema(health);
+    observedSchemaStatus = ready ? "ready" : "blocked";
+    return ready;
+  };
+  const resolveInfrastructureReadiness = (): Promise<boolean> => {
+    if (
+      options.config.status !== "ready"
+      || !options.config.enabled
+      || !options.config.valid
+      || !options.config.hasLiveBindings
+      || (!activeRuntime && !options.runtimeFactory)
+      || !hasTaskVerificationAttemptStore(options.repository)
+    ) {
+      return Promise.resolve(false);
+    }
+
+    infrastructureReadiness ??= options.safeRepository.health({
+      traceId: `task-verification-activation-${randomUUID()}`,
+    }).then(observeSchema, () => {
+      observedSchemaStatus = "blocked";
+      return false;
+    });
+
+    return infrastructureReadiness;
+  };
+
+  return {
+    close: async () => {
+      accepting = false;
+
+      return activeRuntime?.close()
+        ?? Object.freeze({ activeCallCount: 0, status: "drained" as const });
+    },
+    execute: async (input) => {
+      if (!accepting) {
+        return blockedTaskVerificationResult(
+          input.traceId,
+          "TASK_VERIFICATION_RUNTIME_STOPPED",
+        );
+      }
+
+      if (!await resolveInfrastructureReadiness()) {
+        return blockedTaskVerificationResult(input.traceId);
+      }
+
+      const bindingId = input.task.evidenceRule.providerBindingId;
+      if (
+        typeof bindingId !== "string"
+        || (input.task.verificationType !== "ON_CHAIN"
+          && input.task.verificationType !== "DAPP_API")
+      ) {
+        return blockedTaskVerificationResult(input.traceId);
+      }
+
+      const bindingResolution = options.config.resolveBinding(
+        bindingId,
+        input.task.verificationType,
+      );
+      if (bindingResolution.status !== "resolved") {
+        return blockedTaskVerificationResult(input.traceId);
+      }
+
+      try {
+        activeRuntime ??= options.runtimeFactory?.();
+        if (!activeRuntime) {
+          return blockedTaskVerificationResult(input.traceId);
+        }
+        const identity = deriveTaskVerificationIdentity(
+          issueTrustedTaskVerificationIdentityInput({
+            binding: {
+              bindingId: bindingResolution.binding.id,
+              bindingRevision: bindingResolution.binding.revision,
+            },
+            issuedSubject: input.issuedSubject,
+            task: input.task,
+            traceId: input.traceId,
+          }),
+        );
+
+        const result = await activeRuntime.execute({
+          identity,
+          task: input.task,
+          traceId: input.traceId,
+        } satisfies ExecuteTaskVerificationRuntimeInput);
+
+        return projectProtectedTaskVerificationResult(
+          result,
+          bindingResolution.binding,
+        );
+      } catch {
+        return blockedTaskVerificationResult(input.traceId);
+      }
+    },
+    readiness: (health) => {
+      if (health) {
+        observeSchema(health);
+      }
+      const configStatus = options.config.status;
+      const enabled = configStatus === "ready" && options.config.enabled;
+      const ready = accepting
+        && enabled
+        && options.config.valid
+        && options.config.hasLiveBindings
+        && hasTaskVerificationAttemptStore(options.repository)
+        && runtimeConfigured()
+        && observedSchemaStatus === "ready";
+
+      return Object.freeze({
+        bindingCount: options.config.bindings.length,
+        enabled,
+        providerStatus: activeRuntime
+          ? "active"
+          : runtimeConfigured()
+            ? "configured"
+            : "disabled",
+        requiredSchemaVersion: TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION,
+        schemaStatus: observedSchemaStatus,
+        status: ready
+          ? "ready"
+          : configStatus === "disabled"
+            ? "disabled"
+            : configStatus === "invalid"
+              ? "invalid"
+              : "blocked",
+      });
+    },
+    state: () => activeRuntime?.state()
+      ?? Object.freeze({
+        accepting,
+        activeCallCount: 0,
+        controllerCount: 0,
+      }),
+  };
 };
 
 const waitForClosePhase = <T>(
@@ -352,6 +692,12 @@ export interface CreateCampaignOsApiRuntimeOptions {
   runtimeConfig?: CampaignOsRuntimeConfig;
   runtimeConfigOptions?: CampaignOsRuntimeConfigOptions;
   service?: CampaignOsLocalService;
+  taskVerificationConfig?: TaskVerificationConfig;
+  taskVerificationConfigOptions?: TaskVerificationConfigInput;
+  taskVerificationProviderRuntime?: ProviderHttpRuntimeSummary;
+  taskVerificationRuntime?: TaskVerificationRuntimePort;
+  taskVerificationRuntimeFactory?: TaskVerificationRuntimeFactory;
+  taskVerificationTransport?: ProviderHttpTransport;
   version?: string;
   walletSessionActivationPolicy?: WalletSessionActivationPolicy;
   walletSessionRepository?: WalletSessionRepository;
@@ -1130,11 +1476,13 @@ const withBackendServiceReadinessMetadata = ({
   data,
   readiness,
   routeId,
+  taskVerificationRuntime,
 }: {
   campaignDatabase: CampaignDbRepositoryHealth;
   data: unknown;
   readiness: BackendServiceReadinessReport;
   routeId: ApiRuntimeRouteContract["id"];
+  taskVerificationRuntime: TaskVerificationRuntimeReadiness;
 }) => {
   if (!isRecord(data) || !isRecord(data.backendService)) {
     return data;
@@ -1145,6 +1493,7 @@ const withBackendServiceReadinessMetadata = ({
       ...data,
       apiService: createApiServiceMetadata(readiness),
       campaignDatabase,
+      taskVerificationRuntime,
       backendService: {
         ...data.backendService,
         activation: createHealthActivationMetadata(readiness.backendRuntimeBootstrap.activation),
@@ -1163,6 +1512,7 @@ const withBackendServiceReadinessMetadata = ({
       ...data,
       activation: readiness.backendRuntimeBootstrap.activation,
       campaignDatabase,
+      taskVerificationRuntime,
       apiService: {
         ...createApiServiceMetadata(readiness),
         attachMap: readiness.apiService.blockedDependencyIds
@@ -1509,6 +1859,12 @@ export const createCampaignOsApiRuntime = ({
   runtimeConfig,
   runtimeConfigOptions,
   service = createCampaignOsLocalService(),
+  taskVerificationConfig,
+  taskVerificationConfigOptions,
+  taskVerificationProviderRuntime,
+  taskVerificationRuntime,
+  taskVerificationRuntimeFactory,
+  taskVerificationTransport,
   version,
   walletSessionActivationPolicy = "runtime_issued_only",
   walletSessionRepository,
@@ -1603,6 +1959,42 @@ export const createCampaignOsApiRuntime = ({
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
     composedCampaignDbRepository,
   );
+  const taskVerificationCompositionProvided = Boolean(
+    taskVerificationRuntime
+    || taskVerificationRuntimeFactory
+    || taskVerificationTransport,
+  );
+  const resolvedTaskVerificationConfig = taskVerificationConfig
+    ?? resolveTaskVerificationConfig({
+      ...(taskVerificationConfigOptions ?? {
+        env: runtimeConfigOptions?.env ?? {},
+        environment: "local",
+      }),
+      providerHttpTransportProvided: taskVerificationCompositionProvided,
+    });
+  const composedTaskVerificationRuntimeFactory = taskVerificationRuntimeFactory
+    ?? (
+      !taskVerificationRuntime
+      && taskVerificationTransport
+      && composedCampaignDbRepository.taskVerificationAttempts
+        ? () => createTaskVerificationRuntime({
+          attemptStore: composedCampaignDbRepository.taskVerificationAttempts!,
+          config: resolvedTaskVerificationConfig,
+          finalizationWriteFactory: createTaskVerificationFinalizationWrite,
+          ...(taskVerificationProviderRuntime
+            ? { providerHttpRuntime: taskVerificationProviderRuntime }
+            : {}),
+          transport: taskVerificationTransport,
+        })
+        : undefined
+    );
+  const protectedTaskVerificationRuntime = createProtectedTaskVerificationRuntime({
+    config: resolvedTaskVerificationConfig,
+    repository: composedCampaignDbRepository,
+    runtime: taskVerificationRuntime,
+    runtimeFactory: composedTaskVerificationRuntimeFactory,
+    safeRepository: safeCampaignDbRepository,
+  });
   const activeWalletSessionIds = new Set<string>();
   const composedWalletSessionRepository = walletSessionRepository
     ?? createWalletSessionRepository(walletSessionRepositoryOptions);
@@ -1695,7 +2087,12 @@ export const createCampaignOsApiRuntime = ({
       drainWaiters.clear();
     }
   };
-  const resourceClosers: Array<{ close: () => Promise<void>; key: unknown }> = [];
+  const resourceClosers: Array<{
+    close: () => Promise<void>;
+    closed: boolean;
+    key: unknown;
+    pending?: Promise<void>;
+  }> = [];
   const registeredResourceKeys = new Set<unknown>();
   const registerResourceCloser = (key: unknown, closeResource: () => Promise<void>) => {
     if (registeredResourceKeys.has(key)) {
@@ -1703,7 +2100,7 @@ export const createCampaignOsApiRuntime = ({
     }
 
     registeredResourceKeys.add(key);
-    resourceClosers.push({ close: closeResource, key });
+    resourceClosers.push({ close: closeResource, closed: false, key });
   };
 
   if (composedCampaignDbRepository.close) {
@@ -1712,10 +2109,6 @@ export const createCampaignOsApiRuntime = ({
       () => safeCampaignDbRepository.close?.() ?? Promise.resolve(),
     );
   }
-  registerResourceCloser(
-    composedWalletSessionRepository,
-    () => safeWalletSessionRepository.close(),
-  );
   if (composedAdminReviewStore && adminReviewStoreOwnership === "runtime") {
     registerResourceCloser(
       composedAdminReviewStore,
@@ -1727,62 +2120,129 @@ export const createCampaignOsApiRuntime = ({
   if (adminReviewPartialCleanup) {
     registerResourceCloser(adminReviewPartialCleanup, () => adminReviewPartialCleanup!);
   }
+  registerResourceCloser(
+    composedWalletSessionRepository,
+    () => safeWalletSessionRepository.close(),
+  );
 
-  let resourceClosePromise: Promise<void> | undefined;
-  const closeOwnedResources = (): Promise<void> => {
-    resourceClosePromise ??= Promise.allSettled(resourceClosers.map(({ close: closeResource }) => {
-      try {
-        return closeResource();
-      } catch (error) {
-        return Promise.reject(error);
-      }
-    })).then((results) => {
-      const failures = results
-        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-        .map((result) => result.reason as unknown);
+  const closeResourceOnce = (
+    resource: (typeof resourceClosers)[number],
+  ): Promise<void> => {
+    if (resource.closed) {
+      return Promise.resolve();
+    }
+    if (resource.pending) {
+      return resource.pending;
+    }
 
-      if (failures.length === 1) {
-        throw failures[0];
-      }
+    let closeAttempt: Promise<void>;
+    try {
+      closeAttempt = Promise.resolve(resource.close());
+    } catch (error) {
+      closeAttempt = Promise.reject(error);
+    }
 
-      if (failures.length > 1) {
-        throw new ApiRuntimeResourceCloseError(failures);
-      }
-    });
+    const pending = closeAttempt.then(
+      () => {
+        resource.closed = true;
+        resource.pending = undefined;
+      },
+      (error: unknown) => {
+        resource.pending = undefined;
+        throw error;
+      },
+    );
+    resource.pending = pending;
 
-    return resourceClosePromise;
+    return pending;
   };
+  const closeOwnedResources = async (deadlineAt: number): Promise<void> => {
+    const failures: unknown[] = [];
+
+    for (const resource of resourceClosers) {
+      if (resource.closed) {
+        continue;
+      }
+      if (Date.now() >= deadlineAt) {
+        throw closeDeadlineExceeded("resource_close", runtimeCloseDeadlineMs);
+      }
+
+      try {
+        await waitForClosePhase(
+          closeResourceOnce(resource),
+          deadlineAt,
+          "resource_close",
+          runtimeCloseDeadlineMs,
+        );
+      } catch (error) {
+        if (
+          error instanceof ApiRuntimeError
+          && error.body.details?.diagnosticCode === "API_RUNTIME_CLOSE_DEADLINE_EXCEEDED"
+        ) {
+          throw error;
+        }
+        failures.push(error);
+      }
+    }
+
+    if (failures.length === 1 && failures[0] instanceof ApiRuntimeError) {
+      throw failures[0];
+    }
+    if (failures.length > 0) {
+      throw new ApiRuntimeResourceCloseError(failures);
+    }
+  };
+  let providerDrained = false;
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
     acceptingRequests = false;
-    closePromise ??= (async () => {
+    if (closePromise) {
+      return closePromise;
+    }
+
+    let operation!: Promise<void>;
+    operation = (async () => {
       const deadlineAt = Date.now() + runtimeCloseDeadlineMs;
 
       try {
+        if (!providerDrained) {
+          let providerResult: TaskVerificationRuntimeCloseResult;
+          try {
+            providerResult = await waitForClosePhase(
+              protectedTaskVerificationRuntime.close(),
+              deadlineAt,
+              "provider_drain",
+              runtimeCloseDeadlineMs,
+            );
+          } catch (error) {
+            if (error instanceof ApiRuntimeError) {
+              throw error;
+            }
+            throw new ApiRuntimeResourceCloseError([error]);
+          }
+
+          if (providerResult.status !== "drained" || providerResult.activeCallCount !== 0) {
+            throw closeDeadlineExceeded("provider_drain", runtimeCloseDeadlineMs);
+          }
+          providerDrained = true;
+        }
+
         await waitForClosePhase(
           waitForRequestDrain(),
           deadlineAt,
           "request_drain",
           runtimeCloseDeadlineMs,
         );
-      } catch (error) {
-        drainWaiters.clear();
+        await closeOwnedResources(deadlineAt);
         activeWalletSessionIds.clear();
-        void closeOwnedResources().catch(() => undefined);
+      } catch (error) {
+        if (closePromise === operation) {
+          closePromise = undefined;
+        }
         throw error;
       }
-
-      try {
-        await waitForClosePhase(
-          closeOwnedResources(),
-          deadlineAt,
-          "resource_close",
-          runtimeCloseDeadlineMs,
-        );
-      } finally {
-        activeWalletSessionIds.clear();
-      }
     })();
+    closePromise = operation;
 
     return closePromise;
   };
@@ -1944,6 +2404,7 @@ export const createCampaignOsApiRuntime = ({
           query,
           route: matcher.route,
           service: activeService,
+          taskVerificationRuntime: protectedTaskVerificationRuntime,
           traceId,
           version: runtimeVersion,
           walletSessionRepository: safeWalletSessionRepository,
@@ -1969,6 +2430,9 @@ export const createCampaignOsApiRuntime = ({
             data,
             readiness: requestBackendServiceReadiness(),
             routeId: matcher.route.id,
+            taskVerificationRuntime: protectedTaskVerificationRuntime.readiness(
+              campaignDatabase,
+            ),
           })
           : data;
 

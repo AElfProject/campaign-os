@@ -2558,6 +2558,45 @@ const postDurableLocalSmokeRecord = async ({
   return { data, kind };
 };
 
+const assertDurableLocalVerificationRuntimeDisabled = async ({
+  baseUrl,
+  body,
+  fetchImpl,
+  path,
+  traceId,
+  trustedHeaders,
+}: {
+  baseUrl: string;
+  body: Record<string, unknown>;
+  fetchImpl: typeof fetch;
+  path: string;
+  traceId: string;
+  trustedHeaders: Record<string, string>;
+}): Promise<void> => {
+  const response = await fetchImpl(`${baseUrl}${path}`, {
+    body: JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+      ...trustedHeaders,
+      "x-campaign-os-trace-id": traceId,
+    },
+    method: "POST",
+  });
+  const payload = await readJson(response);
+  const error = isRecord(payload.error) ? payload.error : undefined;
+  const details = readNestedRecord(error, ["details"]);
+
+  if (
+    response.status !== 503
+    || payload.ok !== false
+    || payload.traceId !== traceId
+    || getString(error, "code") !== "PERSISTENCE_UNAVAILABLE"
+    || getString(details, "operation") !== "taskVerificationRuntime.activate"
+  ) {
+    throw new Error("Campaign OS durable local verification runtime smoke check failed.");
+  }
+};
+
 const readDurableHealth = async (
   baseUrl: string,
   fetchImpl: typeof fetch,
@@ -2603,7 +2642,6 @@ const assertDurableLocalPersistenceHealth = (
     "wallet_session",
     "campaign_draft",
     "task_draft",
-    "verification_attempt",
     "export_preview",
   ];
 
@@ -2696,7 +2734,7 @@ const runDurableLocalPersistenceSmoke = async ({
     throw new Error("Campaign OS durable local Task smoke check failed.");
   }
 
-  const verification = await postDurableLocalSmokeRecord({
+  await assertDurableLocalVerificationRuntimeDisabled({
     baseUrl: server.url,
     body: {
       accountType: participantSession.accountType,
@@ -2726,7 +2764,6 @@ const runDurableLocalPersistenceSmoke = async ({
     participantSession.recordKind,
     campaignDraft.kind,
     taskDraft.kind,
-    verification.kind,
     exportPreview.kind,
   ];
   const firstPersistence = await readDurableHealth(
@@ -2735,7 +2772,7 @@ const runDurableLocalPersistenceSmoke = async ({
     durableLocalSmokeTraceIds.firstHealth,
   );
 
-  assertDurableLocalPersistenceHealth(firstPersistence, 5);
+  assertDurableLocalPersistenceHealth(firstPersistence, 4);
   await server.stop();
 
   const restartedServer = await startCampaignOsApiServer({

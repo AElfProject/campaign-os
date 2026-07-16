@@ -449,6 +449,27 @@ describe("API runtime route catalog", () => {
       readiness: "review_required",
       serviceGroup: "verification",
     });
+    expect(apiRuntimeRouteById["tasks.verify"]).toMatchObject({
+      apiSkillId: "verify_task",
+      method: "POST",
+      path: "/api/tasks/:taskId/verify",
+      productionDependencies: expect.arrayContaining([
+        "auth_session",
+        "migration_runner",
+        "production_database",
+        "provider_adapters",
+        "sensitive_material_boundary",
+      ]),
+      readiness: "blocked",
+      serviceGroup: "verification",
+      supportMode: "provider_live",
+    });
+    expect(apiRuntimeRouteById["tasks.verify"].summary["en-US"]).toContain(
+      "PostgreSQL schema 0004",
+    );
+    expect(apiRuntimeRouteById["tasks.verify"].boundary["en-US"]).toContain(
+      "production disabled",
+    );
     expect(apiRuntimeRouteById["campaigns.export.readiness"]).toMatchObject({
       apiSkillId: "get_campaign_export_readiness",
       method: "GET",
@@ -487,12 +508,27 @@ describe("API runtime route catalog", () => {
       expect(["low", "medium", "high"]).toContain(runtimeRoute.riskLevel);
       expect(runtimeRoute.summary["en-US"]).not.toHaveLength(0);
       expect(runtimeRoute.summary["zh-CN"]).not.toHaveLength(0);
-      expect(runtimeRoute.boundary["en-US"]).toContain("No live API");
+      if (runtimeRoute.id === "tasks.verify") {
+        expect(runtimeRoute.boundary["en-US"]).toContain("provider-live");
+      } else {
+        expect(runtimeRoute.boundary["en-US"]).toContain("No live API");
+      }
       expect(apiRuntimeServiceGroupById[runtimeRoute.serviceGroup]).toBeDefined();
-      expect(runtimeRoute.productionDependencies).toEqual(
-        apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
-      );
-      expect(runtimeRoute.supportMode).toBe("local_seeded");
+      if (runtimeRoute.id === "tasks.verify") {
+        expect(runtimeRoute.productionDependencies).toEqual(expect.arrayContaining([
+          ...apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
+          "auth_session",
+          "migration_runner",
+          "production_database",
+          "sensitive_material_boundary",
+        ]));
+        expect(runtimeRoute.supportMode).toBe("provider_live");
+      } else {
+        expect(runtimeRoute.productionDependencies).toEqual(
+          apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
+        );
+        expect(runtimeRoute.supportMode).toBe("local_seeded");
+      }
     }
   });
 
@@ -757,7 +793,9 @@ describe("API runtime route catalog", () => {
       expect(route.responseEnvelopeId).toBe("api.response.success.v1");
       expect(route.errorEnvelopeId).toBe("api.response.error.v1");
       expect(route.serviceId).not.toHaveLength(0);
-      expect(route.supportMode).toBe("local_seeded");
+      expect(route.supportMode).toBe(
+        route.routeId === "tasks.verify" ? "provider_live" : "local_seeded",
+      );
     }
 
     for (const port of servicePorts.ports) {

@@ -21,12 +21,27 @@ import {
   CampaignDbRepositoryError,
   createCampaignDbRepository,
   type CampaignDbRepository,
+  type CampaignDbRepositoryHealth,
+  type CampaignDbTaskCompletion,
+  type CampaignDbTaskEvidenceRecord,
+  type CampaignDbParticipantRecord,
 } from "./campaignDbRepository";
 import { PostgresCampaignStoreError } from "./postgresCampaignDurableStore";
 import {
   createWalletSessionRepository,
   type WalletSessionRepository,
 } from "./walletSessionRepository";
+import { createMemoryTaskVerificationAttemptStore } from "./taskVerificationAttemptStore";
+import {
+  resolveTaskVerificationConfig,
+  type TaskVerificationConfig,
+} from "./taskVerificationConfig";
+import type {
+  ExecuteTaskVerificationRuntimeInput,
+  TaskVerificationRuntimeResult,
+} from "./taskVerificationRuntime";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpTransport } from "./providerHttpTransport";
 import type {
   AdminExportArtifactContent,
   AdminExportArtifactDetail,
@@ -1133,6 +1148,114 @@ const createCampaignOsApiRuntime = (options: CreateCampaignOsApiRuntimeOptions =
     walletSessionActivationPolicy:
       options.walletSessionActivationPolicy ?? "repository_trusted",
   });
+
+const createReadyTaskVerificationConfig = (): TaskVerificationConfig =>
+  resolveTaskVerificationConfig({
+    bindingsJson: JSON.stringify([{
+      degradationPolicy: "pending",
+      enabled: true,
+      endpointEnvKey: "CAMPAIGN_OS_WP04_TEST_ENDPOINT",
+      endpointId: "aefinder-aelfscan-indexer-query",
+      evidenceSource: "AELFSCAN",
+      id: "wp04-live-binding",
+      maxAttempts: 3,
+      maxResponseBytes: 16_384,
+      providerFamily: "aefinder",
+      providerGroupId: "aefinder-aelfscan-indexers",
+      requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+      responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+      revision: 1,
+      timeoutMs: 1_000,
+      verificationType: "ON_CHAIN",
+    }]),
+    enablement: "explicitly-enabled",
+    env: {
+      CAMPAIGN_OS_WP04_TEST_ENDPOINT: "http://127.0.0.1:4179/verify",
+    },
+    environment: "local",
+    providerHttpTransportProvided: true,
+  });
+
+const createTaskVerificationPostureRepository = (
+  repository: CampaignDbRepository,
+  options: {
+    mode?: "deterministic_test" | "postgres";
+    schemaVersion?: string;
+  } = {},
+): CampaignDbRepository => {
+  const mode = options.mode ?? "postgres";
+  const schemaVersion = options.schemaVersion ?? "0004_live_provider_task_verification";
+  const attemptStore = createMemoryTaskVerificationAttemptStore();
+
+  return {
+    ...repository,
+    taskVerificationAttempts: attemptStore,
+    health: async (context) => ({
+      ...await repository.health(context),
+      campaignStore: {
+        appliedMigrationIds: [schemaVersion],
+        boundedListLimit: 100,
+        completionRecordCount: 0,
+        diagnosticCodes: [],
+        diagnostics: [],
+        durable: mode === "postgres",
+        fallbackUsed: false,
+        migrationStatus: "ready",
+        mode: mode === "postgres" ? "postgres" : "local_seeded",
+        participantRecordCount: 0,
+        recordCount: 0,
+        referralBindingRecordCount: 0,
+        schemaVersion,
+        status: "ready",
+        storeId: "campaign-db",
+        taskEvidenceRecordCount: 0,
+        taskRecordCount: 0,
+      } satisfies CampaignDbRepositoryHealth["campaignStore"],
+      selectedMode: mode,
+    }),
+  };
+};
+
+const createPendingTaskVerificationRuntime = () => {
+  const execute = vi.fn(async (
+    input: ExecuteTaskVerificationRuntimeInput,
+  ): Promise<TaskVerificationRuntimeResult> => ({
+    attemptId: "attempt-wp04-pending",
+    authoritative: false,
+    diagnosticCodes: ["TASK_VERIFICATION_ATTEMPT_IN_PROGRESS"],
+    outcome: "pending",
+    pointsAwarded: 0,
+    positiveMatch: false,
+    traceId: input.traceId ?? "trace-wp04-pending",
+    transportExecuted: false,
+  }));
+
+  return {
+    close: vi.fn(async () => ({ activeCallCount: 0, status: "drained" as const })),
+    execute,
+    state: vi.fn(() => ({ accepting: true, activeCallCount: 0, controllerCount: 0 })),
+  };
+};
+
+const createActivatedProviderHttpRuntime = () => createProviderHttpRuntimeSummary({
+  env: {
+    CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:wp04-provider-http",
+    CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:wp04-provider-http-endpoint",
+    CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF: "config-ref:wp04-provider-http-registry",
+    CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF: "header-ref:wp04-provider-http-auth",
+    CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF: "idem-ref:wp04-provider-http",
+    CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF: "lease-ref:wp04-provider-http",
+    CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF: "config-ref:wp04-provider-http-worker",
+    CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY: "policy-ref:wp04-provider-http-redaction",
+    CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY: "policy-ref:wp04-provider-http-response",
+    CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF: "runbook-ref:wp04-provider-http",
+    CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT: "explicitly-enabled",
+    CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:1000ms",
+    CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:wp04-provider-http-transport",
+  },
+  profileId: "production-required",
+  transportProvided: true,
+});
 
 const expectSuccessData = <TPayload = unknown>(response: ApiRuntimeResponse<unknown>) => {
   expect(response.status).toBe(200);
@@ -4513,6 +4636,621 @@ describe("Campaign OS API runtime", () => {
     await ownerRuntime.close();
   });
 
+  it("blocks live verification before runtime execution and repository success writes for every inactive posture", async () => {
+    const inactiveCases: Array<{
+      config: TaskVerificationConfig;
+      evidenceRule: Record<string, string | number | boolean>;
+      mode?: "deterministic_test" | "postgres";
+      name: string;
+      schemaVersion?: string;
+    }> = [
+      {
+        name: "default disabled",
+        config: resolveTaskVerificationConfig({ env: {}, environment: "local" }),
+        evidenceRule: { providerBindingId: "wp04-live-binding", expectedField: "verified" },
+      },
+      {
+        name: "memory store",
+        config: createReadyTaskVerificationConfig(),
+        evidenceRule: { providerBindingId: "wp04-live-binding", expectedField: "verified" },
+        mode: "deterministic_test",
+      },
+      {
+        name: "schema before 0004",
+        config: createReadyTaskVerificationConfig(),
+        evidenceRule: { providerBindingId: "wp04-live-binding", expectedField: "verified" },
+        schemaVersion: "0003_admin_review_runtime",
+      },
+      {
+        name: "missing binding",
+        config: createReadyTaskVerificationConfig(),
+        evidenceRule: { expectedField: "verified" },
+      },
+      {
+        name: "invalid binding",
+        config: createReadyTaskVerificationConfig(),
+        evidenceRule: { providerBindingId: "unknown-live-binding", expectedField: "verified" },
+      },
+    ];
+
+    for (const testCase of inactiveCases) {
+      const repository = createCampaignDbRepository();
+      const campaign = await repository.createDraft({
+        duration: "2026-11-01/2026-11-14",
+        endTime: "2026-11-14T23:59:59Z",
+        goal: `WP04 ${testCase.name}`,
+        ownerAddress: "wp04-owner",
+        projectId: `wp04-${testCase.name.replace(/ /g, "-")}`,
+        rewardDescription: "WP04 activation boundary.",
+        startTime: "2026-11-01T00:00:00Z",
+        status: "scheduled",
+        walletPolicy: "ANY",
+      });
+      const task = await repository.addTaskDraft({
+        campaignId: campaign.id,
+        evidenceRule: testCase.evidenceRule,
+        points: 25,
+        required: true,
+        templateCode: "wp04_activation_task",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      });
+      const upsertTaskVerification = vi.fn(repository.upsertTaskVerification!.bind(repository));
+      const taskVerificationRuntime = createPendingTaskVerificationRuntime();
+      const runtime = createCampaignOsApiRuntime({
+        campaignDbRepository: createTaskVerificationPostureRepository({
+          ...repository,
+          upsertTaskVerification,
+        }, {
+          mode: testCase.mode,
+          schemaVersion: testCase.schemaVersion,
+        }),
+        taskVerificationConfig: testCase.config,
+        taskVerificationRuntime,
+      });
+      const response = await runtime.handle({
+        method: "POST",
+        path: `/api/tasks/${task.id}/verify`,
+        headers: participantAuthHeaders("2F4Wp04InactiveParticipant", {
+          "x-campaign-os-trace-id": `trace-wp04-${testCase.name.replace(/ /g, "-")}`,
+        }),
+        body: JSON.stringify({ campaignId: campaign.id }),
+      });
+
+      expect(response, testCase.name).toMatchObject({
+        status: 503,
+        body: {
+          ok: false,
+          error: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: { operation: "taskVerificationRuntime.activate" },
+          },
+        },
+      });
+      expect(taskVerificationRuntime.execute, testCase.name).not.toHaveBeenCalled();
+      expect(upsertTaskVerification, testCase.name).not.toHaveBeenCalled();
+      expectNoForbiddenResponseKeys(response.body);
+      await runtime.close();
+    }
+  });
+
+  it("returns a safe 202 attempt projection without fabricating Completion or Evidence", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "WP04 pending verification",
+      ownerAddress: "wp04-pending-owner",
+      projectId: "wp04-pending-project",
+      rewardDescription: "WP04 pending boundary.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "ANY",
+    });
+    const task = await repository.addTaskDraft({
+      campaignId: campaign.id,
+      evidenceRule: {
+        chainId: "AELF",
+        expectedField: "verified",
+        providerBindingId: "wp04-live-binding",
+      },
+      points: 25,
+      required: true,
+      templateCode: "wp04_pending_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const upsertTaskVerification = vi.fn(repository.upsertTaskVerification!.bind(repository));
+    const taskVerificationRuntime = createPendingTaskVerificationRuntime();
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository({
+        ...repository,
+        upsertTaskVerification,
+      }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationRuntime,
+    });
+    const response = await runtime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: participantAuthHeaders("2F4Wp04PendingParticipant", {
+        "x-campaign-os-trace-id": "trace-wp04-pending",
+      }),
+      body: JSON.stringify({ campaignId: campaign.id }),
+    });
+
+    expect(response).toMatchObject({
+      status: 202,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: {
+        ok: true,
+        traceId: "trace-wp04-pending",
+        data: {
+          payload: {
+            authoritative: false,
+            diagnosticCodes: ["TASK_VERIFICATION_ATTEMPT_IN_PROGRESS"],
+            outcome: "pending",
+            pointsAwarded: 0,
+            providerFamily: "aefinder",
+            retryable: true,
+            retryAfterMs: 1_000,
+            status: "pending",
+            taskId: task.id,
+            verificationAttemptId: "attempt-wp04-pending",
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain("campaignDbCompletion");
+    expect(JSON.stringify(response.body)).not.toContain("campaignDbEvidence");
+    expect(taskVerificationRuntime.execute).toHaveBeenCalledTimes(1);
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
+    expect(Buffer.byteLength(JSON.stringify(response.body), "utf8")).toBeLessThan(16_384);
+    expectNoForbiddenResponseKeys(response.body);
+    await runtime.close();
+    expect(taskVerificationRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["failed", "manual_review"] as const)(
+    "returns a safe 200 %s attempt projection without provider Evidence",
+    async (outcome) => {
+      const repository = createCampaignDbRepository();
+      const campaign = await repository.createDraft({
+        duration: "2026-11-01/2026-11-14",
+        endTime: "2026-11-14T23:59:59Z",
+        goal: `WP04 ${outcome} verification`,
+        ownerAddress: "wp04-terminal-owner",
+        projectId: `wp04-${outcome}-project`,
+        rewardDescription: "WP04 terminal attempt boundary.",
+        startTime: "2026-11-01T00:00:00Z",
+        status: "scheduled",
+        walletPolicy: "ANY",
+      });
+      const task = await repository.addTaskDraft({
+        campaignId: campaign.id,
+        evidenceRule: {
+          expectedField: "verified",
+          providerBindingId: "wp04-live-binding",
+        },
+        points: 25,
+        required: true,
+        templateCode: `wp04_${outcome}_task`,
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      });
+      const taskVerificationRuntime = {
+        close: vi.fn(async () => ({ activeCallCount: 0, status: "drained" as const })),
+        execute: vi.fn(async (
+          input: ExecuteTaskVerificationRuntimeInput,
+        ): Promise<TaskVerificationRuntimeResult> => ({
+          attemptId: `attempt-wp04-${outcome}`,
+          authoritative: true,
+          diagnosticCodes: [`PROVIDER_${outcome.toUpperCase()}`],
+          outcome,
+          pointsAwarded: 0,
+          positiveMatch: false,
+          taskId: task.id,
+          traceId: input.traceId ?? `trace-wp04-${outcome}`,
+          transportExecuted: true,
+        })),
+        state: vi.fn(() => ({ accepting: true, activeCallCount: 0, controllerCount: 0 })),
+      };
+      const runtime = createCampaignOsApiRuntime({
+        campaignDbRepository: createTaskVerificationPostureRepository(repository),
+        taskVerificationConfig: createReadyTaskVerificationConfig(),
+        taskVerificationRuntime,
+      });
+      const response = await runtime.handle({
+        body: JSON.stringify({ campaignId: campaign.id }),
+        headers: participantAuthHeaders("2F4Wp04TerminalParticipant", {
+          "x-campaign-os-trace-id": `trace-wp04-${outcome}`,
+        }),
+        method: "POST",
+        path: `/api/tasks/${task.id}/verify`,
+      });
+
+      expect(response).toMatchObject({
+        status: 200,
+        body: {
+          ok: true,
+          data: {
+            payload: {
+              outcome,
+              pointsAwarded: 0,
+              providerFamily: "aefinder",
+              retryAfterMs: 0,
+              retryable: false,
+              status: outcome,
+              taskId: task.id,
+              transportExecuted: true,
+              verificationAttemptId: `attempt-wp04-${outcome}`,
+            },
+          },
+        },
+      });
+      expect(JSON.stringify(response.body)).not.toContain("campaignDbCompletion");
+      expect(JSON.stringify(response.body)).not.toContain("campaignDbEvidence");
+      expectNoForbiddenResponseKeys(response.body);
+      await runtime.close();
+    },
+  );
+
+  it("creates the provider runtime lazily only after PostgreSQL schema and binding readiness pass", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "WP04 lazy runtime composition",
+      ownerAddress: "wp04-lazy-owner",
+      projectId: "wp04-lazy-project",
+      rewardDescription: "WP04 lazy composition boundary.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "ANY",
+    });
+    const task = await repository.addTaskDraft({
+      campaignId: campaign.id,
+      evidenceRule: {
+        expectedField: "verified",
+        providerBindingId: "wp04-live-binding",
+      },
+      points: 25,
+      required: true,
+      templateCode: "wp04_lazy_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const taskVerificationRuntime = createPendingTaskVerificationRuntime();
+    const taskVerificationRuntimeFactory = vi.fn(() => taskVerificationRuntime);
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationRuntimeFactory,
+    });
+
+    expect(taskVerificationRuntimeFactory).not.toHaveBeenCalled();
+    const health = await runtime.handle({ method: "GET", path: "/api/health" });
+    expect(expectSuccessData<{
+      taskVerificationRuntime: {
+        bindingCount: number;
+        enabled: boolean;
+        providerStatus: string;
+        requiredSchemaVersion: string;
+        schemaStatus: string;
+        status: string;
+      };
+    }>(health).taskVerificationRuntime).toEqual({
+      bindingCount: 1,
+      enabled: true,
+      providerStatus: "configured",
+      requiredSchemaVersion: "0004_live_provider_task_verification",
+      schemaStatus: "ready",
+      status: "ready",
+    });
+    expect(JSON.stringify(health.body)).not.toContain("wp04-live-binding");
+    expect(JSON.stringify(health.body)).not.toContain("CAMPAIGN_OS_WP04_TEST_ENDPOINT");
+    expect(taskVerificationRuntimeFactory).not.toHaveBeenCalled();
+    const response = await runtime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: participantAuthHeaders("2F4Wp04LazyParticipant", {
+        "x-campaign-os-trace-id": "trace-wp04-lazy",
+      }),
+      body: JSON.stringify({ campaignId: campaign.id }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(taskVerificationRuntimeFactory).toHaveBeenCalledTimes(1);
+    expect(taskVerificationRuntime.execute).toHaveBeenCalledTimes(1);
+    await runtime.close();
+  });
+
+  it("resolves task verification configuration from the explicit API runtime env source", async () => {
+    const binding = createReadyTaskVerificationConfig().bindings[0]!;
+    const env = {
+      CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON: JSON.stringify([binding]),
+      CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "explicitly-enabled",
+      CAMPAIGN_OS_WP04_TEST_ENDPOINT: "http://127.0.0.1:4179/verify",
+    };
+    const runtime = createCampaignOsApiRuntime({ runtimeConfigOptions: { env } });
+    const health = await runtime.handle({
+      headers: { "x-campaign-os-trace-id": "trace-task-verification-explicit-env" },
+      method: "GET",
+      path: "/api/health",
+    });
+
+    expect(expectSuccessData<{
+      taskVerificationRuntime: {
+        bindingCount: number;
+        enabled: boolean;
+        providerStatus: string;
+        schemaStatus: string;
+        status: string;
+      };
+    }>(health).taskVerificationRuntime).toMatchObject({
+      bindingCount: 1,
+      enabled: true,
+      providerStatus: "disabled",
+      schemaStatus: "blocked",
+      status: "blocked",
+    });
+    expect(JSON.stringify(health.body)).not.toContain(binding.id);
+    expect(JSON.stringify(health.body)).not.toContain("http://127.0.0.1:4179/verify");
+    await runtime.close();
+  });
+
+  it("composes the WP02 attempt runtime with an explicitly supplied WP03 transport", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "WP04 direct runtime composition",
+      ownerAddress: "wp04-direct-owner",
+      projectId: "wp04-direct-project",
+      rewardDescription: "WP04 direct runtime boundary.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "ANY",
+    });
+    const task = await repository.addTaskDraft({
+      campaignId: campaign.id,
+      evidenceRule: {
+        chainId: "AELF",
+        expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
+        providerBindingId: "wp04-live-binding",
+      },
+      points: 25,
+      required: true,
+      templateCode: "wp04_direct_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const transport = vi.fn(async () => ({
+      body: { status: "pending" },
+      durationMs: 4,
+      statusCode: 202,
+      timedOut: false,
+    })) satisfies ProviderHttpTransport;
+    const providerRuntime = createActivatedProviderHttpRuntime();
+    expect(providerRuntime).toMatchObject({ status: "activated", valid: true });
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationProviderRuntime: providerRuntime,
+      taskVerificationTransport: transport,
+    });
+
+    expect(transport).not.toHaveBeenCalled();
+    const response = await runtime.handle({
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: participantAuthHeaders("2F4Wp04DirectParticipant", {
+        "x-campaign-os-trace-id": "trace-wp04-direct",
+      }),
+      body: JSON.stringify({ campaignId: campaign.id }),
+    });
+
+    expect(response, JSON.stringify(response.body)).toMatchObject({
+      status: 202,
+      body: {
+        ok: true,
+        data: { payload: { outcome: "pending", pointsAwarded: 0 } },
+      },
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+    await runtime.close();
+  });
+
+  it("returns terminal success and replay only from the committed durable projection", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "WP04 committed terminal projection",
+      ownerAddress: "wp04-terminal-owner",
+      projectId: "wp04-terminal-project",
+      rewardDescription: "WP04 terminal projection boundary.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "scheduled",
+      walletPolicy: "ANY",
+    });
+    const task = await repository.addTaskDraft({
+      campaignId: campaign.id,
+      evidenceRule: {
+        chainId: "AELF",
+        expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
+        providerBindingId: "wp04-live-binding",
+      },
+      points: 25,
+      required: true,
+      templateCode: "wp04_terminal_task",
+      verificationType: "ON_CHAIN",
+      walletCompatibility: "ANY",
+    });
+    const walletAddress = "2F4Wp04TerminalParticipant";
+    const completedAt = "2026-07-16T04:00:00.000Z";
+    const attemptId = "attempt-wp04-terminal";
+    const evidenceHash = "b".repeat(64);
+    const completion: CampaignDbTaskCompletion = {
+      accountType: "AA",
+      campaignId: campaign.id,
+      completedAt,
+      createdAt: completedAt,
+      evidenceHash,
+      evidenceId: "evidence-wp04-terminal",
+      evidenceSource: "AELFSCAN",
+      id: "completion-wp04-terminal",
+      pointsAwarded: task.points,
+      status: "completed",
+      taskId: task.id,
+      updatedAt: completedAt,
+      verificationAttemptId: attemptId,
+      walletAddress,
+      walletSource: "PORTKEY_AA",
+    };
+    const evidence: CampaignDbTaskEvidenceRecord = {
+      accountType: "AA",
+      campaignId: campaign.id,
+      capturedAt: completedAt,
+      completionId: completion.id,
+      createdAt: completedAt,
+      diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+      evidenceHash,
+      evidenceRef: "evidence-ref:wp04-terminal",
+      evidenceSource: "AELFSCAN",
+      id: completion.evidenceId!,
+      liveContractExecuted: false,
+      liveProviderExecuted: true,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      pointsAwarded: task.points,
+      status: "completed",
+      taskId: task.id,
+      updatedAt: completedAt,
+      verificationAttemptId: attemptId,
+      walletAddress,
+      walletSource: "PORTKEY_AA",
+    };
+    const participant: CampaignDbParticipantRecord = {
+      accountType: "AA",
+      campaignId: campaign.id,
+      createdAt: completedAt,
+      id: "participant-wp04-terminal",
+      localePreference: "en-US",
+      riskFlags: [],
+      totalPoints: task.points,
+      updatedAt: completedAt,
+      walletAddress,
+      walletSignatureStatus: "signed",
+      walletSource: "PORTKEY_AA",
+      walletTypeVerified: true,
+      walletVerifiedAt: completedAt,
+    };
+    let committed = false;
+    const getById = vi.fn(async (...args: Parameters<CampaignDbRepository["getById"]>) => {
+      const projection = await repository.getById(...args);
+
+      return projection && committed
+        ? {
+          ...projection,
+          completions: [completion],
+          participants: [participant],
+          taskEvidence: [evidence],
+        }
+        : projection;
+    });
+    const execute = vi.fn(async (
+      input: ExecuteTaskVerificationRuntimeInput,
+    ): Promise<TaskVerificationRuntimeResult> => {
+      committed = true;
+
+      return {
+        attemptId,
+        authoritative: true,
+        diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+        evidence: {
+          diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+          evidenceHash,
+          evidenceRef: evidence.evidenceRef!,
+          evidenceSource: "AELFSCAN",
+          traceId: input.traceId ?? "trace-wp04-terminal",
+        },
+        outcome: "completed",
+        pointsAwarded: task.points,
+        positiveMatch: true,
+        taskId: task.id,
+        traceId: input.traceId ?? "trace-wp04-terminal",
+        transportExecuted: true,
+      };
+    });
+    const taskVerificationRuntime = {
+      close: vi.fn(async () => ({ activeCallCount: 0, status: "drained" as const })),
+      execute,
+      state: vi.fn(() => ({ accepting: true, activeCallCount: 0, controllerCount: 0 })),
+    };
+    const upsertTaskVerification = vi.fn(repository.upsertTaskVerification!.bind(repository));
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository({
+        ...repository,
+        getById,
+        upsertTaskVerification,
+      }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationRuntime,
+    });
+    const request = {
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+      headers: participantAuthHeaders(walletAddress, {
+        "x-campaign-os-trace-id": "trace-wp04-terminal",
+      }),
+      body: JSON.stringify({ campaignId: campaign.id }),
+    };
+
+    const first = await runtime.handle(request);
+    const replay = await runtime.handle(request);
+    for (const response of [first, replay]) {
+      expect(response).toMatchObject({
+        status: 200,
+        body: {
+          ok: true,
+          data: {
+            campaignDbCompletion: { completionId: completion.id },
+            campaignDbEvidence: { evidenceId: evidence.id },
+            payload: {
+              authoritative: true,
+              evidence: {
+                evidenceHash,
+                evidenceId: evidence.id,
+                live: true,
+              },
+              evidenceHash,
+              evidenceId: evidence.id,
+              evidenceRef: evidence.evidenceRef,
+              liveProviderExecuted: true,
+              outcome: "completed",
+              pointsAwarded: task.points,
+              providerFamily: "aefinder",
+              retryable: false,
+              retryAfterMs: 0,
+              status: "completed",
+              verificationAttemptId: attemptId,
+            },
+          },
+        },
+      });
+      expect(JSON.stringify(response.body)).not.toContain("evidence-hash:");
+      expectNoForbiddenResponseKeys(response.body);
+    }
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
   it("serves one coherent allowlisted Participant journey from the issued subject and revokes access immediately", async () => {
     const campaignDbRepository = createCampaignDbRepository();
     const previewCampaign = await campaignDbRepository.createDraft({
@@ -4787,48 +5525,14 @@ describe("Campaign OS API runtime", () => {
       status: 404,
       body: { ok: false, error: { code: "INVALID_TASK" } },
     });
-    const verificationData = expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDb: {
-        adapterId: string;
-        createdViaRepository: true;
-        repositoryId: string;
-        storeId: "campaign-db";
-      };
-      campaignDbCompletion: {
-        completionId: string;
-        createdViaRepository: true;
-        evidenceId: string;
-        repositoryId: string;
-        storeId: "campaign-db";
-        taskId: string;
-      };
-      campaignDbEvidence: {
-        completionId: string;
-        createdViaRepository: true;
-        evidenceId: string;
-        repositoryId: string;
-        storeId: "campaign-db";
-        taskId: string;
-      };
-    }>(verification);
-    expect(verificationData.payload).toMatchObject({
-      pointsAwarded: 75,
-      taskId: task.id,
-      walletAddress,
-    });
-    expect(verificationData).toMatchObject({
-      campaignDb: {
-        createdViaRepository: true,
-        repositoryId: "campaign-db-repository-runtime",
-        storeId: "campaign-db",
-      },
-      campaignDbCompletion: {
-        createdViaRepository: true,
-        taskId: task.id,
-      },
-      campaignDbEvidence: {
-        createdViaRepository: true,
-        taskId: task.id,
+    expect(verification).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<{
@@ -4836,11 +5540,11 @@ describe("Campaign OS API runtime", () => {
       ranking: { totalPoints: number };
       tasks: Array<{ status: string; taskId: string }>;
     }>>(populated).payload).toMatchObject({
-      participant: { totalPoints: 75 },
-      ranking: { totalPoints: 75 },
-      tasks: [expect.objectContaining({ status: "completed", taskId: task.id })],
+      participant: { totalPoints: 0 },
+      ranking: { totalPoints: 0 },
+      tasks: [expect.objectContaining({ status: "not_started", taskId: task.id })],
     });
-    expect(upsertTaskVerification).toHaveBeenCalledTimes(1);
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
 
     configuredPreviewCampaignIds = "";
     const revokedFeed = await participantRuntime.handle({
@@ -4886,7 +5590,7 @@ describe("Campaign OS API runtime", () => {
       expect(revoked.headers["x-campaign-os-trace-id"]).toBe(revoked.body.traceId);
       expectNoForbiddenResponseKeys(revoked.body);
     }
-    expect(upsertTaskVerification).toHaveBeenCalledTimes(1);
+    expect(upsertTaskVerification).not.toHaveBeenCalled();
     await participantRuntime.close();
   });
 
@@ -5944,58 +6648,15 @@ describe("Campaign OS API runtime", () => {
       walletSource: "PORTKEY_EOA_EXTENSION",
       walletTypeVerified: true,
     });
-    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string; evidenceId: string; storeId: string };
-      campaignDbEvidence: {
-        completionId: string;
-        evidenceHash: string;
-        evidenceId: string;
-        liveContractExecuted: false;
-        liveProviderExecuted: false;
-        liveRewardExecuted: false;
-        liveStorageExecuted: false;
-        storeId: string;
-      };
-      persistence: { kind: string };
-    }>(optionalVerification)).toMatchObject({
-      campaignDbCompletion: {
-        completionId: "campaign-db-task-completion-0001",
-        evidenceId: "campaign-db-task-evidence-0001",
-        storeId: "campaign-db",
-      },
-      campaignDbEvidence: {
-        completionId: "campaign-db-task-completion-0001",
-        evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
-        evidenceId: "campaign-db-task-evidence-0001",
-        liveContractExecuted: false,
-        liveProviderExecuted: false,
-        liveRewardExecuted: false,
-        liveStorageExecuted: false,
-        storeId: "campaign-db",
-      },
-      payload: {
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        evidence: {
-          evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
-          evidenceId: "campaign-db-task-evidence-0001",
-          live: false,
+    expect(optionalVerification).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
         },
-        evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
-        evidenceId: "campaign-db-task-evidence-0001",
-        evidenceSource: "SOCIAL_API",
-        liveContractExecuted: false,
-        liveProviderExecuted: false,
-        liveRewardExecuted: false,
-        liveStorageExecuted: false,
-        pointsAwarded: 50,
-        pointsAvailable: 50,
-        status: "completed",
-        taskId: optionalTaskPayload.campaignDbTask.taskId,
-        walletAddress: "2F4CompletionWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
       },
-      persistence: { kind: "verification_attempt" },
     });
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(optionalEligibility).payload).toMatchObject({
       eligible: false,
@@ -6004,40 +6665,29 @@ describe("Campaign OS API runtime", () => {
         createdViaRepository: true,
         storeId: "campaign-db",
       }),
-      score: 50,
+      score: 0,
       status: "not_eligible",
       visibility: "participant_preview",
     });
-    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string; evidenceId: string };
-      campaignDbEvidence: { completionId: string; evidenceId: string };
-    }>(requiredVerification)).toMatchObject({
-      campaignDbCompletion: {
-        completionId: "campaign-db-task-completion-0002",
-        evidenceId: "campaign-db-task-evidence-0002",
-      },
-      campaignDbEvidence: {
-        completionId: "campaign-db-task-completion-0002",
-        evidenceId: "campaign-db-task-evidence-0002",
-      },
-      payload: {
-        evidenceHash: `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
-        evidenceId: "campaign-db-task-evidence-0002",
-        evidenceSource: "AELFSCAN",
-        pointsAwarded: 120,
-        pointsAvailable: 120,
-        status: "completed",
+    expect(requiredVerification).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<EligibilityPayload>>(eligible).payload).toMatchObject({
-      eligible: true,
-      missingTasks: [],
+      eligible: false,
+      missingTasks: ["bridge_ebridge"],
       repository: expect.objectContaining({
         createdViaRepository: true,
         storeId: "campaign-db",
       }),
-      score: 170,
-      status: "eligible",
+      score: 0,
+      status: "not_eligible",
       visibility: "participant_preview",
     });
     expectNoForbiddenResponseKeys(optionalVerification.body);
@@ -6046,7 +6696,9 @@ describe("Campaign OS API runtime", () => {
 
   it("projects repository campaign export preview and readiness through API runtime", async () => {
     const repository = createCampaignOsMemoryRepository();
+    const campaignDbRepository = createCampaignDbRepository();
     const runtimeWithCampaignDbRepository = createCampaignOsApiRuntime({
+      campaignDbRepository,
       participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
       repository,
     });
@@ -6104,8 +6756,21 @@ describe("Campaign OS API runtime", () => {
     const optionalTaskPayload = expectSuccessData<LocalServiceEnvelope<TaskDraftPayload> & {
       campaignDbTask: { taskId: string };
     }>(optionalTask);
+    const optionalEvidenceHash = sha256(
+      `historical-social:${optionalTaskPayload.campaignDbTask.taskId}`,
+    );
+    await campaignDbRepository.upsertTaskVerification!({
+      accountType: "EOA",
+      campaignId: created.payload.id,
+      evidenceHash: optionalEvidenceHash,
+      evidenceSource: "SOCIAL_API",
+      status: "completed",
+      taskId: optionalTaskPayload.campaignDbTask.taskId,
+      walletAddress: "2F4ExportWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    });
 
-    await runtimeWithCampaignDbRepository.handle({
+    const optionalVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
       path: `/api/tasks/${optionalTaskPayload.campaignDbTask.taskId}/verify`,
       headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
@@ -6156,6 +6821,19 @@ describe("Campaign OS API runtime", () => {
         walletAddress: "2F4ExportWallet",
         walletSource: "PORTKEY_EOA_EXTENSION",
       }),
+    });
+    const requiredEvidenceHash = sha256(
+      `historical-on-chain:${requiredTaskPayload.campaignDbTask.taskId}`,
+    );
+    await campaignDbRepository.upsertTaskVerification!({
+      accountType: "EOA",
+      campaignId: created.payload.id,
+      evidenceHash: requiredEvidenceHash,
+      evidenceSource: "AELFSCAN",
+      status: "completed",
+      taskId: requiredTaskPayload.campaignDbTask.taskId,
+      walletAddress: "2F4ExportWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
     });
     const readyPreview = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
@@ -6213,14 +6891,22 @@ describe("Campaign OS API runtime", () => {
     const auditListData = expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(auditList);
     const auditDetailData = expectSuccessData<LocalServiceEnvelope<ExportArtifactAuditPayload>>(auditDetail);
     const snapshot = await repository.snapshot();
-    const requiredVerificationData = expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string; evidenceId: string };
-      campaignDbEvidence: { completionId: string; evidenceHash: string; evidenceId: string };
-    }>(requiredVerification);
-    const repeatedRequiredVerificationData = expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string; evidenceId: string };
-      campaignDbEvidence: { completionId: string; evidenceId: string };
-    }>(repeatedRequiredVerification);
+    for (const blockedVerification of [
+      optionalVerification,
+      requiredVerification,
+      repeatedRequiredVerification,
+    ]) {
+      expect(blockedVerification).toMatchObject({
+        status: 503,
+        body: {
+          ok: false,
+          error: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: { operation: "taskVerificationRuntime.activate" },
+          },
+        },
+      });
+    }
 
     expect(blockedPreviewData).toMatchObject({
       campaignDb: {
@@ -6312,8 +6998,8 @@ describe("Campaign OS API runtime", () => {
             accountType: "EOA",
             eligible: true,
             evidenceHashes: [
-              `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
-              `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+              requiredEvidenceHash,
+              optionalEvidenceHash,
             ],
             localePreference: "en-US",
             missingTasks: [],
@@ -6329,23 +7015,10 @@ describe("Campaign OS API runtime", () => {
         kind: "export_preview",
       },
     });
-    expect(requiredVerificationData).toMatchObject({
-      campaignDbCompletion: {
-        completionId: "campaign-db-task-completion-0002",
-        evidenceId: "campaign-db-task-evidence-0002",
-      },
-      campaignDbEvidence: {
-        completionId: "campaign-db-task-completion-0002",
-        evidenceHash: `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
-        evidenceId: "campaign-db-task-evidence-0002",
-      },
-    });
-    expect(repeatedRequiredVerificationData.campaignDbCompletion).toEqual(requiredVerificationData.campaignDbCompletion);
-    expect(repeatedRequiredVerificationData.campaignDbEvidence).toEqual(requiredVerificationData.campaignDbEvidence);
     expect(readyPreviewData.payload.rows).toHaveLength(1);
     expect(readyPreviewData.payload.rows?.[0]?.taskRecords).toEqual([
       expect.objectContaining({
-        evidenceHash: `evidence-hash:${requiredTaskPayload.campaignDbTask.taskId}`,
+        evidenceHash: requiredEvidenceHash,
         evidenceId: "campaign-db-task-evidence-0002",
         liveContractExecuted: false,
         liveProviderExecuted: false,
@@ -6355,7 +7028,7 @@ describe("Campaign OS API runtime", () => {
         taskId: requiredTaskPayload.campaignDbTask.taskId,
       }),
       expect.objectContaining({
-        evidenceHash: `evidence-hash:${optionalTaskPayload.campaignDbTask.taskId}`,
+        evidenceHash: optionalEvidenceHash,
         evidenceId: "campaign-db-task-evidence-0001",
         liveContractExecuted: false,
         liveProviderExecuted: false,
@@ -7054,7 +7727,7 @@ describe("Campaign OS API runtime", () => {
     }
   });
 
-  it("persists local POST records through a repository-backed Participant verification", async () => {
+  it("persists local POST records while protected verification remains disabled", async () => {
     const repository = createCampaignOsMemoryRepository();
     const runtimeWithPersistence = createCampaignOsApiRuntime({
       participantPreviewConfigOptions: { campaignIds: ["campaign-db-draft-0001"] },
@@ -7228,10 +7901,15 @@ describe("Campaign OS API runtime", () => {
       campaignId: persistedCampaignDraft.payload.id,
       id: persistedTaskDraft.campaignDbTask.taskId,
     });
-    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload>>(verification).payload).toMatchObject({
-      evidenceSource: "AELFSCAN",
-      pointsAwarded: 120,
-      status: "completed",
+    expect(verification).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
+      },
     });
     expect(expectSuccessData<LocalServiceEnvelope<I18nDraftPayload>>(i18nDraft).payload).toMatchObject({
       humanReviewRequired: true,
@@ -7291,24 +7969,22 @@ describe("Campaign OS API runtime", () => {
     expect(seededExportPayload.artifactRegistry?.expiresAt).toBe("2026-07-10T00:00:00.000Z");
     expect(expectSuccessData(health)).toMatchObject({
       persistence: expect.objectContaining({
-        recordCount: 6,
+        recordCount: 5,
         countsByKind: expect.objectContaining({
           campaign_draft: 1,
           export_preview: 1,
           i18n_draft: 1,
           task_draft: 1,
-          verification_attempt: 1,
           wallet_session: 1,
         }),
       }),
     });
-    expect(snapshot.recordCount).toBe(6);
+    expect(snapshot.recordCount).toBe(5);
     expect(snapshot.latestRecords.map((record) => record.kind)).toEqual(
       expect.arrayContaining([
         "wallet_session",
         "campaign_draft",
         "task_draft",
-        "verification_attempt",
         "i18n_draft",
         "export_preview",
       ]),
@@ -7653,7 +8329,7 @@ describe("Campaign OS API runtime", () => {
     }
   });
 
-  it("reports durable local persistence health across runtime recreation", async () => {
+  it("reports durable local persistence health without synthetic verification records", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "campaign-os-runtime-health-json-"));
 
     try {
@@ -7761,10 +8437,15 @@ describe("Campaign OS API runtime", () => {
       });
       expect(persistedCampaignDraft.persistence).toMatchObject({ kind: "campaign_draft" });
       expect(persistedTaskDraft.persistence).toMatchObject({ kind: "task_draft" });
-      expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-        persistence: unknown;
-      }>(verification).persistence).toMatchObject({
-        kind: "verification_attempt",
+      expect(verification).toMatchObject({
+        status: 503,
+        body: {
+          ok: false,
+          error: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: { operation: "taskVerificationRuntime.activate" },
+          },
+        },
       });
       expect(expectSuccessData<LocalServiceEnvelope<ExportPreviewPayload> & {
         persistence: unknown;
@@ -7794,7 +8475,6 @@ describe("Campaign OS API runtime", () => {
           campaign_draft: 1,
           export_preview: 1,
           task_draft: 1,
-          verification_attempt: 1,
           wallet_session: 1,
         }),
         durable: true,
@@ -7803,7 +8483,7 @@ describe("Campaign OS API runtime", () => {
         noMigrationRunner: true,
         noProductionDatabase: true,
         noSecretHandling: true,
-        recordCount: 5,
+        recordCount: 4,
         status: "ok",
       };
 
@@ -7835,7 +8515,6 @@ describe("Campaign OS API runtime", () => {
           "wallet_session",
           "campaign_draft",
           "task_draft",
-          "verification_attempt",
           "export_preview",
         ]),
       );
@@ -8153,16 +8832,15 @@ describe("Campaign OS API runtime", () => {
       status: "unavailable",
       traceId: "trace-audit-task-unavailable",
     });
-    expect(expectSuccessData<LocalServiceEnvelope<VerificationPayload> & {
-      campaignDbCompletion: { completionId: string };
-      persistence: { code: string; kind: string; status: string; traceId: string };
-    }>(verification)).toMatchObject({
-      campaignDbCompletion: { completionId: expect.any(String) },
-      persistence: {
-        code: "PERSISTENCE_UNAVAILABLE",
-        kind: "verification_attempt",
-        status: "unavailable",
+    expect(verification).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
         traceId: "trace-audit-verification-unavailable",
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
       },
     });
     expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload).toMatchObject({
@@ -8875,7 +9553,7 @@ describe("Campaign OS API runtime", () => {
     expect(prohibitedLoads).toEqual([]);
   });
 
-  it("waits for every runtime resource to close even when one close rejects", async () => {
+  it("closes runtime resources sequentially even when a later close rejects", async () => {
     let releaseCampaignClose: (() => void) | undefined;
     const campaignClose = vi.fn(() => new Promise<void>((resolve) => {
       releaseCampaignClose = resolve;
@@ -8898,11 +9576,9 @@ describe("Campaign OS API runtime", () => {
       settled = true;
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(campaignClose).toHaveBeenCalledTimes(1));
     expect(settled).toBe(false);
-    expect(campaignClose).toHaveBeenCalledTimes(1);
-    expect(walletClose).toHaveBeenCalledTimes(1);
+    expect(walletClose).not.toHaveBeenCalled();
 
     releaseCampaignClose?.();
     await expect(closePromise).rejects.toMatchObject({
@@ -8911,6 +9587,7 @@ describe("Campaign OS API runtime", () => {
         details: { operation: "walletSessionRepository.close" },
       },
     });
+    expect(walletClose).toHaveBeenCalledTimes(1);
     expect(settled).toBe(true);
   });
 
@@ -9785,7 +10462,150 @@ describe("Campaign OS API runtime", () => {
       expect(close).toHaveBeenCalledWith({ traceId: expect.stringMatching(/^admin-runtime-close-/) });
     });
 
-    it("fails safely within the configured deadline when request drain never resolves", async () => {
+    it("stops provider work before handler drain and closes durable resources in order", async () => {
+      const events: string[] = [];
+      let releaseHandler: (() => void) | undefined;
+      const handlerGate = new Promise<void>((resolve) => {
+        releaseHandler = resolve;
+      });
+      const list = vi.fn(async () => {
+        events.push("handler.start");
+        await handlerGate;
+        events.push("handler.finalize");
+        return [];
+      });
+      const providerClose = vi.fn(async () => {
+        events.push("provider.close");
+        return { activeCallCount: 0, status: "drained" as const };
+      });
+      const taskVerificationRuntime = {
+        ...createPendingTaskVerificationRuntime(),
+        close: providerClose,
+      };
+      const campaignClose = vi.fn(async () => {
+        events.push("campaign.close");
+      });
+      const adminClose = vi.fn(async () => {
+        events.push("admin.close");
+      });
+      const walletClose = vi.fn(async () => {
+        events.push("wallet.close");
+      });
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(),
+        adminReviewStore: createAdminReviewStoreMock({
+          close: adminClose,
+        }),
+        adminReviewStoreOwnership: "runtime",
+        campaignDbRepository: {
+          ...createCampaignDbRepository(),
+          close: campaignClose,
+          list,
+        },
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+        taskVerificationRuntime,
+        walletSessionRepository: {
+          ...createWalletSessionRepository(),
+          close: walletClose,
+        },
+      });
+      const request = runtime.handle({
+        headers: { "x-campaign-os-trace-id": "trace-provider-first-close" },
+        method: "GET",
+        path: "/api/campaigns",
+      });
+
+      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+      const closing = runtime.close();
+      await vi.waitFor(() => expect(providerClose).toHaveBeenCalledTimes(1));
+
+      expect(events).toEqual(["handler.start", "provider.close"]);
+      expect(campaignClose).not.toHaveBeenCalled();
+      expect(adminClose).not.toHaveBeenCalled();
+      expect(walletClose).not.toHaveBeenCalled();
+
+      releaseHandler?.();
+      await expect(request).resolves.toMatchObject({ status: 200 });
+      await expect(closing).resolves.toBeUndefined();
+
+      expect(events).toEqual([
+        "handler.start",
+        "provider.close",
+        "handler.finalize",
+        "campaign.close",
+        "admin.close",
+        "wallet.close",
+      ]);
+    });
+
+    it("keeps pools open after provider drain timeout and retries close idempotently", async () => {
+      const providerClose = vi.fn()
+        .mockResolvedValueOnce({ activeCallCount: 1, status: "timed_out" as const })
+        .mockResolvedValueOnce({ activeCallCount: 0, status: "drained" as const });
+      const taskVerificationRuntime = {
+        ...createPendingTaskVerificationRuntime(),
+        close: providerClose,
+      };
+      const campaignClose = vi.fn(async () => undefined);
+      const adminClose = vi.fn(async () => undefined);
+      const walletClose = vi.fn(async () => undefined);
+      const runtime = createCampaignOsApiRuntime({
+        adminReviewConfig: enabledAdminReviewConfig(),
+        adminReviewStore: createAdminReviewStoreMock({ close: adminClose }),
+        adminReviewStoreOwnership: "runtime",
+        campaignDbRepository: createTaskVerificationPostureRepository({
+          ...createCampaignDbRepository(),
+          close: campaignClose,
+        }),
+        closeDeadlineMs: 50,
+        runtimeConfigOptions: { env: postgresCampaignDbEnv },
+        taskVerificationRuntime,
+        walletSessionRepository: {
+          ...createWalletSessionRepository(),
+          close: walletClose,
+        },
+      });
+
+      await expect(runtime.close()).rejects.toMatchObject({
+        body: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: {
+            diagnosticCode: "API_RUNTIME_CLOSE_DEADLINE_EXCEEDED",
+            operation: "runtime.close",
+            phase: "provider_drain",
+          },
+        },
+      });
+      expect(campaignClose).not.toHaveBeenCalled();
+      expect(adminClose).not.toHaveBeenCalled();
+      expect(walletClose).not.toHaveBeenCalled();
+
+      const rejectedRequest = await runtime.handle({
+        headers: { "x-campaign-os-trace-id": "trace-runtime-stopped" },
+        method: "GET",
+        path: "/api/health",
+      });
+      expect(rejectedRequest).toMatchObject({
+        body: {
+          error: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: { operation: "runtime.close" },
+          },
+          ok: false,
+          traceId: "trace-runtime-stopped",
+        },
+        status: 503,
+      });
+
+      await expect(runtime.close()).resolves.toBeUndefined();
+      await expect(runtime.close()).resolves.toBeUndefined();
+      expect(providerClose).toHaveBeenCalledTimes(2);
+      expect(campaignClose).toHaveBeenCalledTimes(1);
+      expect(adminClose).toHaveBeenCalledTimes(1);
+      expect(walletClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails safely without closing pools when request drain never resolves", async () => {
       const readSnapshot = vi.fn(() => new Promise<AdminReviewSnapshotRows>(() => undefined));
       const close = vi.fn(async () => undefined);
       const runtime = createCampaignOsApiRuntime({
@@ -9825,7 +10645,7 @@ describe("Campaign OS API runtime", () => {
         },
         type: "rejected",
       });
-      expect(close).toHaveBeenCalledOnce();
+      expect(close).not.toHaveBeenCalled();
     });
 
     it("caps the production close deadline at ten seconds", () => {

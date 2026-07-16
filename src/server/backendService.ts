@@ -71,6 +71,7 @@ import {
   createProviderIndexerClientReadiness,
   type ProviderClientReadinessSummary,
 } from "./providerIndexerClientReadiness";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 import {
   createWorkerSchedulerFoundation,
@@ -949,6 +950,7 @@ export interface CreateBackendServiceReadinessReportOptions {
   campaignStore?: CampaignDbVerticalSliceStoreReadinessInput;
   configOptions?: BackendConfigContractOptions;
   generatedAt?: string;
+  providerHttpTransportProvided?: boolean;
   serverRuntimeOptions?: Partial<ResolveApiServerRuntimeContractOptions>;
 }
 
@@ -1927,25 +1929,33 @@ const createBackendProviderIndexerReadinessSummary = ({
 const createBackendProviderClientReadinessSummary = ({
   env,
   profileId,
+  transportProvided,
 }: {
   env: Record<string, string | undefined>;
   profileId: BackendConfigContract["profileId"];
+  transportProvided: boolean;
 }): BackendProviderClientReadinessSummary => {
   const readiness = createProviderIndexerClientReadiness({
     env,
     profileId,
   });
+  const providerHttpRuntime = createProviderHttpRuntimeSummary({
+    env,
+    profileId,
+    transportProvided,
+  });
   const diagnosticCodeSet = new Set(readiness.diagnosticCodes);
-  const providerHttpDiagnosticCodeSet = new Set(readiness.providerHttpRuntime.diagnosticCodes);
+  const providerHttpDiagnosticCodeSet = new Set(providerHttpRuntime.diagnosticCodes);
   const blockerPreconditions = readiness.preconditions.filter((precondition) =>
     diagnosticCodeSet.has(precondition.diagnosticCode)
   );
-  const providerHttpBlockerPreconditions = readiness.providerHttpRuntime.preconditions.filter((precondition) =>
+  const providerHttpBlockerPreconditions = providerHttpRuntime.preconditions.filter((precondition) =>
     providerHttpDiagnosticCodeSet.has(precondition.diagnosticCode)
   );
 
   return {
     ...readiness,
+    providerHttpRuntime,
     activationInventory: {
       activationStatus: readiness.activationStatus,
       blockedConfigKeys: uniqueStrings(
@@ -1953,14 +1963,14 @@ const createBackendProviderClientReadinessSummary = ({
       ),
       blockerIds: blockerPreconditions.map((precondition) => precondition.id),
       providerHttpRuntime: {
-        activationStatus: readiness.providerHttpRuntime.activationStatus,
+        activationStatus: providerHttpRuntime.activationStatus,
         blockedConfigKeys: uniqueStrings(
           providerHttpBlockerPreconditions.flatMap((precondition) => precondition.requiredConfigKeys),
         ),
         blockerIds: providerHttpBlockerPreconditions.map((precondition) => precondition.id),
-        endpointRollout: readiness.providerHttpRuntime.endpointRollout,
-        runtimeId: readiness.providerHttpRuntime.id,
-        status: readiness.providerHttpRuntime.status,
+        endpointRollout: providerHttpRuntime.endpointRollout,
+        runtimeId: providerHttpRuntime.id,
+        status: providerHttpRuntime.status,
       },
       redacted: true,
       requiredConfigKeys: readiness.requiredConfigKeys,
@@ -2440,6 +2450,7 @@ export const createBackendServiceReadinessReport = ({
   campaignStore,
   configOptions,
   generatedAt = new Date(0).toISOString(),
+  providerHttpTransportProvided = false,
   serverRuntimeOptions,
 }: CreateBackendServiceReadinessReportOptions = {}): BackendServiceReadinessReport => {
   const config = resolveBackendConfigContract(configOptions);
@@ -2515,6 +2526,7 @@ export const createBackendServiceReadinessReport = ({
   const providerClientReadiness = createBackendProviderClientReadinessSummary({
     env,
     profileId: config.profileId,
+    transportProvided: providerHttpTransportProvided,
   });
   const workerSchedulerFoundation = createBackendWorkerSchedulerReadinessSummary({
     env,

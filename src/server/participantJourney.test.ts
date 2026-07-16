@@ -84,7 +84,7 @@ const completion = (
   campaignId: CAMPAIGN_ID,
   completedAt: "2026-07-14T00:00:03.000Z",
   createdAt: "2026-07-14T00:00:01.000Z",
-  evidenceHash: `private-completion-hash-${walletAddress}-${taskId}`,
+  evidenceHash: `private-evidence-hash-${walletAddress}-${taskId}`,
   evidenceId: `evidence-${walletAddress}-${taskId}`,
   evidenceSource: "AELFSCAN",
   id: `completion-${walletAddress}-${taskId}`,
@@ -388,24 +388,33 @@ describe("Participant journey projector", () => {
   it.each([
     {
       diagnosticCode: "SUBJECT_METADATA_MISMATCH",
+      eligible: false,
       label: "subject metadata mismatch",
       participant: participant(WALLET_A, { accountType: "AA", totalPoints: 0 }),
+      status: "not_eligible",
     },
     {
       diagnosticCode: "PARTICIPANT_POINTS_MISMATCH",
+      eligible: true,
       label: "durable points drift",
       participant: participant(WALLET_A, { totalPoints: 100 }),
+      status: "eligible",
     },
-  ])("fails closed for optional-only Participant $label", ({ diagnosticCode, participant: record }) => {
+  ])("handles optional-only Participant $label from canonical progress", ({
+    diagnosticCode,
+    eligible,
+    participant: record,
+    status,
+  }) => {
     const result = projectParticipantJourney(input({
       participant: record,
       tasks: [task("task-optional-only", { required: false })],
     }));
 
     expect(result.eligibility).toMatchObject({
-      eligible: false,
+      eligible,
       missingTasks: [],
-      status: "not_eligible",
+      status,
     });
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: diagnosticCode,
@@ -473,7 +482,7 @@ describe("Participant journey projector", () => {
     }
   });
 
-  it("uses durable Participant points as the single aggregate authority and diagnoses drift", () => {
+  it("recomputes Participant, eligibility, and ranking points from completed logical Tasks", () => {
     const result = projectParticipantJourney(input({
       completions: [completion("task-required-a")],
       evidence: [evidence("task-required-a")],
@@ -481,13 +490,77 @@ describe("Participant journey projector", () => {
       rankingParticipants: [participant(WALLET_A, { totalPoints: 175 })],
     }));
 
-    expect(result.participant.totalPoints).toBe(175);
-    expect(result.ranking.totalPoints).toBe(175);
-    expect(result.eligibility.score).toBe(175);
+    expect(result.participant.totalPoints).toBe(100);
+    expect(result.ranking.totalPoints).toBe(100);
+    expect(result.eligibility.score).toBe(100);
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "PARTICIPANT_POINTS_MISMATCH",
     }));
   });
+
+  it("projects safe live provider provenance and attempt linkage from canonical Evidence", () => {
+    const evidenceHash = "c".repeat(64);
+    const verificationAttemptId = "attempt-journey-live-0001";
+    const result = projectParticipantJourney(input({
+      completions: [completion("task-required-a", WALLET_A, {
+        evidenceHash,
+        verificationAttemptId,
+      })],
+      evidence: [evidence("task-required-a", WALLET_A, {
+        diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+        evidenceHash,
+        evidenceRef: "evidence-ref:journey-live-0001",
+        liveProviderExecuted: true,
+        verificationAttemptId,
+      })],
+      participant: participant(WALLET_A, { totalPoints: 100 }),
+      rankingParticipants: [participant(WALLET_A, { totalPoints: 100 })],
+    }));
+
+    expect(result.tasks[0]).toMatchObject({
+      completionId: `completion-${WALLET_A}-task-required-a`,
+      evidenceHash,
+      evidenceId: `evidence-${WALLET_A}-task-required-a`,
+      evidenceRef: "evidence-ref:journey-live-0001",
+      evidenceSource: "AELFSCAN",
+      liveProviderExecuted: true,
+      pointsAwarded: 100,
+      status: "completed",
+      verificationAttemptId,
+    });
+  });
+
+  it.each(["pending", "failed", "manual_review"] as const)(
+    "projects %s attempt posture with zero points and no provider Evidence",
+    (status) => {
+      const result = projectParticipantJourney(input({
+        completions: [completion("task-required-a", WALLET_A, {
+          completedAt: undefined,
+          evidenceHash: undefined,
+          evidenceId: undefined,
+          evidenceSource: "AELFSCAN",
+          pointsAwarded: 0,
+          status,
+          verificationAttemptId: "attempt-journey-nonterminal",
+        })],
+        evidence: [],
+        participant: participant(WALLET_A, { totalPoints: 0 }),
+        rankingParticipants: [participant(WALLET_A, { totalPoints: 0 })],
+      }));
+
+      expect(result.tasks[0]).toMatchObject({
+        evidenceHash: null,
+        evidenceId: null,
+        evidenceRef: null,
+        liveProviderExecuted: false,
+        pointsAwarded: 0,
+        status,
+        verificationAttemptId: "attempt-journey-nonterminal",
+      });
+      expect(result.participant.totalPoints).toBe(0);
+      expect(result.eligibility.score).toBe(0);
+    },
+  );
 
   it("blocks wallet-incompatible Tasks without projecting a completion", () => {
     const incompatibleTask = task("task-aa-only", {

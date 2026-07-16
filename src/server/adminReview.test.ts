@@ -353,6 +353,62 @@ describe("Admin review canonical snapshot", () => {
     }
   });
 
+  it("includes live provider execution and attempt linkage in the canonical fingerprint", () => {
+    const localSnapshot = createSnapshot();
+    const rows = createRows();
+    Object.assign(rows.evidence[0]!, {
+      liveProviderExecuted: true,
+      verificationAttemptId: "attempt-admin-live-0001",
+    });
+    const liveSnapshot = projectAdminReviewSnapshot(rows, {
+      generatedAt,
+      participantId: "participant-review-0001",
+      traceId: "trace-review-live-provenance",
+    });
+    const liveEvidence = liveSnapshot.manifest.evidence.find(({ id }) => id === "evidence-b") as
+      unknown as { liveProviderExecuted: boolean; verificationAttemptId: string };
+
+    expect(liveEvidence).toMatchObject({
+      liveProviderExecuted: true,
+      verificationAttemptId: "attempt-admin-live-0001",
+    });
+    expect(liveSnapshot.fingerprint).not.toBe(localSnapshot.fingerprint);
+    expect(resolveAdminReviewState(
+      liveSnapshot.fingerprint,
+      [createDecision(localSnapshot)],
+      { traceId: "trace-review-live-provenance-stale" },
+    )).toMatchObject({ state: "stale" });
+    expect(projectAdminReviewWinnerSource(
+      [liveSnapshot],
+      [createDecision(localSnapshot)],
+      { traceId: "trace-review-live-provenance-winner" },
+    ).rowCount).toBe(0);
+  });
+
+  it.each([
+    ["missing attempt", { liveProviderExecuted: true }],
+    ["manual live source", {
+      liveProviderExecuted: true,
+      verificationAttemptId: "attempt-admin-invalid-manual",
+      evidenceSource: "MANUAL",
+    }],
+    ["non-live attempt", {
+      liveProviderExecuted: false,
+      verificationAttemptId: "attempt-admin-invalid-local",
+    }],
+  ] as const)("fails closed for invalid provider provenance: %s", (_label, mutation) => {
+    const rows = createRows();
+    Object.assign(rows.evidence[0]!, mutation);
+
+    expect(() => projectAdminReviewSnapshot(rows, {
+      generatedAt,
+      participantId: "participant-review-0001",
+      traceId: "trace-review-invalid-provider-provenance",
+    })).toThrowError(expect.objectContaining({
+      code: "ADMIN_REVIEW_DOMAIN_INVALID_FACTS",
+    }));
+  });
+
   it("projects a complete zero-state without inferring approval or eligibility", () => {
     const rows = createRows();
     const zeroRows = { ...rows, completions: [], evidence: [] };

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { connect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
-import type { ApiRuntimeResponse, CampaignOsApiRuntime } from "./apiRuntime";
+import type {
+  ApiRuntimeResponse,
+  CampaignOsApiRuntime,
+  CreateCampaignOsApiRuntimeOptions,
+} from "./apiRuntime";
 import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
 import { internalRuntimeError } from "./errors";
 import { apiRuntimeContractRoutes } from "./routes";
@@ -296,6 +300,49 @@ describe("Campaign OS API server entrypoint", () => {
     });
   });
 
+  it("passes the explicit server env and staging profile to task verification composition", async () => {
+    const env = {
+      CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:metadata-only-seam",
+      CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "disabled",
+    };
+    let runtimeOptions: CreateCampaignOsApiRuntimeOptions | undefined;
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => ({
+        body: createSuccessEnvelope({
+          data: { status: "ok" },
+          routeCount: apiRuntimeContractRoutes.length,
+          traceId: "trace-server-task-verification-options",
+          version: "test",
+        }),
+        headers: { "content-type": "application/json" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      env,
+      logger: false,
+      port: 0,
+      profileId: "staging-scaffold",
+      runtimeFactory: (options) => {
+        runtimeOptions = options;
+        return runtime;
+      },
+    });
+
+    try {
+      expect(runtimeOptions?.taskVerificationConfigOptions).toEqual({
+        env,
+        environment: "stage",
+        providerHttpTransportProvided: false,
+      });
+      expect(runtimeOptions?.backendServiceReadiness?.().providerClientReadiness.providerHttpRuntime)
+        .toMatchObject({ transportProvided: false });
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("exposes stopping lifecycle readiness while shutdown waits for active requests", async () => {
     const server = await startCampaignOsApiServer({
       logger: false,
@@ -424,6 +471,7 @@ describe("Campaign OS API server entrypoint", () => {
     await enteredRuntime;
 
     const stopPromise = server.stop();
+    expect(runtime.close).toHaveBeenCalledTimes(1);
     socket.write([
       "GET /api/admin/campaigns HTTP/1.1",
       `Host: 127.0.0.1:${address.port}`,
