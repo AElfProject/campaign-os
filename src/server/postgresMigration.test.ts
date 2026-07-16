@@ -268,16 +268,18 @@ describe("PostgreSQL migration runtime", () => {
       "campaign_os_verification_attempts_recovery_idx",
       "campaign_os_verification_attempts_participant_journey_idx",
       "campaign_os_verification_attempts_state_dispatch_result_check",
+      "campaign_os.valid_verification_attempt_diagnostic_codes",
       "campaign_os_campaign_task_evidence_live_provider_check",
       "live_provider_executed = false",
       "status = 'completed'",
       "verification_attempt_id IS NOT NULL",
-      "attempt.evidence_ref = NEW.evidence_ref",
-      "attempt.completed_at = NEW.captured_at",
-      "completion.points_awarded = NEW.points_awarded",
+      "attempt.evidence_ref = current_evidence.evidence_ref",
+      "attempt.completed_at = current_evidence.captured_at",
+      "completion.points_awarded = current_evidence.points_awarded",
       "completion.completed_at = attempt.completed_at",
       "completion.verification_attempt_id = attempt.id",
       "campaign_task_completion_live_provider_validation",
+      "DEFERRABLE INITIALLY IMMEDIATE",
     ]) {
       expect(liveProviderTaskVerification?.upSql).toContain(contractFragment);
     }
@@ -285,22 +287,14 @@ describe("PostgreSQL migration runtime", () => {
       "REFERENCES campaign_os.campaign_tasks (campaign_id, id, revision)",
     );
     expect(normalizeSql(liveProviderTaskVerification?.upSql ?? "")).toContain(normalizeSql(`
-      BEFORE INSERT OR UPDATE OF
-        id,
-        campaign_id,
-        task_id,
-        wallet_address,
-        completion_id,
-        account_type,
-        wallet_source,
-        status,
-        evidence_source,
-        evidence_hash,
-        evidence_ref,
-        points_awarded,
-        captured_at,
-        live_provider_executed,
-        verification_attempt_id
+      CREATE CONSTRAINT TRIGGER campaign_task_evidence_live_provider_validation
+      AFTER INSERT OR UPDATE ON campaign_os.campaign_task_evidence
+      DEFERRABLE INITIALLY IMMEDIATE
+    `));
+    expect(normalizeSql(liveProviderTaskVerification?.upSql ?? "")).toContain(normalizeSql(`
+      evidence_rule,
+      updated_at
+      ON campaign_os.campaign_tasks
     `));
     expect(liveProviderTaskVerification?.upSql).not.toMatch(
       /\b(?:UPDATE|DELETE\s+FROM|TRUNCATE|DROP)\s+(?:TABLE\s+)?(?:IF\s+EXISTS\s+)?campaign_os\.(?:campaigns|campaign_tasks|campaign_participants|campaign_task_completions|campaign_task_evidence|campaign_referral_bindings)\b/i,
@@ -313,6 +307,7 @@ describe("PostgreSQL migration runtime", () => {
     );
     expect(liveProviderTaskVerification?.downSql).toContain("revision > 1");
     expect(liveProviderTaskVerification?.downSql).toContain("HAVING COUNT(*) > 1");
+    expect(liveProviderTaskVerification?.downSql).toContain("current_task.id IS NULL");
     expect(liveProviderTaskVerification?.downSql).toContain(
       "DROP TABLE campaign_os.verification_attempts",
     );
@@ -329,7 +324,7 @@ describe("PostgreSQL migration runtime", () => {
       /ADD CONSTRAINT campaign_task_evidence_live_provider_executed_check\s+CHECK \(live_provider_executed = false\)/,
     );
     expect(liveProviderTaskVerification?.checksum).toBe(
-      "093857e554262a6eb52a2ec2582cba50e1603f883919784013f3790c77c78c52",
+      "5f69f378547d221307cbc0f525edda568cf6a8606b38c3106d8bac004396c009",
     );
 
     const factTables = [
@@ -1039,6 +1034,15 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
   it("preserves revision-one attempt lineage when a Task advances revision or is deleted", async () => {
     const sqlClient = requiredClient();
     await seedCampaignTask();
+    await expectSqlError(
+      `
+        UPDATE campaign_os.campaign_tasks
+        SET updated_at = '2026-07-16T00:00:15.000Z'
+        WHERE campaign_id = $1 AND id = $2
+      `,
+      [campaignId, taskId],
+      "23514",
+    );
     await insertRunningAttempt("attempt-revision-lineage");
 
     await expectSqlError(
@@ -1070,7 +1074,7 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
 
     const snapshots = await sqlClient.query(
       `
-        SELECT revision, points
+        SELECT revision, points, task_updated_at
         FROM campaign_os.campaign_task_revisions
         WHERE campaign_id = $1 AND task_id = $2
         ORDER BY revision
@@ -1078,8 +1082,8 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
       [campaignId, taskId],
     );
     expect(snapshots.rows).toEqual([
-      { points: 120, revision: 1 },
-      { points: 180, revision: 2 },
+      { points: 120, revision: 1, task_updated_at: new Date("2026-07-16T00:00:00.000Z") },
+      { points: 180, revision: 2, task_updated_at: new Date("2026-07-16T00:01:00.000Z") },
     ]);
     await expectSqlError(
       `UPDATE campaign_os.campaign_task_revisions SET points = 999
@@ -1168,6 +1172,43 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
     );
   });
 
+  it("rejects direct SQL values that the verification-attempt codec cannot decode", async () => {
+    await seedCampaignTask();
+    await insertRunningAttempt("attempt-codec-parity");
+
+    for (const [column, value] of [
+      ["id", "attempt-codec\nparity"],
+      ["binding_id", "binding-codec\rparity"],
+      ["provider_ref", "provider-codec\tparity"],
+    ] as const) {
+      await expectSqlError(
+        `UPDATE campaign_os.verification_attempts SET ${column} = $2 WHERE id = $1`,
+        ["attempt-codec-parity", value],
+        "23514",
+      );
+    }
+
+    for (const diagnosticCodes of [
+      "{}",
+      "[1]",
+      '["unsafe-code"]',
+      '["DUPLICATE_CODE","DUPLICATE_CODE"]',
+    ]) {
+      await expectSqlError(
+        "UPDATE campaign_os.verification_attempts SET diagnostic_codes = $2::jsonb WHERE id = $1",
+        ["attempt-codec-parity", diagnosticCodes],
+        "23514",
+      );
+    }
+
+    await insertCompletedAttempt();
+    await expectSqlError(
+      "UPDATE campaign_os.verification_attempts SET evidence_ref = $2 WHERE id = $1",
+      ["attempt-live-evidence", "https://unsafe.example/evidence"],
+      "23514",
+    );
+  });
+
   it("revalidates live Evidence when ref, points, or completion linkage changes", async () => {
     const sqlClient = requiredClient();
     await seedCampaignTask();
@@ -1222,7 +1263,7 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
     await expectSqlError(
       "UPDATE campaign_os.campaign_task_evidence SET completion_id = $2 WHERE id = $1",
       ["evidence-live-evidence", "completion-mismatch"],
-      "23514",
+      "23503",
     );
     await expectSqlError(
       `UPDATE campaign_os.campaign_task_evidence
@@ -1288,6 +1329,24 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
     await expect(sqlClient.query(
       "SELECT COUNT(*)::integer AS count FROM campaign_os.campaign_task_revisions",
     )).resolves.toMatchObject({ rows: [{ count: 2 }] });
+  });
+
+  it("refuses down when deleting a revision-one Task leaves a detached snapshot", async () => {
+    const sqlClient = requiredClient();
+    const migration0004 = requiredLiveProviderMigration();
+    await seedCampaignTask();
+    await sqlClient.query(
+      "DELETE FROM campaign_os.campaign_tasks WHERE campaign_id = $1 AND id = $2",
+      [campaignId, taskId],
+    );
+
+    await expectSqlError(migration0004.downSql, [], "55000");
+    await expect(sqlClient.query(
+      `SELECT COUNT(*)::integer AS count
+       FROM campaign_os.campaign_task_revisions
+       WHERE campaign_id = $1 AND task_id = $2`,
+      [campaignId, taskId],
+    )).resolves.toMatchObject({ rows: [{ count: 1 }] });
   });
 
   it("backfills historical Task revision one without changing canonical row bytes", async () => {

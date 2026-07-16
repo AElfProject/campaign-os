@@ -900,14 +900,18 @@ export const createMemoryTaskVerificationAttemptStore = ({
           || existing.walletSource !== identity.issuedSubject.walletSource
           || existing.bindingId !== identity.binding.bindingId
           || existing.bindingRevision !== identity.binding.bindingRevision
-          || existing.providerRef !== validated.providerRef
           || existing.verificationType !== validated.verificationType
-          || existing.maxAttempts !== validated.maxAttempts
         ) {
           return { attempt: toSafeRecord(existing), kind: "blocked" as const };
         }
         if (hasObservedResult(existing)) {
           return { attempt: toSafeRecord(existing), kind: "existing_terminal" as const };
+        }
+        if (
+          existing.providerRef !== validated.providerRef
+          || existing.maxAttempts !== validated.maxAttempts
+        ) {
+          return { attempt: toSafeRecord(existing), kind: "blocked" as const };
         }
         if (Date.parse(existing.leaseExpiresAt ?? "") > Date.parse(timestamp)) {
           return { attempt: toSafeRecord(existing), kind: "in_progress" as const };

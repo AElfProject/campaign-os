@@ -28,6 +28,33 @@ BEGIN
     )
     OR EXISTS (
       SELECT 1
+      FROM campaign_os.campaign_task_revisions AS snapshot
+      LEFT JOIN campaign_os.campaign_tasks AS current_task
+        ON current_task.campaign_id = snapshot.campaign_id
+        AND current_task.id = snapshot.task_id
+      WHERE current_task.id IS NULL
+      LIMIT 1
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM campaign_os.campaign_tasks AS current_task
+      LEFT JOIN campaign_os.campaign_task_revisions AS snapshot
+        ON snapshot.campaign_id = current_task.campaign_id
+        AND snapshot.task_id = current_task.id
+        AND snapshot.revision = current_task.revision
+      WHERE snapshot.task_id IS NULL
+        OR snapshot.template_code IS DISTINCT FROM current_task.template_code
+        OR snapshot.verification_type IS DISTINCT FROM current_task.verification_type
+        OR snapshot.wallet_compatibility IS DISTINCT FROM current_task.wallet_compatibility
+        OR snapshot.points IS DISTINCT FROM current_task.points
+        OR snapshot.required IS DISTINCT FROM current_task.required
+        OR snapshot.evidence_rule IS DISTINCT FROM current_task.evidence_rule
+        OR snapshot.task_created_at IS DISTINCT FROM current_task.created_at
+        OR snapshot.task_updated_at IS DISTINCT FROM current_task.updated_at
+      LIMIT 1
+    )
+    OR EXISTS (
+      SELECT 1
       FROM campaign_os.campaign_task_revisions
       GROUP BY campaign_id, task_id
       HAVING COUNT(*) > 1
@@ -73,6 +100,7 @@ ALTER TABLE campaign_os.campaign_task_completions
   DROP COLUMN IF EXISTS verification_attempt_id;
 
 DROP TABLE campaign_os.verification_attempts;
+DROP FUNCTION IF EXISTS campaign_os.valid_verification_attempt_diagnostic_codes(jsonb);
 DROP TABLE campaign_os.campaign_task_revisions;
 
 ALTER TABLE campaign_os.campaign_tasks

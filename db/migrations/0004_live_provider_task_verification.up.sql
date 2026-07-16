@@ -145,7 +145,8 @@ BEGIN
       AND snapshot.points = NEW.points
       AND snapshot.required = NEW.required
       AND snapshot.evidence_rule = NEW.evidence_rule
-      AND snapshot.task_created_at = NEW.created_at;
+      AND snapshot.task_created_at = NEW.created_at
+      AND snapshot.task_updated_at = NEW.updated_at;
 
     IF NOT FOUND THEN
       RAISE EXCEPTION USING
@@ -168,9 +169,47 @@ BEFORE INSERT OR UPDATE OF
   wallet_compatibility,
   points,
   required,
-  evidence_rule
+  evidence_rule,
+  updated_at
 ON campaign_os.campaign_tasks
 FOR EACH ROW EXECUTE FUNCTION campaign_os.capture_campaign_task_revision();
+
+CREATE FUNCTION campaign_os.valid_verification_attempt_diagnostic_codes(value jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+DECLARE
+  diagnostic jsonb;
+  diagnostic_code text;
+  seen_codes text[] := ARRAY[]::text[];
+BEGIN
+  IF jsonb_typeof(value) <> 'array' THEN
+    RETURN false;
+  END IF;
+  IF jsonb_array_length(value) > 16 OR octet_length(value::text) > 2048 THEN
+    RETURN false;
+  END IF;
+
+  FOR diagnostic IN SELECT element FROM jsonb_array_elements(value) AS entries(element)
+  LOOP
+    IF jsonb_typeof(diagnostic) <> 'string' THEN
+      RETURN false;
+    END IF;
+    diagnostic_code := diagnostic #>> '{}';
+    IF diagnostic_code !~ '^[A-Z][A-Z0-9_]{0,63}$'
+      OR diagnostic_code = ANY(seen_codes)
+    THEN
+      RETURN false;
+    END IF;
+    seen_codes := array_append(seen_codes, diagnostic_code);
+  END LOOP;
+
+  RETURN true;
+END;
+$$;
 
 CREATE TABLE campaign_os.verification_attempts (
   id text PRIMARY KEY,
@@ -211,20 +250,28 @@ CREATE TABLE campaign_os.verification_attempts (
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL,
   CONSTRAINT campaign_os_verification_attempts_id_check CHECK (
-    id = btrim(id) AND char_length(id) BETWEEN 1 AND 160
+    char_length(id) BETWEEN 1 AND 160
+    AND id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    AND id !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_idempotency_hash_check CHECK (
     idempotency_key ~ '^[a-f0-9]{64}$'
   ),
   CONSTRAINT campaign_os_verification_attempts_campaign_id_check CHECK (
-    campaign_id = btrim(campaign_id) AND char_length(campaign_id) BETWEEN 1 AND 160
+    char_length(campaign_id) BETWEEN 1 AND 160
+    AND campaign_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    AND campaign_id !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_task_id_check CHECK (
-    task_id = btrim(task_id) AND char_length(task_id) BETWEEN 1 AND 160
+    char_length(task_id) BETWEEN 1 AND 160
+    AND task_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    AND task_id !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_task_revision_check CHECK (task_revision > 0),
   CONSTRAINT campaign_os_verification_attempts_wallet_check CHECK (
-    wallet_address = btrim(wallet_address) AND char_length(wallet_address) BETWEEN 1 AND 192
+    char_length(wallet_address) BETWEEN 1 AND 192
+    AND wallet_address ~ '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+    AND wallet_address !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_account_type_check CHECK (
     account_type IN ('AA', 'EOA', 'UNKNOWN')
@@ -240,11 +287,15 @@ CREATE TABLE campaign_os.verification_attempts (
     )
   ),
   CONSTRAINT campaign_os_verification_attempts_binding_id_check CHECK (
-    binding_id = btrim(binding_id) AND char_length(binding_id) BETWEEN 1 AND 160
+    char_length(binding_id) BETWEEN 1 AND 160
+    AND binding_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    AND binding_id !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_binding_revision_check CHECK (binding_revision > 0),
   CONSTRAINT campaign_os_verification_attempts_provider_ref_check CHECK (
-    provider_ref = btrim(provider_ref) AND char_length(provider_ref) BETWEEN 1 AND 160
+    char_length(provider_ref) BETWEEN 1 AND 160
+    AND provider_ref ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    AND provider_ref !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_verification_type_check CHECK (
     verification_type IN ('ON_CHAIN', 'DAPP_API')
@@ -306,13 +357,12 @@ CREATE TABLE campaign_os.verification_attempts (
   CONSTRAINT campaign_os_verification_attempts_result_check CHECK (
     retry_posture IN ('none', 'retry_finalize', 'manual_review', 'blocked')
     AND (provider_code IS NULL OR provider_code ~ '^[A-Z][A-Z0-9_]{0,63}$')
-    AND jsonb_typeof(diagnostic_codes) = 'array'
-    AND jsonb_array_length(diagnostic_codes) <= 16
-    AND octet_length(diagnostic_codes::text) <= 2048
+    AND campaign_os.valid_verification_attempt_diagnostic_codes(diagnostic_codes)
     AND trace_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+    AND trace_id !~ '[[:cntrl:]]'
     AND (evidence_ref IS NULL OR (
-      evidence_ref = btrim(evidence_ref)
-      AND char_length(evidence_ref) BETWEEN 1 AND 256
+      char_length(evidence_ref) BETWEEN 1 AND 256
+      AND evidence_ref ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
       AND evidence_ref !~ '[[:cntrl:]]'
     ))
     AND (evidence_source IS NULL OR evidence_source IN ('AEFINDER', 'AELFSCAN', 'DAPP_API'))
@@ -462,44 +512,58 @@ CREATE FUNCTION campaign_os.validate_live_provider_task_evidence()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  current_evidence campaign_os.campaign_task_evidence%ROWTYPE;
 BEGIN
+  SELECT evidence.*
+  INTO current_evidence
+  FROM campaign_os.campaign_task_evidence AS evidence
+  WHERE evidence.id = NEW.id
+    AND evidence.campaign_id = NEW.campaign_id
+    AND evidence.task_id = NEW.task_id
+    AND evidence.wallet_address = NEW.wallet_address;
+
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
   IF TG_OP = 'UPDATE'
     AND OLD.live_provider_executed
-    AND NOT NEW.live_provider_executed
+    AND NOT current_evidence.live_provider_executed
   THEN
     RAISE EXCEPTION USING
       ERRCODE = '23514',
       MESSAGE = 'Live provider Evidence provenance cannot be removed.';
   END IF;
 
-  IF NEW.live_provider_executed THEN
+  IF current_evidence.live_provider_executed THEN
     PERFORM 1
     FROM campaign_os.verification_attempts AS attempt
     JOIN campaign_os.campaign_task_completions AS completion
-      ON completion.id = NEW.completion_id
-      AND completion.campaign_id = NEW.campaign_id
-      AND completion.task_id = NEW.task_id
-      AND completion.wallet_address = NEW.wallet_address
+      ON completion.id = current_evidence.completion_id
+      AND completion.campaign_id = current_evidence.campaign_id
+      AND completion.task_id = current_evidence.task_id
+      AND completion.wallet_address = current_evidence.wallet_address
       AND completion.verification_attempt_id = attempt.id
-    WHERE attempt.id = NEW.verification_attempt_id
-      AND attempt.campaign_id = NEW.campaign_id
-      AND attempt.task_id = NEW.task_id
-      AND attempt.wallet_address = NEW.wallet_address
-      AND attempt.account_type = NEW.account_type
-      AND attempt.wallet_source = NEW.wallet_source
+    WHERE attempt.id = current_evidence.verification_attempt_id
+      AND attempt.campaign_id = current_evidence.campaign_id
+      AND attempt.task_id = current_evidence.task_id
+      AND attempt.wallet_address = current_evidence.wallet_address
+      AND attempt.account_type = current_evidence.account_type
+      AND attempt.wallet_source = current_evidence.wallet_source
       AND attempt.status = 'completed'
       AND attempt.dispatch_state = 'result_observed'
-      AND attempt.completed_at = NEW.captured_at
-      AND attempt.evidence_hash = NEW.evidence_hash
-      AND attempt.evidence_ref = NEW.evidence_ref
-      AND attempt.evidence_source = NEW.evidence_source
-      AND completion.account_type = NEW.account_type
-      AND completion.wallet_source = NEW.wallet_source
+      AND attempt.completed_at = current_evidence.captured_at
+      AND attempt.evidence_hash = current_evidence.evidence_hash
+      AND attempt.evidence_ref = current_evidence.evidence_ref
+      AND attempt.evidence_source = current_evidence.evidence_source
+      AND completion.account_type = current_evidence.account_type
+      AND completion.wallet_source = current_evidence.wallet_source
       AND completion.status = 'completed'
-      AND completion.evidence_id = NEW.id
-      AND completion.evidence_hash = NEW.evidence_hash
-      AND completion.evidence_source = NEW.evidence_source
-      AND completion.points_awarded = NEW.points_awarded
+      AND completion.evidence_id = current_evidence.id
+      AND completion.evidence_hash = current_evidence.evidence_hash
+      AND completion.evidence_source = current_evidence.evidence_source
+      AND completion.points_awarded = current_evidence.points_awarded
       AND completion.completed_at = attempt.completed_at;
 
     IF NOT FOUND THEN
@@ -509,44 +573,42 @@ BEGIN
     END IF;
   END IF;
 
-  RETURN NEW;
+  RETURN NULL;
 END;
 $$;
 
-CREATE TRIGGER campaign_task_evidence_live_provider_validation
-BEFORE INSERT OR UPDATE OF
-  id,
-  campaign_id,
-  task_id,
-  wallet_address,
-  completion_id,
-  account_type,
-  wallet_source,
-  status,
-  evidence_source,
-  evidence_hash,
-  evidence_ref,
-  points_awarded,
-  captured_at,
-  live_provider_executed,
-  verification_attempt_id
-ON campaign_os.campaign_task_evidence
+CREATE CONSTRAINT TRIGGER campaign_task_evidence_live_provider_validation
+AFTER INSERT OR UPDATE ON campaign_os.campaign_task_evidence
+DEFERRABLE INITIALLY IMMEDIATE
 FOR EACH ROW EXECUTE FUNCTION campaign_os.validate_live_provider_task_evidence();
 
 CREATE FUNCTION campaign_os.validate_live_provider_task_completion()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+  current_completion campaign_os.campaign_task_completions%ROWTYPE;
 BEGIN
+  SELECT completion.*
+  INTO current_completion
+  FROM campaign_os.campaign_task_completions AS completion
+  WHERE completion.id = NEW.id
+    AND completion.campaign_id = NEW.campaign_id
+    AND completion.task_id = NEW.task_id
+    AND completion.wallet_address = NEW.wallet_address;
+
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
   IF EXISTS (
     SELECT 1
     FROM campaign_os.campaign_task_evidence AS evidence
     WHERE evidence.live_provider_executed
-      AND evidence.id = OLD.evidence_id
-      AND evidence.completion_id = OLD.id
-      AND evidence.campaign_id = OLD.campaign_id
-      AND evidence.task_id = OLD.task_id
-      AND evidence.wallet_address = OLD.wallet_address
+      AND evidence.completion_id = current_completion.id
+      AND evidence.campaign_id = current_completion.campaign_id
+      AND evidence.task_id = current_completion.task_id
+      AND evidence.wallet_address = current_completion.wallet_address
   ) THEN
     PERFORM 1
     FROM campaign_os.campaign_task_evidence AS evidence
@@ -556,27 +618,22 @@ BEGIN
       AND attempt.task_id = evidence.task_id
       AND attempt.wallet_address = evidence.wallet_address
     WHERE evidence.live_provider_executed
-      AND evidence.id = OLD.evidence_id
-      AND evidence.completion_id = OLD.id
-      AND evidence.campaign_id = OLD.campaign_id
-      AND evidence.task_id = OLD.task_id
-      AND evidence.wallet_address = OLD.wallet_address
+      AND evidence.completion_id = current_completion.id
+      AND evidence.campaign_id = current_completion.campaign_id
+      AND evidence.task_id = current_completion.task_id
+      AND evidence.wallet_address = current_completion.wallet_address
       AND attempt.status = 'completed'
       AND attempt.dispatch_state = 'result_observed'
       AND attempt.completed_at = evidence.captured_at
-      AND NEW.id = evidence.completion_id
-      AND NEW.campaign_id = evidence.campaign_id
-      AND NEW.task_id = evidence.task_id
-      AND NEW.wallet_address = evidence.wallet_address
-      AND NEW.account_type = evidence.account_type
-      AND NEW.wallet_source = evidence.wallet_source
-      AND NEW.status = 'completed'
-      AND NEW.evidence_id = evidence.id
-      AND NEW.evidence_hash = evidence.evidence_hash
-      AND NEW.evidence_source = evidence.evidence_source
-      AND NEW.points_awarded = evidence.points_awarded
-      AND NEW.completed_at = attempt.completed_at
-      AND NEW.verification_attempt_id = attempt.id;
+      AND current_completion.evidence_id = evidence.id
+      AND current_completion.account_type = evidence.account_type
+      AND current_completion.wallet_source = evidence.wallet_source
+      AND current_completion.status = 'completed'
+      AND current_completion.evidence_hash = evidence.evidence_hash
+      AND current_completion.evidence_source = evidence.evidence_source
+      AND current_completion.points_awarded = evidence.points_awarded
+      AND current_completion.completed_at = attempt.completed_at
+      AND current_completion.verification_attempt_id = attempt.id;
 
     IF NOT FOUND THEN
       RAISE EXCEPTION USING
@@ -585,24 +642,11 @@ BEGIN
     END IF;
   END IF;
 
-  RETURN NEW;
+  RETURN NULL;
 END;
 $$;
 
-CREATE TRIGGER campaign_task_completion_live_provider_validation
-BEFORE UPDATE OF
-  id,
-  campaign_id,
-  task_id,
-  wallet_address,
-  account_type,
-  wallet_source,
-  status,
-  evidence_source,
-  evidence_id,
-  evidence_hash,
-  points_awarded,
-  completed_at,
-  verification_attempt_id
-ON campaign_os.campaign_task_completions
+CREATE CONSTRAINT TRIGGER campaign_task_completion_live_provider_validation
+AFTER INSERT OR UPDATE ON campaign_os.campaign_task_completions
+DEFERRABLE INITIALLY IMMEDIATE
 FOR EACH ROW EXECUTE FUNCTION campaign_os.validate_live_provider_task_completion();

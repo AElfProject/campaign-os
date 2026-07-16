@@ -328,6 +328,16 @@ describe("task verification attempt store", () => {
     const restarted = createMemoryTaskVerificationAttemptStore({
       initialRecords: store.exportPersistenceRecords(),
     });
+    const beginReplay = await restarted.begin({
+      ...beginInput(),
+      maxAttempts: 1,
+      providerRef: "provider-deactivated-after-completion",
+      traceId: replayTraceId,
+    });
+    expect(beginReplay).toEqual({
+      attempt: first.attempt,
+      kind: "existing_terminal",
+    });
     await expect(restarted.finalize({
       ...finalization,
       traceId: replayTraceId,

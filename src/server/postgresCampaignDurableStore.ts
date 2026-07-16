@@ -44,6 +44,7 @@ import {
 } from "./participantJourney";
 import {
   TASK_VERIFICATION_EXTERNAL_DISPATCH_LIMIT,
+  createCanonicalTaskVerificationRevision,
   isServerIssuedTaskVerificationIdentity,
   isServerIssuedTaskVerificationTransition,
 } from "./taskVerification";
@@ -120,6 +121,76 @@ const LIVE_VERIFICATION_TYPES = ["ON_CHAIN", "DAPP_API"] as const;
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const SAFE_PROVIDER_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+interface TaskVerificationRevisionExpectation {
+  readonly campaignId: string;
+  readonly evidenceRuleDigest: string;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly taskRevisionDigest: string;
+}
+
+const taskMatchesVerificationRevision = (
+  task: CampaignDbTaskDraft,
+  expected: TaskVerificationRevisionExpectation,
+  traceId: string,
+) => {
+  if (
+    task.campaignId !== expected.campaignId
+    || task.id !== expected.taskId
+    || (task.revision ?? 1) !== expected.taskRevision
+  ) {
+    return false;
+  }
+
+  try {
+    const canonical = createCanonicalTaskVerificationRevision({
+      campaignId: task.campaignId,
+      evidenceRule: task.evidenceRule,
+      points: task.points,
+      required: task.required,
+      revision: task.revision ?? 1,
+      taskId: task.id,
+      traceId,
+      updatedAt: task.updatedAt,
+      verificationType: task.verificationType,
+      walletPolicy: task.walletCompatibility,
+    });
+    return canonical.taskRevisionDigest === expected.taskRevisionDigest
+      && canonical.evidenceRuleDigest === expected.evidenceRuleDigest;
+  } catch {
+    return false;
+  }
+};
+
+const taskVerificationRolloverPredicate = (
+  projectionTable: "campaign_os.campaign_task_completions" | "campaign_os.campaign_task_evidence",
+) => `
+  EXCLUDED.verification_attempt_id IS NOT NULL
+  AND ${projectionTable}.verification_attempt_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM campaign_os.verification_attempts AS previous_attempt
+    JOIN campaign_os.verification_attempts AS replacement_attempt
+      ON replacement_attempt.id = EXCLUDED.verification_attempt_id
+      AND replacement_attempt.campaign_id = EXCLUDED.campaign_id
+      AND replacement_attempt.task_id = EXCLUDED.task_id
+      AND replacement_attempt.wallet_address = EXCLUDED.wallet_address
+    JOIN campaign_os.campaign_tasks AS current_task
+      ON current_task.campaign_id = replacement_attempt.campaign_id
+      AND current_task.id = replacement_attempt.task_id
+      AND current_task.revision = replacement_attempt.task_revision
+    WHERE previous_attempt.id = ${projectionTable}.verification_attempt_id
+      AND previous_attempt.campaign_id = replacement_attempt.campaign_id
+      AND previous_attempt.task_id = replacement_attempt.task_id
+      AND previous_attempt.wallet_address = replacement_attempt.wallet_address
+      AND previous_attempt.status = 'completed'
+      AND previous_attempt.dispatch_state = 'result_observed'
+      AND replacement_attempt.status = 'completed'
+      AND replacement_attempt.dispatch_state = 'result_observed'
+      AND replacement_attempt.task_revision > previous_attempt.task_revision
+  )
+`;
 
 const CAMPAIGN_COLUMNS = `
   id,
@@ -1296,6 +1367,9 @@ export const createPostgresCampaignDurableStore = ({
     context?: CampaignDurableStoreOperationContext,
     operation: PostgresCampaignStoreOperation = "upsertTaskCompletion",
   ) => {
+    const rolloverPredicate = operation === "finalizeTaskVerificationAttempt"
+      ? `OR (${taskVerificationRolloverPredicate("campaign_os.campaign_task_completions")})`
+      : "";
     const result = await queryWith(
       queryable,
       operation,
@@ -1318,6 +1392,7 @@ export const createPostgresCampaignDurableStore = ({
             campaign_os.campaign_task_completions.verification_attempt_id IS NULL
             AND EXCLUDED.verification_attempt_id IS NULL
           )
+          ${rolloverPredicate}
         RETURNING ${COMPLETION_COLUMNS}
       `,
       [
@@ -1350,6 +1425,9 @@ export const createPostgresCampaignDurableStore = ({
     context?: CampaignDurableStoreOperationContext,
     operation: PostgresCampaignStoreOperation = "upsertTaskEvidence",
   ) => {
+    const rolloverPredicate = operation === "finalizeTaskVerificationAttempt"
+      ? `OR (${taskVerificationRolloverPredicate("campaign_os.campaign_task_evidence")})`
+      : "";
     const result = await queryWith(
       queryable,
       operation,
@@ -1381,6 +1459,7 @@ export const createPostgresCampaignDurableStore = ({
             campaign_os.campaign_task_evidence.verification_attempt_id IS NULL
             AND EXCLUDED.verification_attempt_id IS NULL
           )
+          ${rolloverPredicate}
         RETURNING ${EVIDENCE_COLUMNS}
       `,
       [
@@ -1541,6 +1620,31 @@ export const createPostgresCampaignDurableStore = ({
     || record.status === "failed"
     || record.status === "manual_review";
 
+  const lockCurrentTaskVerificationRevision = async (
+    client: PostgresCampaignStoreClient,
+    expected: TaskVerificationRevisionExpectation,
+    operation: "beginTaskVerificationAttempt" | "finalizeTaskVerificationAttempt",
+    traceId: string,
+  ) => {
+    const result = await queryWith(
+      client,
+      operation,
+      `
+        SELECT ${TASK_COLUMNS}
+        FROM campaign_os.campaign_tasks
+        WHERE campaign_id = $1 AND id = $2
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [expected.campaignId, expected.taskId],
+      { traceId },
+    );
+    const task = optionalOne(result.rows, mapTaskRow, operation, traceId);
+    return task && taskMatchesVerificationRevision(task, expected, traceId)
+      ? task
+      : undefined;
+  };
+
   const validateAttemptOwner = (owner: TaskVerificationAttemptOwner, traceId: string) => {
     if (
       !isPlainRecord(owner)
@@ -1607,6 +1711,15 @@ export const createPostgresCampaignDurableStore = ({
       const timestamp = currentAttemptTimestamp(traceId);
 
       if (!existing) {
+        const currentTask = await lockCurrentTaskVerificationRevision(
+          client,
+          identity,
+          "beginTaskVerificationAttempt",
+          traceId,
+        );
+        if (!currentTask) {
+          return attemptStoreInputError("identity.taskRevisionDigest", traceId);
+        }
         const id = assertAttemptString(attemptId(), "attemptId", traceId);
         const token = assertAttemptString(ownerToken(), "ownerToken", traceId);
         const leaseExpiresAt = new Date(Date.parse(timestamp) + leaseDurationMs).toISOString();
@@ -1688,14 +1801,24 @@ export const createPostgresCampaignDurableStore = ({
         || existing.walletSource !== identity.issuedSubject.walletSource
         || existing.bindingId !== identity.binding.bindingId
         || existing.bindingRevision !== identity.binding.bindingRevision
-        || existing.providerRef !== providerRef
         || existing.verificationType !== input.verificationType
-        || existing.maxAttempts !== maxAttempts
       ) {
         return { attempt: toSafeVerificationAttempt(existing), kind: "blocked" };
       }
       if (isObservedAttempt(existing)) {
         return { attempt: toSafeVerificationAttempt(existing), kind: "existing_terminal" };
+      }
+      if (existing.providerRef !== providerRef || existing.maxAttempts !== maxAttempts) {
+        return { attempt: toSafeVerificationAttempt(existing), kind: "blocked" };
+      }
+      const currentTask = await lockCurrentTaskVerificationRevision(
+        client,
+        existing,
+        "beginTaskVerificationAttempt",
+        traceId,
+      );
+      if (!currentTask) {
+        return { attempt: toSafeVerificationAttempt(existing), kind: "blocked" };
       }
       if (Date.parse(existing.leaseExpiresAt ?? "") > Date.parse(timestamp)) {
         return { attempt: toSafeVerificationAttempt(existing), kind: "in_progress" };
@@ -2095,6 +2218,28 @@ export const createPostgresCampaignDurableStore = ({
         ) {
           return attemptStoreInputError("write.identity", traceId);
         }
+
+        const currentTask = await lockCurrentTaskVerificationRevision(
+          client,
+          existing,
+          "finalizeTaskVerificationAttempt",
+          traceId,
+        );
+        if (!currentTask || currentTask.points !== write.completion.pointsAwarded) {
+          return { attempt: toSafeVerificationAttempt(existing), kind: "blocked" };
+        }
+        await queryWith(
+          client,
+          "finalizeTaskVerificationAttempt",
+          `
+            SET CONSTRAINTS
+              campaign_os.campaign_task_completion_live_provider_validation,
+              campaign_os.campaign_task_evidence_live_provider_validation
+            DEFERRED
+          `,
+          [],
+          { traceId },
+        );
       }
 
       const updatedResult = await queryWith(
