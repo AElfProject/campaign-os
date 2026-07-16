@@ -169,11 +169,13 @@ export interface ParticipantJourneyProjection {
 export interface ParticipantVerificationCompletion {
   accountType: AccountType;
   campaignId: string;
-  evidenceId: string;
+  evidenceHash?: string;
+  evidenceId?: string;
   id: string;
   pointsAwarded: number;
   status: "completed" | "failed" | "manual_review" | "pending";
   taskId: string;
+  verificationAttemptId?: string;
   walletAddress: string;
   walletSource: WalletSource;
 }
@@ -182,10 +184,15 @@ export interface ParticipantVerificationEvidence {
   accountType: AccountType;
   campaignId: string;
   completionId: string;
+  evidenceHash?: string;
+  evidenceRef?: string;
+  evidenceSource?: "AEFINDER" | "AELFSCAN" | "DAPP_API";
   id: string;
+  liveProviderExecuted?: true;
   pointsAwarded: number;
-  status: "completed" | "failed" | "manual_review" | "pending";
+  status: "completed";
   taskId: string;
+  verificationAttemptId?: string;
   walletAddress: string;
   walletSource: WalletSource;
 }
@@ -199,11 +206,39 @@ export interface ParticipantVerificationParticipant {
   walletSource: WalletSource;
 }
 
+export type ParticipantVerificationOutcome = "completed" | "failed" | "manual_review" | "pending";
+
+export interface ParticipantVerificationAttempt {
+  authoritative: boolean;
+  id: string;
+  providerFamily: string;
+  retryAfterMs?: number;
+  retryable: boolean;
+  status: ParticipantVerificationOutcome;
+  transportExecuted: boolean;
+}
+
+export interface ParticipantVerificationDiagnostic {
+  code: string;
+  retryAfterMs?: number;
+  retryable: boolean;
+  severity: "error" | "info" | "warning";
+}
+
+export interface ParticipantVerificationRepositoryMetadata
+  extends ParticipantJourneyRepositoryMetadata {
+  adapterId: "campaign-db-postgresql-adapter";
+  mode: "postgres";
+}
+
 export interface ParticipantVerificationProjection {
-  completion: ParticipantVerificationCompletion;
-  evidence: ParticipantVerificationEvidence;
+  attempt?: ParticipantVerificationAttempt;
+  completion?: ParticipantVerificationCompletion;
+  diagnostics?: readonly ParticipantVerificationDiagnostic[];
+  evidence?: ParticipantVerificationEvidence;
+  outcome?: ParticipantVerificationOutcome;
   participant?: ParticipantVerificationParticipant;
-  repository: ParticipantJourneyRepositoryMetadata;
+  repository: ParticipantJourneyRepositoryMetadata | ParticipantVerificationRepositoryMetadata;
 }
 
 export interface ParticipantJourneyFailure {
@@ -241,8 +276,9 @@ export interface ParticipantJourneySuccess {
 export interface ParticipantVerifySuccess {
   httpStatus: number;
   ok: true;
+  outcome?: ParticipantVerificationOutcome;
   source: ParticipantJourneyResultSource;
-  status: "success";
+  status: ParticipantVerificationOutcome | "success";
   traceId: string;
   verification: ParticipantVerificationProjection;
 }
@@ -301,9 +337,16 @@ const maxConfiguredResponseBytes = 1_000_000;
 const maxIdentityLength = 256;
 const maxTextLength = 4_096;
 const maxCollectionLength = 500;
+const maxVerificationDiagnostics = 32;
+const maxVerificationRetryAfterMs = 600_000;
 const safeCodePattern = /^[A-Z][A-Z0-9_]{1,127}$/u;
 const unsafeCodeFragmentPattern = /(?:^|_)(?:API_?KEY|PASSWORD|PRIVATE_?KEY|RAW_?SIGNATURE|SECRET|STACK|TOKEN)(?:_|$)/u;
 const safeTracePattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const safeProviderFamilyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/u;
+const safeEvidenceHashPattern = /^[a-f0-9]{64}$/u;
+const safeEvidenceRefPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
+const unsafeEvidenceRefSegmentPattern = /(?:^|[._:-])(?:authorization|credential|header|password|payload|secret|token|uri|url)(?:$|[._:-])/iu;
+const safeFieldPattern = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/u;
 const campaignStatuses = new Set<CampaignStatus>([
   "ai_draft",
   "archived",
@@ -357,6 +400,11 @@ const verificationStatuses = new Set<ParticipantVerificationCompletion["status"]
   "failed",
   "manual_review",
   "pending",
+]);
+const verificationEvidenceSources = new Set<NonNullable<ParticipantVerificationEvidence["evidenceSource"]>>([
+  "AEFINDER",
+  "AELFSCAN",
+  "DAPP_API",
 ]);
 const evidenceSources = new Set<NonNullable<ParticipantJourneyTask["evidenceSource"]>>([
   "AEFINDER",
@@ -422,6 +470,76 @@ export const sanitizeParticipantJourneyApiText = (value: unknown): string => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const hasOnlyKeys = (
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  required: readonly string[] = [],
+): boolean => Object.keys(value).every((key) => allowed.has(key))
+  && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+
+const forbiddenVerificationKeyTokens = new Set([
+  "authorization",
+  "body",
+  "config",
+  "credential",
+  "debug",
+  "endpoint",
+  "env",
+  "environment",
+  "header",
+  "headers",
+  "idempotency",
+  "lease",
+  "material",
+  "path",
+  "private",
+  "query",
+  "raw",
+  "request",
+  "response",
+  "secret",
+  "signed",
+  "sql",
+  "stack",
+  "token",
+  "url",
+]);
+
+const verificationKeyTokens = (key: string): readonly string[] => key
+  .replace(/([a-z0-9])([A-Z])/gu, "$1_$2")
+  .toLowerCase()
+  .split(/[^a-z0-9]+/u)
+  .filter(Boolean);
+
+const containsForbiddenVerificationKey = (value: unknown): boolean => {
+  const pending: unknown[] = [value];
+  let visited = 0;
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    visited += 1;
+    if (visited > 4_096) {
+      return true;
+    }
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    if (!isRecord(current)) {
+      continue;
+    }
+
+    for (const [key, nested] of Object.entries(current)) {
+      if (verificationKeyTokens(key).some((token) => forbiddenVerificationKeyTokens.has(token))) {
+        return true;
+      }
+      pending.push(nested);
+    }
+  }
+
+  return false;
+};
 
 const abortSignalAbortedGetter = Object.getOwnPropertyDescriptor(
   AbortSignal.prototype,
@@ -541,11 +659,38 @@ const normalizeRepository = (value: unknown): ParticipantJourneyRepositoryMetada
     : undefined;
 };
 
+const verificationRepositoryKeys = new Set([
+  "adapterId",
+  "createdViaRepository",
+  "mode",
+  "repositoryId",
+  "storeId",
+]);
+
+const normalizeVerificationRepository = (
+  value: unknown,
+): ParticipantVerificationRepositoryMetadata | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, verificationRepositoryKeys)) {
+    return undefined;
+  }
+  const repository = normalizeRepository(value);
+  if (
+    !repository
+    || repository.adapterId !== "campaign-db-postgresql-adapter"
+    || value.mode !== "postgres"
+  ) {
+    return undefined;
+  }
+
+  return { ...repository, adapterId: "campaign-db-postgresql-adapter", mode: "postgres" };
+};
+
 const failure = (input: {
   bridgeCode?: ParticipantJourneyBridgeCode;
   code: ParticipantJourneyErrorCode;
   httpStatus?: number;
   phase: ParticipantJourneyFailurePhase;
+  retryable?: boolean;
   safeDetails?: Readonly<Record<string, boolean | number | string>>;
   source?: ParticipantJourneyResultSource;
   status?: ParticipantJourneyFailureStatus;
@@ -557,10 +702,12 @@ const failure = (input: {
   ok: false,
   phase: input.phase,
   reconnectRequired: input.httpStatus === 401,
-  retryable: input.code === "BRIDGE_REQUEST_FAILED"
-    || input.code === "BRIDGE_REQUEST_TIMEOUT"
-    || input.httpStatus === 503
-    || (input.httpStatus !== undefined && input.httpStatus >= 500),
+  retryable: input.retryable ?? (
+    input.code === "BRIDGE_REQUEST_FAILED"
+      || input.code === "BRIDGE_REQUEST_TIMEOUT"
+      || input.httpStatus === 503
+      || (input.httpStatus !== undefined && input.httpStatus >= 500)
+  ),
   ...(input.safeDetails ? { safeDetails: input.safeDetails } : {}),
   source: input.source ?? "durable",
   status: input.status ?? (
@@ -681,6 +828,21 @@ const responseHeader = (response: Response, name: string): string | undefined =>
   }
 };
 
+const responseTraceHeaderState = (
+  response: Response,
+): { invalid: boolean; value?: string } => {
+  try {
+    const raw = response.headers.get("x-campaign-os-trace-id");
+    if (raw === null) {
+      return { invalid: false };
+    }
+    const value = safeTraceId(raw);
+    return value ? { invalid: false, value } : { invalid: true };
+  } catch {
+    return { invalid: true };
+  }
+};
+
 const responseTraceId = (response: Response, body: unknown, requestId: string): string => {
   const headerTrace = responseHeader(response, "x-campaign-os-trace-id");
   if (headerTrace) {
@@ -781,6 +943,17 @@ const parseBoundedResponse = async (
   let rawText: string;
 
   try {
+    const contentType = response.headers.get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (
+      !contentType
+      || !/^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json$/u.test(contentType)
+    ) {
+      await cancelResponseBody(response);
+      throw new ResponseReadFailure("BRIDGE_RESPONSE_NON_JSON");
+    }
     rawText = await boundedResponseText(response, maxBytes, signal);
   } catch (error) {
     if (error instanceof ResponseReadFailure) {
@@ -858,22 +1031,29 @@ const safeErrorCode = (body: Record<string, unknown>, status: number): string =>
 
 const safeErrorDetails = (
   body: Record<string, unknown>,
-  status: number,
 ): Readonly<Record<string, boolean | number | string>> => {
   const error = isRecord(body.error) ? body.error : undefined;
   const details = isRecord(error?.details) ? error.details : undefined;
-  const output: Record<string, boolean | number | string> = { status };
+  const output: Record<string, boolean | number | string> = {};
 
-  for (const key of ["field", "reason"] as const) {
-    const value = details?.[key];
-    if (typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) {
-      output[key] = value;
-    } else {
-      const normalized = text(value, maxIdentityLength);
-      if (normalized) {
-        output[key] = sanitizeParticipantJourneyApiText(normalized);
-      }
-    }
+  const diagnosticCode = text(details?.diagnosticCode, 128);
+  if (
+    diagnosticCode
+    && safeCodePattern.test(diagnosticCode)
+    && !unsafeCodeFragmentPattern.test(diagnosticCode)
+  ) {
+    output.diagnosticCode = diagnosticCode;
+  }
+  const field = text(details?.field, 128);
+  if (field && safeFieldPattern.test(field)) {
+    output.field = field;
+  }
+  if (typeof details?.retryable === "boolean") {
+    output.retryable = details.retryable;
+  }
+  const retryAfterMs = nonNegativeInteger(details?.retryAfterMs);
+  if (retryAfterMs !== undefined && retryAfterMs <= maxVerificationRetryAfterMs) {
+    output.retryAfterMs = retryAfterMs;
   }
 
   return Object.freeze(output);
@@ -991,7 +1171,8 @@ const executeRequest = async (
       return bridgeFailure("BRIDGE_REQUEST_ABORTED", "request", traceId);
     }
 
-    const responseFailureTraceId = responseTraceId(response, undefined, traceId);
+    const traceHeader = responseTraceHeaderState(response);
+    const responseFailureTraceId = traceHeader.value ?? traceId;
     let parsed: Record<string, unknown>;
     try {
       parsed = await parseBoundedResponse(response, config.maxResponseBytes, managedAbort.controller.signal);
@@ -1015,13 +1196,36 @@ const executeRequest = async (
       );
     }
 
+    const bodyTraceId = safeTraceId(parsed.traceId);
+    if (
+      input.operation === "verifyTask"
+      && (
+        traceHeader.invalid
+        || !bodyTraceId
+        || (traceHeader.value !== undefined && traceHeader.value !== bodyTraceId)
+      )
+    ) {
+      return bridgeFailure("BRIDGE_RESPONSE_INVALID", "response", responseFailureTraceId, {
+        httpStatus: response.status,
+      });
+    }
+
     const resolvedTraceId = responseTraceId(response, parsed, traceId);
+    if (input.operation === "verifyTask" && containsForbiddenVerificationKey(parsed)) {
+      return bridgeFailure("BRIDGE_RESPONSE_INVALID", "response", resolvedTraceId, {
+        httpStatus: response.status,
+      });
+    }
     if (!response.ok || response.status < 200 || response.status >= 300) {
+      const safeDetails = safeErrorDetails(parsed);
       return failure({
         code: safeErrorCode(parsed, response.status),
         httpStatus: response.status,
         phase: "response",
-        safeDetails: safeErrorDetails(parsed, response.status),
+        ...(typeof safeDetails.retryable === "boolean"
+          ? { retryable: safeDetails.retryable }
+          : {}),
+        safeDetails,
         traceId: resolvedTraceId,
       });
     }
@@ -1408,177 +1612,694 @@ const normalizeJourney = (
       };
 };
 
+const verificationEnvelopeKeys = new Set(["data", "ok", "traceId"]);
+const verificationDataKeys = new Set([
+  "boundary",
+  "campaignDb",
+  "campaignDbCompletion",
+  "campaignDbEvidence",
+  "completion",
+  "evidence",
+  "participant",
+  "payload",
+  "persistence",
+  "repository",
+]);
+const verificationPayloadKeys = new Set([
+  "accountType",
+  "authoritative",
+  "campaignId",
+  "canonicalEvidenceSource",
+  "completion",
+  "diagnosticCodes",
+  "evidence",
+  "evidenceHash",
+  "evidenceId",
+  "evidenceRef",
+  "evidenceSource",
+  "liveContractExecuted",
+  "liveProviderExecuted",
+  "liveRewardExecuted",
+  "liveStorageExecuted",
+  "manualReview",
+  "nextAction",
+  "outcome",
+  "participant",
+  "pointsAwarded",
+  "pointsAvailable",
+  "provider",
+  "providerFamily",
+  "repository",
+  "retryAfterMs",
+  "retryable",
+  "riskFlags",
+  "status",
+  "taskId",
+  "transportExecuted",
+  "verificationAttemptId",
+  "walletAddress",
+  "walletSource",
+]);
+const verificationCompletionKeys = new Set([
+  "accountType",
+  "campaignId",
+  "completedAt",
+  "completionId",
+  "evidenceHash",
+  "evidenceId",
+  "id",
+  "pointsAwarded",
+  "status",
+  "taskId",
+  "updatedAt",
+  "verificationAttemptId",
+  "walletAddress",
+  "walletSource",
+]);
+const verificationEvidenceKeys = new Set([
+  "accountType",
+  "campaignId",
+  "capturedAt",
+  "completionId",
+  "evidenceHash",
+  "evidenceId",
+  "evidenceRef",
+  "evidenceSource",
+  "id",
+  "live",
+  "liveProviderExecuted",
+  "pointsAwarded",
+  "source",
+  "sourceLabel",
+  "status",
+  "taskId",
+  "verificationAttemptId",
+  "walletAddress",
+  "walletSource",
+]);
+const verificationParticipantKeys = new Set([
+  "accountType",
+  "campaignId",
+  "id",
+  "participantId",
+  "totalPoints",
+  "walletAddress",
+  "walletSource",
+]);
+const verificationCompletionMetadataKeys = new Set([
+  "completionId",
+  "createdViaRepository",
+  "evidenceId",
+  "repositoryId",
+  "storeId",
+  "taskId",
+  "verificationAttemptId",
+]);
+const verificationEvidenceMetadataKeys = new Set([
+  "completionId",
+  "createdViaRepository",
+  "evidenceHash",
+  "evidenceId",
+  "evidenceRef",
+  "evidenceSource",
+  "liveContractExecuted",
+  "liveProviderExecuted",
+  "liveRewardExecuted",
+  "liveStorageExecuted",
+  "repositoryId",
+  "status",
+  "storeId",
+  "taskId",
+  "verificationAttemptId",
+]);
+const verificationPersistenceKeys = new Set([
+  "code",
+  "kind",
+  "operation",
+  "recordId",
+  "status",
+  "traceId",
+]);
+const verificationManualReviewKeys = new Set(["queued", "reason", "severity"]);
+const verificationProviderKeys = new Set(["nextAdapterStep", "providerId", "readiness"]);
+
+interface NormalizedVerificationIdentity {
+  accountType: AccountType;
+  campaignId: string;
+  taskId: string;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
 const verificationIdentity = (
   value: Record<string, unknown>,
   fallback: Record<string, unknown>,
-) => ({
-  accountType: enumValue(value.accountType ?? fallback.accountType, accountTypes),
-  campaignId: identity(value.campaignId ?? fallback.campaignId),
-  taskId: identity(value.taskId ?? fallback.taskId),
-  walletAddress: identity(value.walletAddress ?? fallback.walletAddress),
-  walletSource: enumValue(value.walletSource ?? fallback.walletSource, walletSources),
-});
+  session: NormalizedWalletSession,
+): NormalizedVerificationIdentity | undefined => {
+  const accountType = enumValue(
+    value.accountType ?? fallback.accountType ?? session.accountType,
+    accountTypes,
+  );
+  const campaignId = identity(value.campaignId ?? fallback.campaignId);
+  const taskId = identity(value.taskId ?? fallback.taskId);
+  const walletAddress = identity(value.walletAddress ?? fallback.walletAddress);
+  const walletSource = enumValue(value.walletSource ?? fallback.walletSource, walletSources);
+
+  return accountType && campaignId && taskId && walletAddress && walletSource
+    ? { accountType, campaignId, taskId, walletAddress, walletSource }
+    : undefined;
+};
+
+const verificationIdentityMatches = (
+  value: NormalizedVerificationIdentity,
+  campaignId: string,
+  taskId: string,
+  session: NormalizedWalletSession,
+): boolean => value.campaignId === campaignId
+  && value.taskId === taskId
+  && value.walletAddress === session.address.trim()
+  && value.accountType === session.accountType.trim()
+  && value.walletSource === session.walletSource.trim();
+
+type ConsistentValueResult<T> =
+  | { ok: true; value: T | undefined }
+  | { ok: false; reason: NormalizationFailureReason };
+
+const consistentValue = <T>(
+  values: readonly unknown[],
+  normalize: (value: unknown) => T | undefined,
+  required = true,
+): ConsistentValueResult<T> => {
+  const normalized: T[] = [];
+  for (const value of values) {
+    if (value === undefined) {
+      continue;
+    }
+    const candidate = normalize(value);
+    if (candidate === undefined) {
+      return { ok: false, reason: "invalid" };
+    }
+    normalized.push(candidate);
+  }
+  if (normalized.length === 0) {
+    return required
+      ? { ok: false, reason: "invalid" }
+      : { ok: true, value: undefined };
+  }
+  if (normalized.some((value) => value !== normalized[0])) {
+    return { ok: false, reason: "identity" };
+  }
+  return { ok: true, value: normalized[0] };
+};
+
+const normalizeVerificationDiagnostics = (
+  value: unknown,
+  outcome: ParticipantVerificationOutcome,
+  retryable: boolean,
+  retryAfterMs: number | undefined,
+): readonly ParticipantVerificationDiagnostic[] | undefined => {
+  if (!Array.isArray(value) || value.length > maxVerificationDiagnostics) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const severity: ParticipantVerificationDiagnostic["severity"] = outcome === "completed"
+    ? "info"
+    : outcome === "failed"
+      ? "error"
+      : "warning";
+  const diagnostics: ParticipantVerificationDiagnostic[] = [];
+  for (const item of value) {
+    const code = text(item, 80);
+    if (
+      !code
+      || !safeCodePattern.test(code)
+      || unsafeCodeFragmentPattern.test(code)
+      || seen.has(code)
+    ) {
+      return undefined;
+    }
+    seen.add(code);
+    diagnostics.push({
+      code,
+      ...(retryable && retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      retryable,
+      severity,
+    });
+  }
+  return diagnostics;
+};
+
+const validVerificationScaffolding = (
+  data: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): boolean => {
+  if (data.boundary !== undefined && !normalizeLocalizedText(data.boundary)) {
+    return false;
+  }
+  if (data.persistence !== undefined) {
+    if (
+      !isRecord(data.persistence)
+      || !hasOnlyKeys(data.persistence, verificationPersistenceKeys, ["kind"])
+      || !identity(data.persistence.kind)
+      || (data.persistence.recordId !== undefined && !identity(data.persistence.recordId))
+      || (data.persistence.code !== undefined && !text(data.persistence.code, 128))
+      || (data.persistence.operation !== undefined && !identity(data.persistence.operation))
+      || (data.persistence.status !== undefined && !identity(data.persistence.status))
+      || (data.persistence.traceId !== undefined && !safeTraceId(data.persistence.traceId))
+    ) {
+      return false;
+    }
+  }
+  if (payload.manualReview !== undefined) {
+    if (
+      !isRecord(payload.manualReview)
+      || !hasOnlyKeys(payload.manualReview, verificationManualReviewKeys, ["queued", "severity"])
+      || typeof payload.manualReview.queued !== "boolean"
+      || !new Set(["info", "warning"]).has(String(payload.manualReview.severity))
+      || (payload.manualReview.reason !== undefined && !normalizeLocalizedText(payload.manualReview.reason))
+    ) {
+      return false;
+    }
+  }
+  if (payload.nextAction !== undefined && !normalizeLocalizedText(payload.nextAction)) {
+    return false;
+  }
+  if (payload.provider !== undefined) {
+    if (
+      !isRecord(payload.provider)
+      || !hasOnlyKeys(payload.provider, verificationProviderKeys, ["nextAdapterStep", "providerId", "readiness"])
+      || !normalizeLocalizedText(payload.provider.nextAdapterStep)
+      || !identity(payload.provider.providerId)
+      || !identity(payload.provider.readiness)
+    ) {
+      return false;
+    }
+  }
+  return payload.riskFlags === undefined || boundedTextList(payload.riskFlags) !== undefined;
+};
+
+const normalizeVerificationParticipant = (
+  value: unknown,
+  payload: Record<string, unknown>,
+  campaignId: string,
+  taskId: string,
+  session: NormalizedWalletSession,
+): NormalizationResult<ParticipantVerificationParticipant | undefined> => {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (!isRecord(value) || !hasOnlyKeys(value, verificationParticipantKeys)) {
+    return { ok: false, reason: "invalid" };
+  }
+  const normalizedIdentity = verificationIdentity(value, { ...payload, taskId }, session);
+  const id = identity(value.id ?? value.participantId);
+  const totalPoints = nonNegativeInteger(value.totalPoints);
+  if (!normalizedIdentity || !id || totalPoints === undefined) {
+    return { ok: false, reason: "invalid" };
+  }
+  if (!verificationIdentityMatches(normalizedIdentity, campaignId, taskId, session)) {
+    return { ok: false, reason: "identity" };
+  }
+  return {
+    ok: true,
+    value: {
+      accountType: normalizedIdentity.accountType,
+      campaignId: normalizedIdentity.campaignId,
+      id,
+      totalPoints,
+      walletAddress: normalizedIdentity.walletAddress,
+      walletSource: normalizedIdentity.walletSource,
+    },
+  };
+};
 
 const normalizeVerification = (
   body: Record<string, unknown>,
+  httpStatus: number,
   campaignId: string,
   taskId: string,
   session: NormalizedWalletSession,
 ): NormalizationResult<ParticipantVerificationProjection> => {
   const data = dataRecord(body);
-  const payload = payloadValue(body);
-  if (!isRecord(payload)) {
-    return { ok: false, reason: "invalid" };
-  }
-
-  const nestedCompletion = isRecord(payload.completion) ? payload.completion : undefined;
-  const nestedEvidence = isRecord(payload.evidence) ? payload.evidence : undefined;
-  const completionMetadata = isRecord(data?.campaignDbCompletion) ? data.campaignDbCompletion : undefined;
-  const evidenceMetadata = isRecord(data?.campaignDbEvidence) ? data.campaignDbEvidence : undefined;
-  const rawCompletion = nestedCompletion ?? payload;
-  const rawEvidence = nestedEvidence ?? payload;
-  const completionIdentity = verificationIdentity(rawCompletion, payload);
-  const evidenceIdentity = verificationIdentity(rawEvidence, payload);
-  const completionId = identity(rawCompletion.id ?? rawCompletion.completionId ?? completionMetadata?.completionId);
-  const completionEvidenceId = identity(
-    rawCompletion.evidenceId ?? payload.evidenceId ?? completionMetadata?.evidenceId ?? evidenceMetadata?.evidenceId,
-  );
-  const evidenceId = identity(rawEvidence.id ?? rawEvidence.evidenceId ?? evidenceMetadata?.evidenceId);
-  const evidenceCompletionId = identity(
-    rawEvidence.completionId ?? evidenceMetadata?.completionId ?? completionMetadata?.completionId,
-  );
-  const completionPoints = nonNegativeInteger(rawCompletion.pointsAwarded ?? payload.pointsAwarded);
-  const evidencePoints = nonNegativeInteger(rawEvidence.pointsAwarded ?? payload.pointsAwarded);
-  const completionStatus = enumValue(rawCompletion.status ?? payload.status, verificationStatuses);
-  const evidenceStatus = enumValue(rawEvidence.status ?? payload.status, verificationStatuses);
-
-  const rawRepository = data?.campaignDb;
-  const repository = normalizeRepository(rawRepository);
-
-  const completionProvenanceMatches = Boolean(
-    completionMetadata
-    && completionMetadata.createdViaRepository === true
-    && identity(completionMetadata.completionId) === completionId
-    && identity(completionMetadata.evidenceId) === completionEvidenceId
-    && identity(completionMetadata.repositoryId) === repository?.repositoryId
-    && identity(completionMetadata.storeId) === repository?.storeId
-    && identity(completionMetadata.taskId) === completionIdentity.taskId
-  );
-  const evidenceProvenanceMatches = Boolean(
-    evidenceMetadata
-    && evidenceMetadata.createdViaRepository === true
-    && identity(evidenceMetadata.completionId) === evidenceCompletionId
-    && identity(evidenceMetadata.evidenceId) === evidenceId
-    && identity(evidenceMetadata.repositoryId) === repository?.repositoryId
-    && identity(evidenceMetadata.storeId) === repository?.storeId
-    && identity(evidenceMetadata.taskId) === evidenceIdentity.taskId
-  );
-
+  const payload = data?.payload;
   if (
-    !completionIdentity.accountType
-    || !completionIdentity.campaignId
-    || !completionIdentity.taskId
-    || !completionIdentity.walletAddress
-    || !completionIdentity.walletSource
-    || !evidenceIdentity.accountType
-    || !evidenceIdentity.campaignId
-    || !evidenceIdentity.taskId
-    || !evidenceIdentity.walletAddress
-    || !evidenceIdentity.walletSource
-    || !completionId
-    || !completionEvidenceId
-    || !evidenceId
-    || !evidenceCompletionId
-    || completionPoints === undefined
-    || evidencePoints === undefined
-    || !completionStatus
-    || !evidenceStatus
-    || !repository
-    || !completionProvenanceMatches
-    || !evidenceProvenanceMatches
+    containsForbiddenVerificationKey(body)
+    || !hasOnlyKeys(body, verificationEnvelopeKeys, ["data", "ok", "traceId"])
+    || body.ok !== true
+    || !data
+    || !hasOnlyKeys(data, verificationDataKeys, ["payload"])
+    || !isRecord(payload)
+    || !hasOnlyKeys(payload, verificationPayloadKeys)
+    || !validVerificationScaffolding(data, payload)
   ) {
     return { ok: false, reason: "invalid" };
   }
 
-  const rawParticipant = isRecord(payload.participant) ? payload.participant : undefined;
-  let participant: ParticipantVerificationParticipant | undefined;
-  if (rawParticipant) {
-    const participantIdentity = verificationIdentity(rawParticipant, payload);
-    const participantId = identity(rawParticipant.id ?? rawParticipant.participantId);
-    const totalPoints = nonNegativeInteger(rawParticipant.totalPoints);
-    if (
-      !participantIdentity.accountType
-      || !participantIdentity.campaignId
-      || !participantIdentity.walletAddress
-      || !participantIdentity.walletSource
-      || !participantId
-      || totalPoints === undefined
-    ) {
-      return { ok: false, reason: "invalid" };
-    }
-    participant = {
-      accountType: participantIdentity.accountType,
-      campaignId: participantIdentity.campaignId,
-      id: participantId,
-      totalPoints,
-      walletAddress: participantIdentity.walletAddress,
-      walletSource: participantIdentity.walletSource,
-    };
+  const nestedCompletion = isRecord(data.completion)
+    ? data.completion
+    : isRecord(payload.completion)
+      ? payload.completion
+      : undefined;
+  const nestedEvidence = isRecord(data.evidence)
+    ? data.evidence
+    : isRecord(payload.evidence)
+      ? payload.evidence
+      : undefined;
+  const completionMetadata = isRecord(data.campaignDbCompletion)
+    ? data.campaignDbCompletion
+    : undefined;
+  const evidenceMetadata = isRecord(data.campaignDbEvidence)
+    ? data.campaignDbEvidence
+    : undefined;
+  if (
+    (nestedCompletion && !hasOnlyKeys(nestedCompletion, verificationCompletionKeys))
+    || (nestedEvidence && !hasOnlyKeys(nestedEvidence, verificationEvidenceKeys))
+    || (completionMetadata && !hasOnlyKeys(completionMetadata, verificationCompletionMetadataKeys))
+    || (evidenceMetadata && !hasOnlyKeys(evidenceMetadata, verificationEvidenceMetadataKeys))
+  ) {
+    return { ok: false, reason: "invalid" };
+  }
+  if (
+    nestedEvidence?.sourceLabel !== undefined
+    && !normalizeLocalizedText(nestedEvidence.sourceLabel)
+  ) {
+    return { ok: false, reason: "invalid" };
   }
 
-  const issuedAddress = session.address.trim();
-  const issuedAccountType = session.accountType.trim();
-  const issuedWalletSource = session.walletSource.trim();
-  const records = [completionIdentity, evidenceIdentity];
-  const identityMismatch = records.some((record) =>
-    record.campaignId !== campaignId
-    || record.taskId !== taskId
-    || record.walletAddress !== issuedAddress
-    || record.accountType !== issuedAccountType
-    || record.walletSource !== issuedWalletSource)
-    || (participant !== undefined && (
-      participant.campaignId !== campaignId
-      || participant.walletAddress !== issuedAddress
-      || participant.accountType !== issuedAccountType
-      || participant.walletSource !== issuedWalletSource
-    ));
-
+  const outcome = enumValue(payload.outcome, verificationStatuses);
+  const status = enumValue(payload.status, verificationStatuses);
+  const authoritative = booleanValue(payload.authoritative);
+  const retryable = booleanValue(payload.retryable);
+  const transportExecuted = booleanValue(payload.transportExecuted);
+  const providerFamily = text(payload.providerFamily, 80);
+  const retryAfterMs = payload.retryAfterMs === undefined
+    ? undefined
+    : nonNegativeInteger(payload.retryAfterMs);
   if (
-    identityMismatch
-    || completionEvidenceId !== evidenceId
-    || evidenceCompletionId !== completionId
-    || completionPoints !== evidencePoints
-    || completionStatus !== evidenceStatus
+    !outcome
+    || !status
+    || status !== outcome
+    || authoritative === undefined
+    || retryable === undefined
+    || transportExecuted === undefined
+    || !providerFamily
+    || !safeProviderFamilyPattern.test(providerFamily)
+    || (payload.retryAfterMs !== undefined
+      && (retryAfterMs === undefined || retryAfterMs > maxVerificationRetryAfterMs))
+    || (httpStatus === 202) !== (outcome === "pending")
+    || (httpStatus !== 200 && httpStatus !== 202)
+    || (outcome === "pending" && (!retryable || retryAfterMs === undefined))
+    || (outcome === "completed" && (!authoritative || !transportExecuted || retryable))
   ) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const fallbackIdentity = nestedCompletion ?? nestedEvidence ?? {};
+  const responseIdentity = verificationIdentity(payload, fallbackIdentity, session);
+  if (!responseIdentity) {
+    return { ok: false, reason: "invalid" };
+  }
+  if (!verificationIdentityMatches(responseIdentity, campaignId, taskId, session)) {
     return { ok: false, reason: "identity" };
   }
 
-  return {
-    ok: true,
-    value: {
-      completion: {
+  const attemptIdResult = consistentValue([
+    payload.verificationAttemptId,
+    nestedCompletion?.verificationAttemptId,
+    nestedEvidence?.verificationAttemptId,
+    completionMetadata?.verificationAttemptId,
+    evidenceMetadata?.verificationAttemptId,
+  ], identity);
+  if (!attemptIdResult.ok) {
+    return attemptIdResult;
+  }
+  const attemptId = attemptIdResult.value!;
+  const diagnostics = normalizeVerificationDiagnostics(
+    payload.diagnosticCodes,
+    outcome,
+    retryable,
+    retryAfterMs,
+  );
+  if (!diagnostics) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const rawRepository = data.campaignDb ?? data.repository ?? payload.repository;
+  const repository = normalizeVerificationRepository(rawRepository);
+  if (!repository) {
+    return { ok: false, reason: "invalid" };
+  }
+  for (const candidate of [data.campaignDb, data.repository, payload.repository]) {
+    if (candidate === undefined) {
+      continue;
+    }
+    const normalized = normalizeVerificationRepository(candidate);
+    if (
+      !normalized
+      || normalized.repositoryId !== repository.repositoryId
+      || normalized.storeId !== repository.storeId
+    ) {
+      return { ok: false, reason: normalized ? "identity" : "invalid" };
+    }
+  }
+
+  const participantResult = normalizeVerificationParticipant(
+    data.participant ?? payload.participant,
+    payload,
+    campaignId,
+    taskId,
+    session,
+  );
+  if (!participantResult.ok) {
+    return participantResult;
+  }
+
+  const points = nonNegativeInteger(payload.pointsAwarded ?? nestedCompletion?.pointsAwarded);
+  if (points === undefined) {
+    return { ok: false, reason: "invalid" };
+  }
+  const attempt: ParticipantVerificationAttempt = {
+    authoritative,
+    id: attemptId,
+    providerFamily,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+    retryable,
+    status: outcome,
+    transportExecuted,
+  };
+
+  if (outcome !== "completed") {
+    const providerEvidencePresent = nestedEvidence !== undefined
+      || evidenceMetadata !== undefined
+      || payload.evidenceHash !== undefined
+      || payload.evidenceId !== undefined
+      || payload.evidenceRef !== undefined
+      || payload.evidenceSource !== undefined
+      || payload.canonicalEvidenceSource !== undefined
+      || payload.liveProviderExecuted !== undefined;
+    const completionEvidenceLinkagePresent = nestedCompletion?.evidenceId !== undefined
+      || nestedCompletion?.evidenceHash !== undefined;
+    if (
+      points !== 0
+      || providerEvidencePresent
+      || completionEvidenceLinkagePresent
+      || completionMetadata !== undefined
+    ) {
+      return { ok: false, reason: "invalid" };
+    }
+
+    let completion: ParticipantVerificationCompletion | undefined;
+    if (nestedCompletion) {
+      const completionIdentity = verificationIdentity(nestedCompletion, payload, session);
+      const completionId = identity(nestedCompletion.id ?? nestedCompletion.completionId);
+      const completionPoints = nonNegativeInteger(nestedCompletion.pointsAwarded);
+      const completionStatus = enumValue(nestedCompletion.status, verificationStatuses);
+      if (!completionIdentity || !completionId || completionPoints !== 0 || completionStatus !== outcome) {
+        return { ok: false, reason: "invalid" };
+      }
+      if (!verificationIdentityMatches(completionIdentity, campaignId, taskId, session)) {
+        return { ok: false, reason: "identity" };
+      }
+      completion = {
         accountType: completionIdentity.accountType,
         campaignId: completionIdentity.campaignId,
-        evidenceId: completionEvidenceId,
         id: completionId,
         pointsAwarded: completionPoints,
         status: completionStatus,
         taskId: completionIdentity.taskId,
+        verificationAttemptId: attemptId,
         walletAddress: completionIdentity.walletAddress,
         walletSource: completionIdentity.walletSource,
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        attempt,
+        ...(completion ? { completion } : {}),
+        diagnostics,
+        outcome,
+        ...(participantResult.value ? { participant: participantResult.value } : {}),
+        repository,
       },
-      evidence: {
-        accountType: evidenceIdentity.accountType,
-        campaignId: evidenceIdentity.campaignId,
-        completionId: evidenceCompletionId,
-        id: evidenceId,
-        pointsAwarded: evidencePoints,
-        status: evidenceStatus,
-        taskId: evidenceIdentity.taskId,
-        walletAddress: evidenceIdentity.walletAddress,
-        walletSource: evidenceIdentity.walletSource,
-      },
-      ...(participant ? { participant } : {}),
+    };
+  }
+
+  if (!completionMetadata || !evidenceMetadata || !nestedEvidence) {
+    return { ok: false, reason: "invalid" };
+  }
+  const completionIdentity = verificationIdentity(nestedCompletion ?? payload, payload, session);
+  const evidenceIdentity = verificationIdentity(nestedEvidence, payload, session);
+  if (!completionIdentity || !evidenceIdentity) {
+    return { ok: false, reason: "invalid" };
+  }
+  if (
+    !verificationIdentityMatches(completionIdentity, campaignId, taskId, session)
+    || !verificationIdentityMatches(evidenceIdentity, campaignId, taskId, session)
+  ) {
+    return { ok: false, reason: "identity" };
+  }
+
+  const completionIdResult = consistentValue([
+    nestedCompletion?.id,
+    nestedCompletion?.completionId,
+    completionMetadata.completionId,
+    nestedEvidence.completionId,
+    evidenceMetadata.completionId,
+  ], identity);
+  const evidenceIdResult = consistentValue([
+    nestedCompletion?.evidenceId,
+    payload.evidenceId,
+    nestedEvidence.id,
+    nestedEvidence.evidenceId,
+    completionMetadata.evidenceId,
+    evidenceMetadata.evidenceId,
+  ], identity);
+  const evidenceHashResult = consistentValue([
+    nestedCompletion?.evidenceHash,
+    payload.evidenceHash,
+    nestedEvidence.evidenceHash,
+    evidenceMetadata.evidenceHash,
+  ], (value) => {
+    const normalized = text(value, 64);
+    return normalized && safeEvidenceHashPattern.test(normalized) ? normalized : undefined;
+  });
+  const evidenceRefResult = consistentValue([
+    payload.evidenceRef,
+    nestedEvidence.evidenceRef,
+    evidenceMetadata.evidenceRef,
+  ], (value) => {
+    const normalized = text(value, 256);
+    return normalized
+      && safeEvidenceRefPattern.test(normalized)
+      && !unsafeEvidenceRefSegmentPattern.test(normalized)
+      ? normalized
+      : undefined;
+  });
+  const evidenceSourceResult = consistentValue([
+    payload.canonicalEvidenceSource,
+    payload.evidenceSource,
+    nestedEvidence.evidenceSource,
+    nestedEvidence.source,
+    evidenceMetadata.evidenceSource,
+  ], (value) => enumValue(value, verificationEvidenceSources));
+  if (!completionIdResult.ok) {
+    return completionIdResult;
+  }
+  if (!evidenceIdResult.ok) {
+    return evidenceIdResult;
+  }
+  if (!evidenceHashResult.ok) {
+    return evidenceHashResult;
+  }
+  if (!evidenceRefResult.ok) {
+    return evidenceRefResult;
+  }
+  if (!evidenceSourceResult.ok) {
+    return evidenceSourceResult;
+  }
+
+  const completionId = completionIdResult.value!;
+  const evidenceId = evidenceIdResult.value!;
+  const evidenceHash = evidenceHashResult.value!;
+  const evidenceRef = evidenceRefResult.value!;
+  const evidenceSource = evidenceSourceResult.value!;
+  const nestedEvidencePoints = nestedEvidence.pointsAwarded === undefined
+    ? points
+    : nonNegativeInteger(nestedEvidence.pointsAwarded);
+  const nestedCompletionPoints = nestedCompletion?.pointsAwarded === undefined
+    ? points
+    : nonNegativeInteger(nestedCompletion.pointsAwarded);
+  const nestedCompletionStatus = nestedCompletion?.status === undefined
+    ? outcome
+    : enumValue(nestedCompletion.status, verificationStatuses);
+  const nestedEvidenceStatus = nestedEvidence.status === undefined
+    ? outcome
+    : enumValue(nestedEvidence.status, verificationStatuses);
+  const nestedEvidenceLive = nestedEvidence.liveProviderExecuted ?? nestedEvidence.live;
+  const provenanceIdentityMismatch = completionMetadata.createdViaRepository !== true
+    || evidenceMetadata.createdViaRepository !== true
+    || identity(completionMetadata.repositoryId) !== repository.repositoryId
+    || identity(evidenceMetadata.repositoryId) !== repository.repositoryId
+    || identity(completionMetadata.storeId) !== repository.storeId
+    || identity(evidenceMetadata.storeId) !== repository.storeId
+    || identity(completionMetadata.taskId) !== taskId
+    || identity(evidenceMetadata.taskId) !== taskId;
+  if (provenanceIdentityMismatch) {
+    return { ok: false, reason: "identity" };
+  }
+  if (
+    nestedCompletionPoints !== points
+    || nestedEvidencePoints !== points
+    || nestedCompletionStatus !== "completed"
+    || nestedEvidenceStatus !== "completed"
+    || payload.liveProviderExecuted !== true
+    || nestedEvidenceLive !== true
+    || evidenceMetadata.liveProviderExecuted !== true
+  ) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const completion: ParticipantVerificationCompletion = {
+    accountType: completionIdentity.accountType,
+    campaignId: completionIdentity.campaignId,
+    evidenceHash,
+    evidenceId,
+    id: completionId,
+    pointsAwarded: points,
+    status: "completed",
+    taskId: completionIdentity.taskId,
+    verificationAttemptId: attemptId,
+    walletAddress: completionIdentity.walletAddress,
+    walletSource: completionIdentity.walletSource,
+  };
+  const evidence: ParticipantVerificationEvidence = {
+    accountType: evidenceIdentity.accountType,
+    campaignId: evidenceIdentity.campaignId,
+    completionId,
+    evidenceHash,
+    evidenceRef,
+    evidenceSource,
+    id: evidenceId,
+    liveProviderExecuted: true,
+    pointsAwarded: points,
+    status: "completed",
+    taskId: evidenceIdentity.taskId,
+    verificationAttemptId: attemptId,
+    walletAddress: evidenceIdentity.walletAddress,
+    walletSource: evidenceIdentity.walletSource,
+  };
+
+  return {
+    ok: true,
+    value: {
+      attempt,
+      completion,
+      diagnostics,
+      evidence,
+      outcome,
+      ...(participantResult.value ? { participant: participantResult.value } : {}),
       repository,
     },
   };
@@ -1724,6 +2445,7 @@ export const createParticipantJourneyApiBridge = (
 
       const normalized = normalizeVerification(
         request.body,
+        request.httpStatus,
         campaignId,
         taskId,
         context.session as NormalizedWalletSession,
@@ -1732,8 +2454,9 @@ export const createParticipantJourneyApiBridge = (
         ? {
             httpStatus: request.httpStatus,
             ok: true,
+            outcome: normalized.value.outcome!,
             source: "durable",
-            status: "success",
+            status: normalized.value.outcome!,
             traceId: request.traceId,
             verification: normalized.value,
           }

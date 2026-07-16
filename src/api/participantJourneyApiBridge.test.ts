@@ -54,6 +54,16 @@ const repository = {
   storeId: "campaign-db",
 } as const;
 
+const postgresRepository = {
+  ...repository,
+  adapterId: "campaign-db-postgresql-adapter",
+  mode: "postgres",
+} as const;
+
+const verificationAttemptId = "attempt-db-live-1";
+const verificationEvidenceHash = "b".repeat(64);
+const verificationEvidenceRef = "evidence-ref:participant-bridge-live-1";
+
 const feedItem = {
   campaignId,
   goal: "Complete the durable campaign",
@@ -129,14 +139,19 @@ const journey = () => ({
 });
 
 const verification = () => ({
+  accountType: session.accountType,
+  authoritative: true,
+  campaignId,
   completion: {
     accountType: session.accountType,
     campaignId,
+    evidenceHash: verificationEvidenceHash,
     evidenceId: "evidence-db-1",
     id: "completion-db-1",
     pointsAwarded: 100,
     status: "completed",
     taskId,
+    verificationAttemptId,
     walletAddress,
     walletSource: session.walletSource,
   },
@@ -144,10 +159,15 @@ const verification = () => ({
     accountType: session.accountType,
     campaignId,
     completionId: "completion-db-1",
+    evidenceHash: verificationEvidenceHash,
+    evidenceRef: verificationEvidenceRef,
+    evidenceSource: "AELFSCAN",
     id: "evidence-db-1",
+    liveProviderExecuted: true,
     pointsAwarded: 100,
     status: "completed",
     taskId,
+    verificationAttemptId,
     walletAddress,
     walletSource: session.walletSource,
   },
@@ -159,7 +179,24 @@ const verification = () => ({
     walletAddress,
     walletSource: session.walletSource,
   },
-  repository,
+  diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+  evidenceHash: verificationEvidenceHash,
+  evidenceId: "evidence-db-1",
+  evidenceRef: verificationEvidenceRef,
+  evidenceSource: "AELFSCAN",
+  liveProviderExecuted: true,
+  outcome: "completed",
+  pointsAwarded: 100,
+  providerFamily: "aefinder",
+  repository: postgresRepository,
+  retryAfterMs: 0,
+  retryable: false,
+  status: "completed",
+  taskId,
+  transportExecuted: true,
+  verificationAttemptId,
+  walletAddress,
+  walletSource: session.walletSource,
 });
 
 const envelope = (payload: unknown, traceId = "trace-body") => ({
@@ -181,14 +218,20 @@ const verificationEnvelope = (
       repositoryId: payload.repository.repositoryId,
       storeId: payload.repository.storeId,
       taskId: payload.completion.taskId,
+      verificationAttemptId: payload.completion.verificationAttemptId,
     },
     campaignDbEvidence: {
       completionId: payload.evidence.completionId,
       createdViaRepository: true,
+      evidenceHash: payload.evidence.evidenceHash,
       evidenceId: payload.evidence.id,
+      evidenceRef: payload.evidence.evidenceRef,
+      evidenceSource: payload.evidence.evidenceSource,
+      liveProviderExecuted: payload.evidence.liveProviderExecuted,
       repositoryId: payload.repository.repositoryId,
       storeId: payload.repository.storeId,
       taskId: payload.evidence.taskId,
+      verificationAttemptId: payload.evidence.verificationAttemptId,
     },
     payload,
   },
@@ -196,11 +239,145 @@ const verificationEnvelope = (
   traceId,
 });
 
+const liveCompletedPayload = () => ({
+  accountType: session.accountType,
+  authoritative: true,
+  campaignId,
+  canonicalEvidenceSource: "AELFSCAN",
+  diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+  evidence: {
+    capturedAt: "2026-07-16T04:00:00.000Z",
+    evidenceHash: verificationEvidenceHash,
+    evidenceId: "evidence-db-1",
+    live: true,
+    source: "AELFSCAN",
+    sourceLabel: {
+      "en-US": "Committed provider verification evidence",
+      "zh-CN": "Committed provider verification evidence",
+    },
+  },
+  evidenceHash: verificationEvidenceHash,
+  evidenceId: "evidence-db-1",
+  evidenceRef: verificationEvidenceRef,
+  evidenceSource: "AELFSCAN",
+  liveContractExecuted: false,
+  liveProviderExecuted: true,
+  liveRewardExecuted: false,
+  liveStorageExecuted: false,
+  manualReview: { queued: false, severity: "info" },
+  nextAction: {
+    "en-US": "Repository task completion recorded locally.",
+    "zh-CN": "Repository task completion recorded locally.",
+  },
+  outcome: "completed",
+  pointsAwarded: 100,
+  pointsAvailable: 100,
+  provider: {
+    nextAdapterStep: {
+      "en-US": "Use the committed verification result.",
+      "zh-CN": "Use the committed verification result.",
+    },
+    providerId: "aelfscan",
+    readiness: "ready",
+  },
+  providerFamily: "aefinder",
+  retryAfterMs: 0,
+  retryable: false,
+  riskFlags: [],
+  status: "completed",
+  taskId,
+  transportExecuted: true,
+  verificationAttemptId,
+  walletAddress,
+  walletSource: session.walletSource,
+});
+
+const liveCompletedEnvelope = (
+  traceId = "trace-live-completed",
+) => ({
+  data: {
+    boundary: { "en-US": "Campaign DB repository boundary." },
+    campaignDb: { ...postgresRepository },
+    campaignDbCompletion: {
+      completionId: "completion-db-1",
+      createdViaRepository: true,
+      evidenceId: "evidence-db-1",
+      repositoryId: postgresRepository.repositoryId,
+      storeId: postgresRepository.storeId,
+      taskId,
+    },
+    campaignDbEvidence: {
+      completionId: "completion-db-1",
+      createdViaRepository: true,
+      evidenceHash: verificationEvidenceHash,
+      evidenceId: "evidence-db-1",
+      evidenceRef: verificationEvidenceRef,
+      evidenceSource: "AELFSCAN",
+      liveContractExecuted: false,
+      liveProviderExecuted: true,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      repositoryId: postgresRepository.repositoryId,
+      status: "completed",
+      storeId: postgresRepository.storeId,
+      taskId,
+    },
+    payload: liveCompletedPayload(),
+    persistence: {
+      kind: "verification_attempt",
+      recordId: "audit-verification-attempt-1",
+    },
+  },
+  ok: true,
+  traceId,
+});
+
+const attemptOnlyEnvelope = (
+  outcome: "failed" | "manual_review" | "pending" = "pending",
+  traceId = `trace-live-${outcome}`,
+) => ({
+  data: {
+    boundary: { "en-US": "Campaign DB repository boundary." },
+    campaignDb: { ...postgresRepository },
+    payload: {
+      authoritative: outcome !== "pending",
+      campaignId,
+      diagnosticCodes: [
+        outcome === "pending"
+          ? "TASK_VERIFICATION_ATTEMPT_IN_PROGRESS"
+          : `PROVIDER_${outcome.toUpperCase()}`,
+      ],
+      outcome,
+      pointsAwarded: 0,
+      providerFamily: "aefinder",
+      retryAfterMs: outcome === "pending" ? 1_000 : 0,
+      retryable: outcome === "pending",
+      status: outcome,
+      taskId,
+      transportExecuted: outcome !== "pending",
+      verificationAttemptId: `attempt-db-${outcome}`,
+      walletAddress,
+      walletSource: session.walletSource,
+    },
+    persistence: {
+      kind: "verification_attempt",
+      recordId: `audit-verification-attempt-${outcome}`,
+    },
+  },
+  ok: true,
+  traceId,
+});
+
 const response = (
   body: unknown,
-  options: { contentLength?: number; status?: number; traceId?: string } = {},
+  options: {
+    contentLength?: number;
+    contentType?: string;
+    status?: number;
+    traceId?: string;
+  } = {},
 ): Response => {
-  const headers = new Headers({ "content-type": "application/json" });
+  const headers = new Headers({ "content-type": options.contentType ?? "application/json" });
   if (options.contentLength !== undefined) {
     headers.set("content-length", String(options.contentLength));
   }
@@ -336,40 +513,7 @@ describe("Participant journey API bridge", () => {
           walletPolicy: "ANY",
         }],
       })))
-      .mockResolvedValueOnce(response({
-        data: {
-          campaignDbCompletion: {
-            completionId: "completion-db-1",
-            createdViaRepository: true,
-            evidenceId: "evidence-db-1",
-            repositoryId: "campaign-db-repository-runtime",
-            storeId: "campaign-db",
-            taskId,
-          },
-          campaignDbEvidence: {
-            completionId: "completion-db-1",
-            createdViaRepository: true,
-            evidenceId: "evidence-db-1",
-            repositoryId: "campaign-db-repository-runtime",
-            storeId: "campaign-db",
-            taskId,
-          },
-          campaignDb: repository,
-          payload: {
-            accountType: session.accountType,
-            campaignId,
-            evidence: { evidenceId: "evidence-db-1" },
-            evidenceId: "evidence-db-1",
-            pointsAwarded: 100,
-            status: "completed",
-            taskId,
-            walletAddress,
-            walletSource: session.walletSource,
-          },
-        },
-        ok: true,
-        traceId: "trace-runtime-verify",
-      }));
+      .mockResolvedValueOnce(response(liveCompletedEnvelope("trace-runtime-verify")));
     const api = bridge(fetchImpl);
 
     const feed = await api.listCampaigns(context({ selectedCampaignId: null }));
@@ -391,7 +535,10 @@ describe("Participant journey API bridge", () => {
         evidence: { id: "evidence-db-1" },
       },
     });
-    expect(verify.ok && verify.verification.repository).toEqual(repository);
+    expect(verify.ok && verify.verification.repository).toEqual({
+      ...postgresRepository,
+      mode: "postgres",
+    });
   });
 
   it("trims, bounds, and encodes canonical IDs without sharing caller identity", async () => {
@@ -399,9 +546,11 @@ describe("Participant journey API bridge", () => {
     const encodedTask = "task A/B";
     const payload = {
       ...verification(),
+      campaignId: encodedCampaign,
       completion: { ...verification().completion, campaignId: encodedCampaign, taskId: encodedTask },
       evidence: { ...verification().evidence, campaignId: encodedCampaign, taskId: encodedTask },
       participant: { ...verification().participant, campaignId: encodedCampaign },
+      taskId: encodedTask,
     };
     const fetchImpl = vi.fn().mockResolvedValue(response(verificationEnvelope(payload)));
 
@@ -500,26 +649,27 @@ describe("Participant journey API bridge", () => {
   });
 
   it.each([
-    ["repository", (value: ReturnType<typeof verificationEnvelope>) => {
+    ["repository", "BRIDGE_RESPONSE_INVALID", "response", (value: ReturnType<typeof verificationEnvelope>) => {
       delete (value.data as Partial<typeof value.data>).campaignDb;
+      delete (value.data.payload as Partial<typeof value.data.payload>).repository;
     }],
-    ["completion provenance", (value: ReturnType<typeof verificationEnvelope>) => {
+    ["completion provenance", "BRIDGE_RESPONSE_INVALID", "response", (value: ReturnType<typeof verificationEnvelope>) => {
       delete (value.data as Partial<typeof value.data>).campaignDbCompletion;
     }],
-    ["evidence provenance", (value: ReturnType<typeof verificationEnvelope>) => {
+    ["evidence provenance", "BRIDGE_RESPONSE_INVALID", "response", (value: ReturnType<typeof verificationEnvelope>) => {
       delete (value.data as Partial<typeof value.data>).campaignDbEvidence;
     }],
-    ["matching Task provenance", (value: ReturnType<typeof verificationEnvelope>) => {
+    ["matching Task provenance", "BRIDGE_RESPONSE_IDENTITY_MISMATCH", "identity", (value: ReturnType<typeof verificationEnvelope>) => {
       value.data.campaignDbEvidence.taskId = "other-task";
     }],
-  ])("rejects verify success without %s", async (_name, mutate) => {
+  ] as const)("rejects verify success without %s", async (_name, code, phase, mutate) => {
     const payload = verificationEnvelope();
     mutate(payload);
 
     const result = await bridge(vi.fn().mockResolvedValue(response(payload)))
       .verifyTask(taskId, context());
 
-    expect(result).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false, phase: "response" });
+    expect(result).toMatchObject({ code, ok: false, phase });
   });
 
   it("rejects unknown feed visibility without returning the private row", async () => {
@@ -860,5 +1010,580 @@ describe("Participant journey API bridge", () => {
     expect(serialized).not.toMatch(/raw signature|token=secret|\/users\/aelf|stack trace|seeded|synthetic/);
     expect(sanitizeParticipantJourneyApiText(cyclic).toLowerCase())
       .not.toMatch(/raw signature|token=secret|\/users\/aelf|stack trace/);
+  });
+});
+
+describe("Participant live verification bridge contract", () => {
+  it("projects a WP04 completed wire response into canonical attempt, records, diagnostics, and PostgreSQL provenance", async () => {
+    const payload = liveCompletedEnvelope("trace-live-completed");
+    Object.assign(payload.data.payload, {
+      participant: {
+        accountType: session.accountType,
+        campaignId,
+        id: "participant-db-1",
+        totalPoints: 100,
+        walletAddress,
+        walletSource: session.walletSource,
+      },
+    });
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(payload, {
+      status: 200,
+      traceId: "trace-live-completed",
+    }))).verifyTask(taskId, context());
+
+    expect(result).toEqual({
+      httpStatus: 200,
+      ok: true,
+      outcome: "completed",
+      source: "durable",
+      status: "completed",
+      traceId: "trace-live-completed",
+      verification: {
+        attempt: {
+          authoritative: true,
+          id: verificationAttemptId,
+          providerFamily: "aefinder",
+          retryAfterMs: 0,
+          retryable: false,
+          status: "completed",
+          transportExecuted: true,
+        },
+        completion: {
+          accountType: session.accountType,
+          campaignId,
+          evidenceHash: verificationEvidenceHash,
+          evidenceId: "evidence-db-1",
+          id: "completion-db-1",
+          pointsAwarded: 100,
+          status: "completed",
+          taskId,
+          verificationAttemptId,
+          walletAddress,
+          walletSource: session.walletSource,
+        },
+        diagnostics: [{
+          code: "PROVIDER_MATCH_POSITIVE",
+          retryable: false,
+          severity: "info",
+        }],
+        evidence: {
+          accountType: session.accountType,
+          campaignId,
+          completionId: "completion-db-1",
+          evidenceHash: verificationEvidenceHash,
+          evidenceRef: verificationEvidenceRef,
+          evidenceSource: "AELFSCAN",
+          id: "evidence-db-1",
+          liveProviderExecuted: true,
+          pointsAwarded: 100,
+          status: "completed",
+          taskId,
+          verificationAttemptId,
+          walletAddress,
+          walletSource: session.walletSource,
+        },
+        outcome: "completed",
+        participant: {
+          accountType: session.accountType,
+          campaignId,
+          id: "participant-db-1",
+          totalPoints: 100,
+          walletAddress,
+          walletSource: session.walletSource,
+        },
+        repository: {
+          ...postgresRepository,
+          mode: "postgres",
+        },
+      },
+    });
+  });
+
+  it.each(["failed", "manual_review"] as const)(
+    "accepts a zero-point 200 %s attempt without fabricating provider Evidence",
+    async (outcome) => {
+      const wire = attemptOnlyEnvelope(outcome);
+
+      const result = await bridge(vi.fn().mockResolvedValue(response(wire, { status: 200 })))
+        .verifyTask(taskId, context());
+
+      expect(result).toMatchObject({
+        httpStatus: 200,
+        ok: true,
+        outcome,
+        status: outcome,
+        verification: {
+          attempt: {
+            id: `attempt-db-${outcome}`,
+            retryable: false,
+            status: outcome,
+          },
+          diagnostics: [{
+            code: `PROVIDER_${outcome.toUpperCase()}`,
+            retryable: false,
+          }],
+          outcome,
+          repository: {
+            adapterId: "campaign-db-postgresql-adapter",
+            mode: "postgres",
+          },
+        },
+      });
+      expect(result.ok && result.verification).not.toHaveProperty("evidence");
+      expect(result.ok && result.verification).not.toHaveProperty("completion");
+    },
+  );
+
+  it("accepts a linked optional zero-point Completion for a failed result", async () => {
+    const wire = attemptOnlyEnvelope("failed");
+    Object.assign(wire.data, {
+      campaignDb: postgresRepository,
+      completion: {
+        accountType: session.accountType,
+        campaignId,
+        id: "completion-db-failed",
+        pointsAwarded: 0,
+        status: "failed",
+        taskId,
+        verificationAttemptId: "attempt-db-failed",
+        walletAddress,
+        walletSource: session.walletSource,
+      },
+    });
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire)))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      ok: true,
+      outcome: "failed",
+      verification: {
+        completion: {
+          id: "completion-db-failed",
+          pointsAwarded: 0,
+          status: "failed",
+          verificationAttemptId: "attempt-db-failed",
+        },
+      },
+    });
+    expect(result.ok && result.verification).not.toHaveProperty("evidence");
+  });
+
+  it("projects a real attempt-only 202 busy receipt with stable retry posture and no canonical rows", async () => {
+    const wire = attemptOnlyEnvelope("pending", "trace-live-busy");
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire, {
+      status: 202,
+      traceId: "trace-live-busy",
+    }))).verifyTask(taskId, context());
+
+    expect(result).toEqual({
+      httpStatus: 202,
+      ok: true,
+      outcome: "pending",
+      source: "durable",
+      status: "pending",
+      traceId: "trace-live-busy",
+      verification: {
+        attempt: {
+          authoritative: false,
+          id: "attempt-db-pending",
+          providerFamily: "aefinder",
+          retryAfterMs: 1_000,
+          retryable: true,
+          status: "pending",
+          transportExecuted: false,
+        },
+        diagnostics: [{
+          code: "TASK_VERIFICATION_ATTEMPT_IN_PROGRESS",
+          retryAfterMs: 1_000,
+          retryable: true,
+          severity: "warning",
+        }],
+        outcome: "pending",
+        repository: {
+          ...postgresRepository,
+          mode: "postgres",
+        },
+      },
+    });
+  });
+
+  it.each([
+    ["repository metadata is missing", (wire: ReturnType<typeof attemptOnlyEnvelope>) => {
+      Reflect.deleteProperty(wire.data, "campaignDb");
+    }],
+    ["repository mode is missing", (wire: ReturnType<typeof attemptOnlyEnvelope>) => {
+      Reflect.deleteProperty(wire.data.campaignDb, "mode");
+    }],
+  ] as const)("fails closed when attempt-only %s", async (_name, mutate) => {
+    const wire = attemptOnlyEnvelope("pending");
+    mutate(wire);
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire, { status: 202 })))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+  });
+
+  it("returns the same canonical attempt projection for first completion and terminal replay", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(liveCompletedEnvelope("trace-first")))
+      .mockResolvedValueOnce(response(liveCompletedEnvelope("trace-replay")));
+    const api = bridge(fetchImpl);
+
+    const first = await api.verifyTask(taskId, context());
+    const replay = await api.verifyTask(taskId, context());
+
+    expect(first.ok && first.verification).toEqual(replay.ok && replay.verification);
+    expect(first).toMatchObject({ ok: true, traceId: "trace-first" });
+    expect(replay).toMatchObject({ ok: true, traceId: "trace-replay" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(JSON.parse(String(init?.body))).toEqual({ campaignId });
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty("idempotencyKey");
+    }
+  });
+
+  it.each([
+    ["Campaign", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.campaignId = "campaign-other";
+    }],
+    ["Task", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.taskId = "task-other";
+    }],
+    ["wallet", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.walletAddress = walletAddress.toLowerCase();
+    }],
+    ["account", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.accountType = session.accountType === "EOA" ? "AA" : "EOA";
+    }],
+    ["source", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.walletSource = "PORTKEY_AA";
+    }],
+    ["Completion/Evidence", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.campaignDbEvidence.completionId = "completion-other";
+    }],
+    ["attempt", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.campaignDbEvidence, { verificationAttemptId: "attempt-other" });
+    }],
+    ["Evidence hash", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.campaignDbEvidence.evidenceHash = "c".repeat(64);
+    }],
+    ["Evidence source", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.campaignDbEvidence.evidenceSource = "DAPP_API";
+    }],
+    ["Participant", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.payload, {
+        participant: {
+          accountType: "AA",
+          campaignId,
+          id: "participant-db-mismatch",
+          totalPoints: 100,
+          walletAddress,
+          walletSource: session.walletSource,
+        },
+      });
+    }],
+    ["repository", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      (value.data.campaignDbEvidence as { repositoryId: string }).repositoryId = "repository-other";
+    }],
+  ] as const)("fails closed on completed %s identity/linkage mismatch", async (_name, mutate) => {
+    const wire = liveCompletedEnvelope();
+    mutate(wire);
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire)))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_IDENTITY_MISMATCH",
+      ok: false,
+      phase: "identity",
+      status: "blocked",
+    });
+  });
+
+  it.each([
+    ["missing status", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      delete (value.data.payload as Partial<typeof value.data.payload>).status;
+    }],
+    ["unknown outcome", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      (value.data.payload as { outcome: string }).outcome = "success";
+    }],
+    ["negative points", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.pointsAwarded = -1;
+    }],
+    ["unsafe evidence hash", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.evidenceHash = "evidence-hash:not-a-sha256";
+    }],
+    ["unsafe evidence ref", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.evidenceRef = "https://provider.example/verify?token=secret";
+    }],
+    ["credential evidence ref", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.evidenceRef = "credential-ref:provider-secret";
+    }],
+    ["non-live provider Evidence", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.campaignDbEvidence.liveProviderExecuted = false;
+    }],
+    ["non-PostgreSQL repository", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      (value.data.campaignDb as { adapterId: string }).adapterId = "campaign-db-deterministic-adapter";
+    }],
+    ["oversize diagnostics", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      value.data.payload.diagnosticCodes = Array.from({ length: 33 }, (_item, index) => `SAFE_${index}`);
+    }],
+  ] as const)("rejects an invalid verification response: %s", async (_name, mutate) => {
+    const wire = liveCompletedEnvelope();
+    mutate(wire);
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire)))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+  });
+
+  it("rejects invalid or conflicting response Trace IDs", async () => {
+    const invalidBodyTrace = liveCompletedEnvelope("trace contains spaces");
+    const conflictingTrace = liveCompletedEnvelope("trace-body-safe");
+    const api = bridge(vi
+      .fn()
+      .mockResolvedValueOnce(response(invalidBodyTrace))
+      .mockResolvedValueOnce(response(conflictingTrace, { traceId: "trace-header-other" })));
+
+    await expect(api.verifyTask(taskId, context())).resolves.toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+    });
+    await expect(api.verifyTask(taskId, context())).resolves.toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+    });
+  });
+
+  it.each([
+    ["endpoint", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value, { endpoint: "https://private-provider.example" });
+    }],
+    ["credentialRef", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data, { credentialRef: "credential-ref:private" });
+    }],
+    ["authorization", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.payload, { authorization: "Bearer private" });
+    }],
+    ["responseBody", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.payload.evidence, { responseBody: { matched: true } });
+    }],
+    ["leaseToken", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.campaignDbEvidence, { leaseToken: "private-lease" });
+    }],
+    ["sql", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.persistence, { sql: "select secret" });
+    }],
+    ["stackTrace", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.payload.provider, { stackTrace: "/Users/private/provider.ts" });
+    }],
+    ["idempotencyKey", (value: ReturnType<typeof liveCompletedEnvelope>) => {
+      Object.assign(value.data.payload, { idempotencyKey: "client-controlled" });
+    }],
+  ] as const)("fails closed when a forbidden nested response key is present: %s", async (_key, mutate) => {
+    const wire = liveCompletedEnvelope();
+    mutate(wire);
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire)))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+    expect(JSON.stringify(result)).not.toContain("private-provider");
+    expect(JSON.stringify(result)).not.toContain("private-lease");
+  });
+
+  it("rejects provider Evidence and positive points for every non-completed outcome", async () => {
+    for (const outcome of ["failed", "manual_review", "pending"] as const) {
+      const withEvidence = liveCompletedEnvelope();
+      withEvidence.data.payload.outcome = outcome;
+      withEvidence.data.payload.status = outcome;
+      withEvidence.data.payload.pointsAwarded = 0;
+      withEvidence.data.payload.retryable = outcome === "pending";
+      withEvidence.data.payload.retryAfterMs = outcome === "pending" ? 1_000 : 0;
+
+      const evidenceResult = await bridge(vi.fn().mockResolvedValue(response(withEvidence, {
+        status: outcome === "pending" ? 202 : 200,
+      }))).verifyTask(taskId, context());
+      expect(evidenceResult).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false });
+
+      const withPoints = attemptOnlyEnvelope(outcome);
+      withPoints.data.payload.pointsAwarded = 1;
+      const pointsResult = await bridge(vi.fn().mockResolvedValue(response(withPoints, {
+        status: outcome === "pending" ? 202 : 200,
+      }))).verifyTask(taskId, context());
+      expect(pointsResult).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false });
+    }
+  });
+
+  it("rejects Evidence linkage hidden inside an optional non-completed Completion", async () => {
+    const wire = attemptOnlyEnvelope("failed");
+    Object.assign(wire.data, {
+      completion: {
+        accountType: session.accountType,
+        campaignId,
+        evidenceId: "evidence-must-not-exist",
+        id: "completion-db-failed",
+        pointsAwarded: 0,
+        status: "failed",
+        taskId,
+        verificationAttemptId: "attempt-db-failed",
+        walletAddress,
+        walletSource: session.walletSource,
+      },
+    });
+
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire)))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false });
+  });
+
+  it.each([
+    [200, attemptOnlyEnvelope("pending")],
+    [202, liveCompletedEnvelope()],
+  ] as const)("rejects HTTP %s when it contradicts the business outcome", async (status, wire) => {
+    const result = await bridge(vi.fn().mockResolvedValue(response(wire, { status })))
+      .verifyTask(taskId, context());
+
+    expect(result).toMatchObject({ code: "BRIDGE_RESPONSE_INVALID", ok: false });
+  });
+
+  it.each([
+    ["wrong content type", () => response(liveCompletedEnvelope(), { contentType: "text/html" }), "BRIDGE_RESPONSE_NON_JSON"],
+    ["non-JSON", () => response("not-json"), "BRIDGE_RESPONSE_NON_JSON"],
+    ["empty", () => response(""), "BRIDGE_RESPONSE_EMPTY"],
+    [
+      "oversize",
+      () => response(liveCompletedEnvelope(), { contentLength: 100_000 }),
+      "BRIDGE_RESPONSE_OVERSIZE",
+    ],
+  ] as const)("maps %s verification responses to %s", async (_name, createResponse, code) => {
+    const result = await bridge(
+      vi.fn().mockResolvedValue(createResponse()),
+      { maxResponseBytes: 1_024 },
+    ).verifyTask(taskId, context());
+
+    expect(result).toMatchObject({ code, ok: false, phase: "response" });
+  });
+
+  it.each([
+    [401, "SESSION_INVALID", "SESSION_STALE", true, false, undefined],
+    [403, "PARTICIPANT_FORBIDDEN", "ROLE_SCOPE_FORBIDDEN", false, false, undefined],
+    [404, "TASK_NOT_FOUND", "TASK_SCOPE_NOT_FOUND", false, false, undefined],
+    [409, "ATTEMPT_CONFLICT", "ATTEMPT_VERSION_CONFLICT", false, true, 250],
+    [413, "RESPONSE_TOO_LARGE", "RESPONSE_BOUND_EXCEEDED", false, false, undefined],
+    [422, "EVIDENCE_INVALID", "EVIDENCE_LINKAGE_INVALID", false, false, undefined],
+    [503, "PERSISTENCE_UNAVAILABLE", "POSTGRES_UNAVAILABLE", false, true, 1_000],
+  ] as const)(
+    "maps HTTP %s without conflating transport status and a business success",
+    async (status, code, diagnosticCode, reconnectRequired, retryable, retryAfterMs) => {
+      const errorResponse = response({
+        error: {
+          code,
+          details: {
+            diagnosticCode,
+            field: status === 404 ? "taskId" : "verification",
+            retryable,
+            ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          },
+          message: "Safe public error.",
+        },
+        ok: false,
+        traceId: `trace-http-${status}`,
+      }, { status, traceId: `trace-http-${status}` });
+
+      const result = await bridge(vi.fn().mockResolvedValue(errorResponse))
+        .verifyTask(taskId, context());
+
+      expect(result).toMatchObject({
+        code,
+        httpStatus: status,
+        ok: false,
+        reconnectRequired,
+        retryable,
+        safeDetails: {
+          diagnosticCode,
+          field: status === 404 ? "taskId" : "verification",
+          retryable,
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        },
+        source: "durable",
+        status: status === 503 ? "degraded" : "blocked",
+        traceId: `trace-http-${status}`,
+      });
+      expect(result).not.toHaveProperty("outcome");
+      expect(JSON.stringify(result)).not.toContain("Safe public error");
+    },
+  );
+
+  it("fails closed on forbidden material keys in a typed HTTP error envelope", async () => {
+    const result = await bridge(vi.fn().mockResolvedValue(response({
+      error: {
+        code: "PERSISTENCE_UNAVAILABLE",
+        details: {
+          field: "verification",
+          retryable: true,
+          stackTrace: "/Users/private/provider.ts",
+        },
+        message: "Safe public error.",
+      },
+      ok: false,
+      traceId: "trace-http-forbidden-error",
+    }, { status: 503 }))).verifyTask(taskId, context());
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_RESPONSE_INVALID",
+      ok: false,
+      phase: "response",
+    });
+    expect(JSON.stringify(result)).not.toContain("provider.ts");
+  });
+
+  it("uses existing request failure categories for network, caller abort, and timeout and cleans resources", async () => {
+    vi.useFakeTimers();
+
+    const networkController = new AbortController();
+    const networkRemove = vi.spyOn(networkController.signal, "removeEventListener");
+    const network = await bridge(vi.fn().mockRejectedValue(new Error("network private detail")))
+      .verifyTask(taskId, context({ signal: networkController.signal }));
+    expect(network).toMatchObject({ code: "BRIDGE_REQUEST_FAILED", ok: false });
+    expect(networkRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+
+    const callerController = new AbortController();
+    const callerRemove = vi.spyOn(callerController.signal, "removeEventListener");
+    const callerPromise = bridge(vi.fn((_url: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      })), { timeoutMs: 1_000 }).verifyTask(taskId, context({ signal: callerController.signal }));
+    callerController.abort();
+    await expect(callerPromise).resolves.toMatchObject({ code: "BRIDGE_REQUEST_ABORTED", ok: false });
+    expect(callerRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+
+    const timeoutController = new AbortController();
+    const timeoutRemove = vi.spyOn(timeoutController.signal, "removeEventListener");
+    const timeoutPromise = bridge(vi.fn(() => new Promise<Response>(() => undefined)), { timeoutMs: 250 })
+      .verifyTask(taskId, context({ signal: timeoutController.signal }));
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(timeoutPromise).resolves.toMatchObject({ code: "BRIDGE_REQUEST_TIMEOUT", ok: false });
+    expect(timeoutRemove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

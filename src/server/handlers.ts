@@ -867,6 +867,16 @@ const createCampaignDbMetadata = (repository: {
   storeId: repository.storeId,
 });
 
+const createTaskVerificationRepositoryMetadata = (repository: {
+  adapterId: string;
+  createdViaRepository: true;
+  repositoryId: string;
+  storeId: "campaign-db";
+}) => ({
+  ...createCampaignDbMetadata(repository),
+  mode: "postgres" as const,
+});
+
 const exportProjectionBoundary = localized(
   "Campaign DB repository export projection is local-review only. No export file, storage write, signed URL, contract root, contract transaction, reward custody, or reward distribution is executed.",
   "Campaign DB repository 导出投影仅用于本地审核。不会生成导出文件、写入存储、生成 signed URL、写入合约 root、执行合约交易、托管奖励或发奖。",
@@ -3532,14 +3542,16 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       { tolerateAuditFailureAfterCommit: true },
     );
 
-    const projectedResponse = campaignDbCompletion && campaignDbEvidence
-      ? {
-        ...response,
-        campaignDb: createCampaignDbMetadata(campaignDbDraft.repository),
-        campaignDbCompletion: createCampaignDbCompletionMetadata(campaignDbCompletion),
-        campaignDbEvidence: createCampaignDbEvidenceMetadata(campaignDbEvidence),
-      }
-      : response;
+    const projectedResponse = {
+      ...response,
+      campaignDb: createTaskVerificationRepositoryMetadata(campaignDbDraft.repository),
+      ...(campaignDbCompletion && campaignDbEvidence
+        ? {
+            campaignDbCompletion: createCampaignDbCompletionMetadata(campaignDbCompletion),
+            campaignDbEvidence: createCampaignDbEvidenceMetadata(campaignDbEvidence),
+          }
+        : {}),
+    };
 
     return runtimeResult.outcome === "pending"
       ? {

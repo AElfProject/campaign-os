@@ -1186,10 +1186,24 @@ const createTaskVerificationPostureRepository = (
   const mode = options.mode ?? "postgres";
   const schemaVersion = options.schemaVersion ?? "0004_live_provider_task_verification";
   const attemptStore = createMemoryTaskVerificationAttemptStore();
+  const getById: CampaignDbRepository["getById"] = async (...args) => {
+    const projection = await repository.getById(...args);
+
+    return projection && mode === "postgres"
+      ? {
+          ...projection,
+          repository: {
+            ...projection.repository,
+            adapterId: "campaign-db-postgresql-adapter",
+          },
+        }
+      : projection;
+  };
 
   return {
     ...repository,
     taskVerificationAttempts: attemptStore,
+    getById,
     health: async (context) => ({
       ...await repository.health(context),
       campaignStore: {
@@ -4786,6 +4800,13 @@ describe("Campaign OS API runtime", () => {
         ok: true,
         traceId: "trace-wp04-pending",
         data: {
+          campaignDb: {
+            adapterId: "campaign-db-postgresql-adapter",
+            createdViaRepository: true,
+            mode: "postgres",
+            repositoryId: "campaign-db-repository-runtime",
+            storeId: "campaign-db",
+          },
           payload: {
             authoritative: false,
             diagnosticCodes: ["TASK_VERIFICATION_ATTEMPT_IN_PROGRESS"],
@@ -4874,6 +4895,13 @@ describe("Campaign OS API runtime", () => {
         body: {
           ok: true,
           data: {
+            campaignDb: {
+              adapterId: "campaign-db-postgresql-adapter",
+              createdViaRepository: true,
+              mode: "postgres",
+              repositoryId: "campaign-db-repository-runtime",
+              storeId: "campaign-db",
+            },
             payload: {
               outcome,
               pointsAwarded: 0,
@@ -5219,6 +5247,13 @@ describe("Campaign OS API runtime", () => {
         body: {
           ok: true,
           data: {
+            campaignDb: {
+              adapterId: "campaign-db-postgresql-adapter",
+              createdViaRepository: true,
+              mode: "postgres",
+              repositoryId: "campaign-db-repository-runtime",
+              storeId: "campaign-db",
+            },
             campaignDbCompletion: { completionId: completion.id },
             campaignDbEvidence: { evidenceId: evidence.id },
             payload: {

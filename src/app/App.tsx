@@ -398,6 +398,7 @@ export const App = ({
   const [activeProjectWorkspace, setActiveProjectWorkspace] =
     useState<ProjectWorkspaceKey>("campaigns");
   const [activeSurface, setActiveSurface] = useState<SurfaceKey>("project");
+  const activeSurfaceRef = useRef<SurfaceKey>("project");
   const [headerWalletModalOpen, setHeaderWalletModalOpen] = useState(false);
   const [headerWalletSessionBridgeState, setHeaderWalletSessionBridgeState] =
     useState<WalletSessionApiBridgeState>(() => createWalletSessionApiSeededFallbackState(
@@ -409,6 +410,7 @@ export const App = ({
     useState<StageReviewIdentity>("owner");
   const [connectedStageReviewIdentity, setConnectedStageReviewIdentity] =
     useState<StageReviewIdentity | null>(null);
+  const [participantLifecycleEpoch, setParticipantLifecycleEpoch] = useState(0);
   const activeHeaderWalletRequestId = useRef(0);
   const latestHeaderWalletProofEvaluatedAt = useRef(0);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
@@ -493,6 +495,22 @@ export const App = ({
     activeHeaderWalletRequestId.current += 1;
   }, []);
 
+  const advanceParticipantLifecycle = useCallback(() => {
+    setParticipantLifecycleEpoch((epoch) => epoch + 1);
+  }, []);
+
+  const changeActiveSurface = useCallback((nextSurface: SurfaceKey) => {
+    if (activeSurfaceRef.current === nextSurface) {
+      return;
+    }
+
+    activeSurfaceRef.current = nextSurface;
+    if (nextSurface === "user") {
+      advanceParticipantLifecycle();
+    }
+    setActiveSurface(nextSurface);
+  }, [advanceParticipantLifecycle]);
+
   const changeActiveCampaignId = useCallback((campaignId: string | null) => {
     if (!ownerSessionKey || !campaignId) {
       setActiveCampaignId(null);
@@ -519,7 +537,7 @@ export const App = ({
   const selectProductDestination = (destination: ProductDestinationKey) => {
     setActiveProductDestination(destination);
     setActiveProjectWorkspace(productDestinationWorkspaceMap[destination]);
-    setActiveSurface("project");
+    changeActiveSurface("project");
   };
 
   const selectProjectWorkspace = (workspace: ProjectWorkspaceKey) => {
@@ -553,14 +571,19 @@ export const App = ({
 
     const nextIdentity = normalizeStageReviewIdentity(identity);
 
+    if (nextIdentity === selectedStageReviewIdentity) {
+      return;
+    }
+
     activeHeaderWalletRequestId.current += 1;
+    advanceParticipantLifecycle();
     setSelectedStageReviewIdentity(nextIdentity);
     setConnectedStageReviewIdentity(null);
     setHeaderWalletSession(null);
     setHeaderWalletSessionBridgeState(createWalletSessionApiSeededFallbackState(
       stageReviewFixtureRequests[nextIdentity],
     ));
-  }, [stageReviewMode]);
+  }, [advanceParticipantLifecycle, selectedStageReviewIdentity, stageReviewMode]);
 
   const connectHeaderPreviewWallet = async (requestedIdentity?: StageReviewIdentity) => {
     const reviewIdentity = stageReviewMode
@@ -578,6 +601,7 @@ export const App = ({
 
     latestHeaderWalletProofEvaluatedAt.current = proofEvaluatedAt;
     activeHeaderWalletRequestId.current = requestId;
+    advanceParticipantLifecycle();
     setConnectedStageReviewIdentity(null);
     setHeaderWalletSession(null);
     setHeaderWalletSessionBridgeState(createWalletSessionApiLoadingState(request));
@@ -600,10 +624,11 @@ export const App = ({
       || isStageReviewIdentitySessionReady(nextState, reviewIdentity);
 
     if (nextState.session && stageSessionReady) {
+      advanceParticipantLifecycle();
       setHeaderWalletSession(nextState.session);
       if (stageReviewMode) {
         setConnectedStageReviewIdentity(reviewIdentity);
-        setActiveSurface(stageReviewSurfaceByIdentity[reviewIdentity]);
+        changeActiveSurface(stageReviewSurfaceByIdentity[reviewIdentity]);
       }
       setHeaderWalletModalOpen(false);
     }
@@ -633,7 +658,7 @@ export const App = ({
         localeLabel={copy.localeLabel}
         onLocaleChange={setLocale}
         onProductDestinationChange={selectProductDestination}
-        onSurfaceChange={setActiveSurface}
+        onSurfaceChange={changeActiveSurface}
         onWalletAction={openHeaderWalletModal}
         productNavigation={productNavigation}
         shellTitle={copy.shellTitle}
@@ -661,6 +686,7 @@ export const App = ({
             locale={contentLocale}
             mode={participantJourneyMode}
             onReconnect={openHeaderWalletModal}
+            participantLifecycleEpoch={participantLifecycleEpoch}
             session={participantSessionReady ? headerWalletSession : null}
             sessionReady={participantSessionReady}
             shareLocale={locale}

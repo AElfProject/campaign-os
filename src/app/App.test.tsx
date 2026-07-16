@@ -784,6 +784,61 @@ describe("Campaign OS app shell", () => {
     expect(screen.getByRole("button", { name: "Admin/Ops" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("creates a fresh Participant lifecycle when the role selector returns from Owner or Admin", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5184";
+    const participantState = fixtureWalletSessionBridgeState();
+    mockedSubmitWalletSessionApiPreview
+      .mockResolvedValueOnce(participantState)
+      .mockResolvedValueOnce(walletSessionBridgeState())
+      .mockResolvedValueOnce(participantState)
+      .mockResolvedValueOnce(walletSessionBridgeState({ traceId: "trace-admin-wallet" }))
+      .mockResolvedValueOnce(participantState);
+    const participantBridge = appParticipantBridge();
+    const connectAs = async (identity: StageReviewIdentity) => {
+      const appHeader = document.querySelector<HTMLElement>("[data-app-header]");
+
+      expect(appHeader).not.toBeNull();
+      const action = within(appHeader as HTMLElement).getByRole("button", {
+        name: /Connect Wallet|Manage wallet connection/,
+      });
+      const label = stageReviewIdentityLabels[identity];
+
+      fireEvent.click(action);
+      fireEvent.change(screen.getByRole("combobox", { name: "Review identity" }), {
+        target: { value: identity },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: `Connect as ${label}` }));
+      });
+    };
+
+    render(<App participantJourneyBridge={participantBridge} />);
+
+    await connectAs("participant-a");
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1);
+
+    await connectAs("owner");
+    expect(screen.getByRole("button", { name: "Project Console" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1);
+
+    await connectAs("participant-a");
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(2));
+
+    await connectAs("admin");
+    expect(screen.getByRole("button", { name: "Admin/Ops" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(2);
+
+    await connectAs("participant-a");
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole("button", { name: "User App" }))
+      .toHaveAttribute("aria-pressed", "true");
+  });
+
   it("ignores a late identity response after switching to a newer stage connection", async () => {
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
     let resolveOwnerResponse!: (state: WalletSessionApiBridgeState) => void;
@@ -2122,6 +2177,55 @@ describe("App Owner campaign authority", () => {
     expect(await screen.findByRole("heading", { name: "Durable Evidence Review" })).toBeInTheDocument();
     expect(screen.getByText("Reconnect required")).toBeInTheDocument();
     expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("replaces the Participant UI owner when the API reissues the same canonical session", async () => {
+    submitWalletSession
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA))
+      .mockResolvedValueOnce(appWalletSessionState(appOwnerSessionA));
+    const listCampaigns = vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>(async () =>
+      appParticipantFeed("campaign-session-a", "Session A Campaign"));
+    const getJourney = vi.fn<ParticipantJourneyApiBridge["getJourney"]>(async () =>
+      appParticipantJourneyResult("campaign-session-a", appOwnerSessionA));
+    const verifyTask = vi.fn<ParticipantJourneyApiBridge["verifyTask"]>(async () => ({
+      code: "PROVIDER_UNAVAILABLE",
+      httpStatus: 503,
+      ok: false,
+      phase: "request",
+      reconnectRequired: false,
+      retryable: true,
+      source: "durable",
+      status: "degraded",
+      traceId: "trace-app-stale-same-session",
+    }));
+    const participantBridge = appParticipantBridge({ getJourney, listCampaigns, verifyTask });
+
+    render(<App participantJourneyBridge={participantBridge} />);
+    await connectHeaderWallet();
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Verify Task task-campaign-session-a",
+    }));
+    expect(await screen.findByText("PROVIDER_UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.getByText("trace-app-stale-same-session")).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Manage wallet connection/,
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Use seeded wallet preview" }));
+    });
+
+    await waitFor(() => expect(listCampaigns).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("PROVIDER_UNAVAILABLE")).not.toBeInTheDocument();
+    expect(screen.queryByText("trace-app-stale-same-session")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", {
+      name: "Select Session A Campaign (campaign-session-a)",
+    })).toBeInTheDocument();
   });
 
   it("clears session A journey diagnostics before session B feed resolves", async () => {

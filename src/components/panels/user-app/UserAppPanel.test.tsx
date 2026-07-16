@@ -725,6 +725,19 @@ describe("User App shell", () => {
     expect(screen.queryByRole("dialog", { name: "Connect Wallet" })).not.toBeInTheDocument();
   });
 
+  it("keeps the seeded preview owner mounted when participant lifecycle epoch changes", () => {
+    const { rerender } = render(
+      <UserAppPanel locale="en-US" participantLifecycleEpoch={1} />,
+    );
+
+    fireEvent.click(getUserAppConnectWalletButton("Connect Wallet"));
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+
+    rerender(<UserAppPanel locale="en-US" participantLifecycleEpoch={2} />);
+
+    expect(screen.getByRole("dialog", { name: "Connect Wallet" })).toBeInTheDocument();
+  });
+
   it("renders archived campaigns as terminal user app statuses", () => {
     const [participant] = campaignDetail.participants;
     const archivedCampaign = {
@@ -1470,7 +1483,7 @@ describe("Durable Participant User App", () => {
     expect(within(journey).getByRole("button", { name: "Verify Task task-campaign-alpha" })).toBeEnabled();
   });
 
-  it("uses native buttons and transfers focus when commands become disabled", async () => {
+  it("uses native buttons without stealing focus when Task status changes", async () => {
     const refresh = deferred<ParticipantJourneyResult>();
     const getJourney = vi
       .fn<ParticipantJourneyApiBridge["getJourney"]>()
@@ -1511,8 +1524,7 @@ describe("Durable Participant User App", () => {
     const refreshing = screen.getByRole("button", {
       name: "Refreshing journey (task-campaign-alpha)",
     });
-    expect(refreshing).not.toHaveFocus();
-    expect(journeyHeading).toHaveFocus();
+    expect(journeyHeading).not.toHaveFocus();
     expect(refreshing).toBeDisabled();
     expect(refreshing).toHaveAttribute("aria-busy", "true");
 
@@ -1740,10 +1752,10 @@ describe("Durable Participant User App", () => {
       expect(within(staleJourney).getByText("No completion")).toBeInTheDocument();
       expect(within(staleJourney).queryByText("completion-after-safe-read")).not.toBeInTheDocument();
       expect(within(staleJourney).getByRole("button", {
-        name: "Verify Task task-campaign-alpha",
+        name: "Verification temporarily unavailable (task-campaign-alpha)",
       })).toBeDisabled();
       expect(screen.getByRole("button", { name: campaignAlphaCommandName })).toBeDisabled();
-      expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeDisabled();
+      expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeEnabled();
       expect(screen.getByText(code)).toBeInTheDocument();
       expect(screen.getAllByText("trace-verify-command").length).toBeGreaterThan(0);
 
@@ -1835,6 +1847,81 @@ describe("Durable Participant User App", () => {
     expect(screen.queryByRole("button", { name: campaignAlphaCommandName })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeInTheDocument();
   });
+
+  it.each([
+    {
+      code: "AUTH_SESSION_INVALID",
+      httpStatus: 401,
+      reconnectRequired: true,
+      retryable: false,
+      status: "blocked",
+      traceId: "trace-stale-epoch-401",
+    },
+    {
+      code: "PROVIDER_UNAVAILABLE",
+      httpStatus: 503,
+      reconnectRequired: false,
+      retryable: true,
+      status: "degraded",
+      traceId: "trace-stale-epoch-503",
+    },
+  ] as const)(
+    "replaces the durable UI owner for a same-key issued session at a new epoch ($httpStatus)",
+    async (staleFailure) => {
+      const staleVerify = deferred<ParticipantVerifyResult>();
+      const verifyTask = vi
+        .fn<ParticipantJourneyApiBridge["verifyTask"]>()
+        .mockImplementationOnce(() => staleVerify.promise);
+      const bridge = durableBridge({ verifyTask });
+      const session = durableSession();
+      const replacementSession = durableSession();
+      const { rerender } = render(
+        <UserAppPanel
+          bridge={bridge}
+          locale="en-US"
+          mode="durable"
+          onReconnect={vi.fn()}
+          participantLifecycleEpoch={7}
+          session={session}
+          sessionReady
+        />,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: campaignAlphaCommandName }));
+      fireEvent.click(await screen.findByRole("button", {
+        name: "Verify Task task-campaign-alpha",
+      }));
+      await waitFor(() => expect(verifyTask).toHaveBeenCalledTimes(1));
+      const staleSignal = vi.mocked(verifyTask).mock.calls[0][1].signal;
+
+      rerender(
+        <UserAppPanel
+          bridge={bridge}
+          locale="en-US"
+          mode="durable"
+          onReconnect={vi.fn()}
+          participantLifecycleEpoch={8}
+          session={replacementSession}
+          sessionReady
+        />,
+      );
+
+      expect(staleSignal?.aborted).toBe(true);
+      await waitFor(() => expect(bridge.listCampaigns).toHaveBeenCalledTimes(2));
+      expect(await screen.findByRole("button", { name: campaignAlphaCommandName }))
+        .toBeInTheDocument();
+
+      await act(async () => {
+        staleVerify.resolve(durableFailure(staleFailure));
+        await staleVerify.promise;
+      });
+
+      expect(screen.queryByText(staleFailure.code)).not.toBeInTheDocument();
+      expect(screen.queryByText(staleFailure.traceId)).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Participant journey" }))
+        .not.toBeInTheDocument();
+    },
+  );
 
   it("aborts Campaign A journey and rejects its late response when Campaign B is selected", async () => {
     const campaignAJourney = deferred<ParticipantJourneyResult>();
