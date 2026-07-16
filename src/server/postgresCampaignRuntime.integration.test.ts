@@ -1,17 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createCampaignOsApiRuntime } from "./apiRuntime";
 import { resolveCampaignOsCampaignDbConfig } from "./config";
 import {
   loadPostgresMigrations,
   runPostgresMigrations,
   type PostgresMigrationPool,
 } from "./postgresMigration";
+import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
+import type { ProviderHttpTransport } from "./providerHttpTransport";
 import {
   startCampaignOsApiServer,
   type CampaignOsApiServerHandle,
 } from "./server";
 import type { ParticipantJourneyProjection } from "./participantJourney";
+import { resolveTaskVerificationConfig } from "./taskVerificationConfig";
 
 const TEST_DATABASE_URL = process.env.CAMPAIGN_OS_TEST_DATABASE_URL?.trim();
 const REQUIRE_POSTGRES_TESTS = process.env.CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS?.trim() === "1";
@@ -23,6 +27,97 @@ if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
 }
 
 const integrationSuite = TEST_DATABASE_URL ? describe : describe.skip;
+
+const CONTROLLED_TASK_VERIFICATION_BINDING_ID = "postgres-controlled-on-chain";
+const CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV = "CAMPAIGN_OS_POSTGRES_TEST_PROVIDER_ENDPOINT";
+const CONTROLLED_TASK_VERIFICATION_ENDPOINT = "http://127.0.0.1:4179/controlled-verification";
+const CONTROLLED_TASK_VERIFICATION_BINDING = Object.freeze({
+  degradationPolicy: "pending",
+  enabled: true,
+  endpointEnvKey: CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV,
+  endpointId: "aefinder-aelfscan-indexer-query",
+  evidenceSource: "AELFSCAN",
+  id: CONTROLLED_TASK_VERIFICATION_BINDING_ID,
+  maxAttempts: 3,
+  maxResponseBytes: 16_384,
+  providerFamily: "aefinder",
+  providerGroupId: "aefinder-aelfscan-indexers",
+  requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+  responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+  revision: 1,
+  timeoutMs: 1_000,
+  verificationType: "ON_CHAIN",
+});
+const CONTROLLED_TASK_VERIFICATION_CONFIG = resolveTaskVerificationConfig({
+  bindingsJson: JSON.stringify([CONTROLLED_TASK_VERIFICATION_BINDING]),
+  enablement: "explicitly-enabled",
+  env: {
+    [CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV]: CONTROLLED_TASK_VERIFICATION_ENDPOINT,
+  },
+  environment: "local",
+  providerHttpTransportProvided: true,
+});
+const CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME = createProviderHttpRuntimeSummary({
+  env: {
+    CAMPAIGN_OS_PROVIDER_HTTP_CREDENTIAL_REF: "credential-ref:postgres-controlled-provider",
+    CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REF: "config-ref:postgres-controlled-endpoint",
+    CAMPAIGN_OS_PROVIDER_HTTP_ENDPOINT_REGISTRY_REF: "config-ref:postgres-controlled-registry",
+    CAMPAIGN_OS_PROVIDER_HTTP_HEADER_REF: "header-ref:postgres-controlled-auth",
+    CAMPAIGN_OS_PROVIDER_HTTP_IDEMPOTENCY_REF: "idem-ref:postgres-controlled-provider",
+    CAMPAIGN_OS_PROVIDER_HTTP_LEASE_REF: "lease-ref:postgres-controlled-provider",
+    CAMPAIGN_OS_PROVIDER_HTTP_QUEUE_WORKER_HANDOFF: "config-ref:postgres-controlled-worker",
+    CAMPAIGN_OS_PROVIDER_HTTP_REDACTION_POLICY: "policy-ref:postgres-controlled-redaction",
+    CAMPAIGN_OS_PROVIDER_HTTP_RESPONSE_MAPPING_POLICY: "policy-ref:postgres-controlled-response",
+    CAMPAIGN_OS_PROVIDER_HTTP_RUNBOOK_REF: "runbook-ref:postgres-controlled-provider",
+    CAMPAIGN_OS_PROVIDER_HTTP_RUNTIME_ENABLEMENT: "explicitly-enabled",
+    CAMPAIGN_OS_PROVIDER_HTTP_TIMEOUT_POLICY: "timeout-policy:1000ms",
+    CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:postgres-controlled-transport",
+  },
+  profileId: "production-required",
+  transportProvided: true,
+});
+const controlledTaskVerificationTransport: ProviderHttpTransport = (request) => {
+  const evidenceHash = createHash("sha256")
+    .update(`${request.taskId}:${request.idempotencyRef}`)
+    .digest("hex");
+
+  return {
+    body: {
+      eligible: true,
+      evidenceHash,
+      evidenceRef: `evidence-ref:postgres-controlled-${evidenceHash.slice(0, 24)}`,
+      status: "completed",
+      verified: true,
+    },
+    durationMs: 1,
+    statusCode: 200,
+    timedOut: false,
+  };
+};
+const controlledOnChainEvidenceRule = (
+  rule: Record<string, string | number | boolean>,
+): Record<string, string | number | boolean> => {
+  const minimum = typeof rule.minimum === "number"
+    ? rule.minimum
+    : typeof rule.minAmount === "number"
+      ? rule.minAmount
+      : undefined;
+
+  return {
+    chainId: typeof rule.chainId === "string" ? rule.chainId : "AELF",
+    ...(typeof rule.contractAddress === "string"
+      ? { contractAddress: rule.contractAddress }
+      : {}),
+    ...(typeof rule.eventName === "string" ? { eventName: rule.eventName } : {}),
+    expectedField: "verified",
+    expectedType: "boolean",
+    expectedValue: true,
+    ...(typeof rule.methodName === "string" ? { methodName: rule.methodName } : {}),
+    ...(minimum !== undefined ? { minimum } : {}),
+    providerBindingId: CONTROLLED_TASK_VERIFICATION_BINDING_ID,
+    source: "AELFSCAN",
+  };
+};
 
 interface ApiEnvelope<T> {
   data?: T;
@@ -205,6 +300,13 @@ interface HealthData {
     };
   };
   campaignDatabase: {
+    campaignStore?: {
+      appliedMigrationIds?: string[];
+      migrationStatus: string;
+      mode: string;
+      schemaVersion?: string;
+      status: string;
+    };
     liveConnectionAttempted: boolean;
     liveQueryExecutionEnabled: boolean;
     selectedMode: string;
@@ -213,6 +315,13 @@ interface HealthData {
   persistence: {
     countsByKind: Record<string, number>;
     recordCount: number;
+  };
+  taskVerificationRuntime: {
+    enabled: boolean;
+    providerStatus: string;
+    requiredSchemaVersion: string;
+    schemaStatus: string;
+    status: string;
   };
 }
 
@@ -229,16 +338,27 @@ interface VerificationData {
   campaignDbEvidence: {
     completionId: string;
     createdViaRepository: true;
+    evidenceHash: string;
     evidenceId: string;
+    evidenceRef: string;
+    evidenceSource: string;
+    liveProviderExecuted: boolean;
     repositoryId: string;
     storeId: "campaign-db";
     taskId: string;
   };
   payload: {
     campaignId: string;
+    evidenceHash: string;
+    evidenceRef: string;
+    liveProviderExecuted: boolean;
+    outcome: string;
     pointsAwarded: number;
+    providerFamily: string;
     status: string;
     taskId: string;
+    transportExecuted: boolean;
+    verificationAttemptId: string;
     walletAddress: string;
   };
 }
@@ -652,6 +772,11 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       CAMPAIGN_OS_DATABASE_POOL_MAX: "10",
       CAMPAIGN_OS_DATABASE_SSL_MODE: sslMode,
       CAMPAIGN_OS_DATABASE_URL: selectedDatabaseUrl,
+      CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON: JSON.stringify([
+        CONTROLLED_TASK_VERIFICATION_BINDING,
+      ]),
+      CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "explicitly-enabled",
+      [CONTROLLED_TASK_VERIFICATION_ENDPOINT_ENV]: CONTROLLED_TASK_VERIFICATION_ENDPOINT,
     };
     Object.defineProperty(env, "CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON", {
       enumerable: true,
@@ -670,7 +795,13 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       env,
       logger: false,
       port: 0,
+      runtimeFactory: (options) => createCampaignOsApiRuntime({
+        ...options,
+        taskVerificationConfig: CONTROLLED_TASK_VERIFICATION_CONFIG,
+        taskVerificationProviderRuntime: CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME,
+      }),
       shutdownTimeoutMs: 10_000,
+      taskVerificationTransport: controlledTaskVerificationTransport,
     });
 
     servers.add(server);
@@ -806,7 +937,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
   };
 
   const readCampaignSnapshot = async (pool: pg.Pool, campaignId: string) => {
-    const [campaigns, tasks, participants, completions, evidence, referrals] = await Promise.all([
+    const [campaigns, tasks, participants, completions, evidence, referrals, verificationAttempts] =
+      await Promise.all([
       pool.query(
         `
           SELECT
@@ -872,7 +1004,16 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       ),
       pool.query(
         `
-          SELECT id, campaign_id, task_id, wallet_address, status, points_awarded, created_at, updated_at
+          SELECT
+            id,
+            campaign_id,
+            task_id,
+            wallet_address,
+            status,
+            points_awarded,
+            verification_attempt_id,
+            created_at,
+            updated_at
           FROM campaign_os.campaign_task_completions
           WHERE campaign_id = $1
           ORDER BY wallet_address, task_id
@@ -881,7 +1022,19 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       ),
       pool.query(
         `
-          SELECT id, campaign_id, task_id, wallet_address, completion_id, evidence_hash, created_at, updated_at
+          SELECT
+            id,
+            campaign_id,
+            task_id,
+            wallet_address,
+            completion_id,
+            evidence_hash,
+            evidence_ref,
+            evidence_source,
+            live_provider_executed,
+            verification_attempt_id,
+            created_at,
+            updated_at
           FROM campaign_os.campaign_task_evidence
           WHERE campaign_id = $1
           ORDER BY wallet_address, task_id
@@ -897,6 +1050,30 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         `,
         [campaignId],
       ),
+      pool.query(
+        `
+          SELECT
+            id,
+            campaign_id,
+            task_id,
+            wallet_address,
+            status,
+            dispatch_state,
+            attempt_count,
+            max_attempts,
+            external_dispatch_limit,
+            evidence_hash,
+            evidence_ref,
+            evidence_source,
+            completed_at,
+            created_at,
+            updated_at
+          FROM campaign_os.verification_attempts
+          WHERE campaign_id = $1
+          ORDER BY wallet_address, task_id
+        `,
+        [campaignId],
+      ),
     ]);
 
     return {
@@ -906,6 +1083,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       participants: participants.rows,
       referrals: referrals.rows,
       tasks: tasks.rows,
+      verificationAttempts: verificationAttempts.rows,
     };
   };
 
@@ -1038,6 +1216,17 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
   });
 
   it("recovers canonical Owner, Participant, Admin, and artifact facts after a full PostgreSQL restart", async () => {
+    expect(CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME).toMatchObject({
+      status: "activated",
+      transportProvided: true,
+      valid: true,
+    });
+    expect(CONTROLLED_TASK_VERIFICATION_CONFIG).toMatchObject({
+      enabled: true,
+      hasLiveBindings: true,
+      status: "ready",
+      valid: true,
+    });
     adminMembershipCampaignIds = null;
     participantPreviewCampaignIds = "";
     const runtimeWriteWindowStartedAt = Date.now();
@@ -1070,7 +1259,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     adminMembershipCampaignIds = [campaignId];
     const task = await requestJson<TaskCreateData>(firstServer, `/api/campaigns/${campaignId}/tasks`, {
       body: JSON.stringify({
-        evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+        evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1, source: "AELFSCAN" }),
         points: 120,
         required: true,
         templateCode: "bridge_ebridge",
@@ -1081,6 +1270,17 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       method: "POST",
     });
     const taskId = task.campaignDbTask.taskId;
+    expect(task.payload.evidenceRule).toMatchObject({
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: CONTROLLED_TASK_VERIFICATION_BINDING_ID,
+      source: "AELFSCAN",
+    });
+    expect(CONTROLLED_TASK_VERIFICATION_CONFIG.resolveBinding(
+      String(task.payload.evidenceRule.providerBindingId),
+      "ON_CHAIN",
+    ).status).toBe("resolved");
     const previewDbBefore = await (async () => {
       const pool = createAuditPool();
 
@@ -1091,6 +1291,25 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       }
     })();
     const previewHealthBefore = await requestJson<HealthData>(firstServer, "/api/health");
+    expect(previewHealthBefore.campaignDatabase).toMatchObject({
+      campaignStore: {
+        appliedMigrationIds: expect.arrayContaining(["0004_live_provider_task_verification"]),
+        migrationStatus: "ready",
+        mode: "postgres",
+        schemaVersion: "0004_live_provider_task_verification",
+        status: "ready",
+      },
+      selectedMode: "postgres",
+      status: "ready",
+    });
+    expect(previewHealthBefore.taskVerificationRuntime).toEqual({
+      bindingCount: 1,
+      enabled: true,
+      providerStatus: "configured",
+      requiredSchemaVersion: "0004_live_provider_task_verification",
+      schemaStatus: "ready",
+      status: "ready",
+    });
     const generated = await requestJson<GeneratedTasksData>(
       firstServer,
       `/api/campaigns/${campaignId}/tasks/generate`,
@@ -1106,8 +1325,13 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
     );
     const supportedSuggestion = generated.payload.taskList.find(
-      (suggestion) => suggestion.adoptability === "adoptable" && !suggestion.required,
-    ) ?? generated.payload.taskList.find((suggestion) => suggestion.adoptability === "adoptable");
+      (suggestion) => suggestion.adoptability === "adoptable"
+        && suggestion.verificationType === "ON_CHAIN"
+        && !suggestion.required,
+    ) ?? generated.payload.taskList.find(
+      (suggestion) => suggestion.adoptability === "adoptable"
+        && suggestion.verificationType === "ON_CHAIN",
+    );
     const referralSuggestion = generated.payload.taskList.find(
       (suggestion) => suggestion.verificationType === "REFERRAL",
     );
@@ -1190,7 +1414,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/campaigns/${campaignId}/tasks`,
       {
         body: JSON.stringify({
-          evidenceRule: supportedSuggestion.evidenceRule,
+          evidenceRule: controlledOnChainEvidenceRule(supportedSuggestion.evidenceRule),
           points: supportedSuggestion.points,
           required: supportedSuggestion.required,
           templateCode: supportedSuggestion.templateCode,
@@ -1221,7 +1445,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/campaigns/${hiddenCampaign.payload.id}/tasks`,
       {
         body: JSON.stringify({
-          evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+          evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1, source: "AELFSCAN" }),
           points: 10,
           required: true,
           templateCode: "hidden_campaign_task",
@@ -1261,12 +1485,18 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     participantPreviewCampaignIds = campaignId;
     const participantSessionA1 = await issueParticipantSession(
       firstServer,
-      { fixtureId: "sess-eoa-001" },
+      {
+        adapterName: "PortkeyExtensionWallet",
+        address: "3E9PostgresParticipantA",
+      },
       "trace-pg-participant-a1-session",
     );
     const participantSessionB1 = await issueParticipantSession(
       firstServer,
-      { fixtureId: "sess-eoa-app-001" },
+      {
+        adapterName: "PortkeyDiscoverWallet",
+        address: "8A2PostgresParticipantB",
+      },
       "trace-pg-participant-b1-session",
     );
     const walletAddress = participantSessionA1.data.payload.address;
@@ -1546,11 +1776,26 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(new Set(participantAVerifications.map(
       (item) => item.campaignDbEvidence.evidenceId,
     )).size).toBe(1);
+    expect(new Set(participantAVerifications.map(
+      (item) => item.payload.verificationAttemptId,
+    )).size).toBe(1);
     expect(participantAVerifications.every((item) =>
       item.payload.campaignId === campaignId
+      && item.payload.liveProviderExecuted
+      && item.payload.outcome === "completed"
       && item.payload.pointsAwarded === task.payload.points
+      && item.payload.providerFamily === "aefinder"
       && item.payload.taskId === taskId
+      && item.payload.transportExecuted
       && item.payload.walletAddress === walletAddress)).toBe(true);
+    expect(firstVerification.campaignDbEvidence).toMatchObject({
+      evidenceHash: firstVerification.payload.evidenceHash,
+      evidenceRef: firstVerification.payload.evidenceRef,
+      evidenceSource: "AELFSCAN",
+      liveProviderExecuted: true,
+    });
+    expect(firstVerification.payload.evidenceHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(firstVerification)).not.toContain("evidence-hash:");
     const participantAJourneyBeforeB = await requestJson<ParticipantJourneyData>(
       firstServer,
       `/api/participant/campaigns/${campaignId}/journey`,
@@ -1564,8 +1809,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(participantAJourneyBeforeB.payload.tasks.find((item) => item.taskId === taskId)).toMatchObject({
       completionId: firstVerification.campaignDbCompletion.completionId,
       evidenceId: firstVerification.campaignDbEvidence.evidenceId,
+      liveProviderExecuted: true,
       pointsAwarded: task.payload.points,
       status: "completed",
+      verificationAttemptId: firstVerification.payload.verificationAttemptId,
     });
     expect(participantAJourneyBeforeB.payload.tasks.find(
       (item) => item.taskId === adoptedTaskId,
@@ -2253,6 +2500,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
           verification_type: adoptedTask.payload.verificationType,
         }),
       ]),
+      verificationAttempts: expect.arrayContaining([
+        expect.objectContaining({ task_id: taskId, wallet_address: walletAddress }),
+        expect.objectContaining({ task_id: taskId, wallet_address: walletBAddress }),
+      ]),
     });
     expect(beforeRestartSnapshot.tasks).toHaveLength(2);
     const participantACompletionRows = beforeRestartSnapshot.completions.filter(
@@ -2261,15 +2512,36 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const participantAEvidenceRows = beforeRestartSnapshot.evidence.filter(
       (row) => row.wallet_address === walletAddress && row.task_id === taskId,
     );
+    const participantAAttemptRows = beforeRestartSnapshot.verificationAttempts.filter(
+      (row) => row.wallet_address === walletAddress && row.task_id === taskId,
+    );
     expect(participantACompletionRows).toHaveLength(1);
     expect(participantAEvidenceRows).toHaveLength(1);
+    expect(participantAAttemptRows).toHaveLength(1);
     expect(participantACompletionRows[0]).toMatchObject({
       id: firstVerification.campaignDbCompletion.completionId,
       points_awarded: task.payload.points,
+      verification_attempt_id: firstVerification.payload.verificationAttemptId,
     });
     expect(participantAEvidenceRows[0]).toMatchObject({
       completion_id: firstVerification.campaignDbCompletion.completionId,
+      evidence_hash: firstVerification.payload.evidenceHash,
+      evidence_ref: firstVerification.payload.evidenceRef,
+      evidence_source: "AELFSCAN",
       id: firstVerification.campaignDbEvidence.evidenceId,
+      live_provider_executed: true,
+      verification_attempt_id: firstVerification.payload.verificationAttemptId,
+    });
+    expect(participantAAttemptRows[0]).toMatchObject({
+      attempt_count: 1,
+      dispatch_state: "result_observed",
+      evidence_hash: firstVerification.payload.evidenceHash,
+      evidence_ref: firstVerification.payload.evidenceRef,
+      evidence_source: "AELFSCAN",
+      external_dispatch_limit: 1,
+      id: firstVerification.payload.verificationAttemptId,
+      max_attempts: CONTROLLED_TASK_VERIFICATION_BINDING.maxAttempts,
+      status: "completed",
     });
     expect(beforeRestartSnapshot.participants.find(
       (row) => row.wallet_address === walletAddress,
@@ -2281,6 +2553,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       ...beforeRestartSnapshot.participants,
       ...beforeRestartSnapshot.completions,
       ...beforeRestartSnapshot.evidence,
+      ...beforeRestartSnapshot.verificationAttempts,
     ];
     const runtimeWriteWindowEndedAt = Date.now();
 
@@ -2439,12 +2712,12 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     });
     const participantSessionA2 = await issueParticipantSession(
       secondServer,
-      { fixtureId: "sess-eoa-001" },
+      { adapterName: "PortkeyExtensionWallet", address: walletAddress },
       "trace-pg-participant-a2-session",
     );
     const participantSessionB2 = await issueParticipantSession(
       secondServer,
-      { fixtureId: "sess-eoa-app-001" },
+      { adapterName: "PortkeyDiscoverWallet", address: walletBAddress },
       "trace-pg-participant-b2-session",
     );
     const adminSessionA2 = await issueAdminSession(
@@ -3218,7 +3491,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/campaigns/${secondCampaignId}/tasks`,
       {
         body: JSON.stringify({
-          evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+          evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1, source: "AELFSCAN" }),
           points: 120,
           required: true,
           templateCode: "bridge_ebridge",
@@ -3235,7 +3508,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       `/api/campaigns/${secondCampaignId}/tasks`,
       {
         body: JSON.stringify({
-          evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+          evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1, source: "AELFSCAN" }),
           points: 80,
           required: false,
           templateCode: "atomic_same_wallet_task",
