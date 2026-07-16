@@ -916,6 +916,33 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     return server;
   };
 
+  const startServerWithVerificationDisabled = async () => {
+    const server = await startCampaignOsApiServer({
+      env: {
+        CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
+          active: true,
+          campaignIds: null,
+          roleIds: ["review_operator"],
+          subjectAddress: adminOperatorAddress,
+        }]),
+        CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: "5000",
+        CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS: "5000",
+        CAMPAIGN_OS_DATABASE_POOL_MAX: "10",
+        CAMPAIGN_OS_DATABASE_SSL_MODE: sslMode,
+        CAMPAIGN_OS_DATABASE_URL: databaseUrl,
+        CAMPAIGN_OS_PARTICIPANT_PREVIEW_CAMPAIGN_IDS: "*",
+      },
+      logger: false,
+      port: 0,
+      shutdownTimeoutMs: 10_000,
+    });
+
+    servers.add(server);
+    return server;
+  };
+
   const stopServer = async (server: CampaignOsApiServerHandle) => {
     await recordTiming(() => server.stop(), shutdownTimings);
     servers.delete(server);
@@ -1398,6 +1425,152 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       });
     }
   });
+
+  it("preserves every M242 business row while applying migration 0004", async () => {
+    const compatibilityDatabaseName = `${databaseName}_m242`;
+    if (!/^[a-z0-9_]+$/.test(compatibilityDatabaseName)) {
+      throw new Error("Generated M242 compatibility database name is invalid.");
+    }
+
+    await adminPool.query(`CREATE DATABASE "${compatibilityDatabaseName}"`);
+    const compatibilityUrl = new URL(TEST_DATABASE_URL!);
+    compatibilityUrl.pathname = `/${compatibilityDatabaseName}`;
+    compatibilityUrl.search = "";
+    const compatibilityConfig = resolveCampaignOsCampaignDbConfig({
+      databaseUrl: compatibilityUrl.toString(),
+      env: {},
+      mode: "postgres",
+      sslMode,
+    });
+    if (compatibilityConfig.mode !== "postgres") {
+      throw new Error("M242 compatibility config did not resolve PostgreSQL mode.");
+    }
+    const pool = new pg.Pool(compatibilityConfig.pool);
+
+    try {
+      const migrations = await loadPostgresMigrations();
+      const migration0004 = migrations.find(
+        ({ id }) => id === "0004_live_provider_task_verification",
+      );
+      if (!migration0004) {
+        throw new Error("Migration 0004 is unavailable for M242 compatibility acceptance.");
+      }
+      for (const migration of migrations.filter(
+        ({ id }) => id !== "0004_live_provider_task_verification",
+      )) {
+        await pool.query(migration.upSql);
+      }
+
+      await pool.query(`
+        INSERT INTO campaign_os.campaigns (
+          id, project_id, owner_address, status, default_locale, supported_locales,
+          wallet_policy, contract_mode, goal, duration, reward_description,
+          reward_disclaimer_hash, metadata_uri, metadata_hash, start_time, end_time,
+          publish_readiness, created_at, updated_at
+        ) VALUES (
+          'm242-campaign', 'm242-project', '2F4M242Owner', 'draft', 'en-US',
+          '["en-US"]'::jsonb, 'ANY', 'OFF_CHAIN_MVP', 'M242 compatibility',
+          '2026-08-01/2026-08-14', 'M242 rewards.', repeat('a', 64), NULL, NULL,
+          '2026-08-01T00:00:00Z', '2026-08-14T23:59:59Z',
+          '{"ready":true,"blockers":[],"warnings":[]}'::jsonb,
+          '2026-07-15T00:00:00Z', '2026-07-15T00:00:00Z'
+        );
+        INSERT INTO campaign_os.campaign_tasks (
+          id, campaign_id, template_code, verification_type, wallet_compatibility,
+          points, required, evidence_rule, created_at, updated_at
+        ) VALUES (
+          'm242-task', 'm242-campaign', 'm242_task', 'ON_CHAIN', 'ANY', 40, true,
+          '{"source":"AELFSCAN","minAmount":1}'::jsonb,
+          '2026-07-15T00:00:00Z', '2026-07-15T00:00:00Z'
+        );
+        INSERT INTO campaign_os.campaign_participants (
+          id, campaign_id, wallet_address, account_type, wallet_source,
+          wallet_type_verified, wallet_signature_status, wallet_verified_at,
+          locale_preference, total_points, rank, risk_flags, created_at, updated_at
+        ) VALUES (
+          'm242-participant', 'm242-campaign', '3E9M242Participant', 'EOA',
+          'PORTKEY_EOA_EXTENSION', true, 'signed', '2026-07-15T00:00:00Z',
+          'en-US', 40, 1, '[]'::jsonb,
+          '2026-07-15T00:00:00Z', '2026-07-15T00:00:00Z'
+        );
+        INSERT INTO campaign_os.campaign_task_completions (
+          id, campaign_id, task_id, wallet_address, account_type, wallet_source,
+          status, evidence_source, evidence_id, evidence_hash, points_awarded,
+          completed_at, created_at, updated_at
+        ) VALUES (
+          'm242-completion', 'm242-campaign', 'm242-task', '3E9M242Participant',
+          'EOA', 'PORTKEY_EOA_EXTENSION', 'completed', 'AELFSCAN', 'm242-evidence',
+          repeat('b', 64), 40, '2026-07-15T00:01:00Z',
+          '2026-07-15T00:01:00Z', '2026-07-15T00:01:00Z'
+        );
+        INSERT INTO campaign_os.campaign_task_evidence (
+          id, campaign_id, task_id, wallet_address, completion_id, account_type,
+          wallet_source, status, evidence_source, evidence_hash, evidence_ref,
+          diagnostic_codes, points_awarded, captured_at, live_contract_executed,
+          live_provider_executed, live_reward_executed, live_storage_executed,
+          created_at, updated_at
+        ) VALUES (
+          'm242-evidence', 'm242-campaign', 'm242-task', '3E9M242Participant',
+          'm242-completion', 'EOA', 'PORTKEY_EOA_EXTENSION', 'completed', 'AELFSCAN',
+          repeat('b', 64), 'm242-evidence-ref', '[]'::jsonb, 40,
+          '2026-07-15T00:01:00Z', false, false, false, false,
+          '2026-07-15T00:01:00Z', '2026-07-15T00:01:00Z'
+        );
+        INSERT INTO campaign_os.campaign_review_decisions (
+          id, campaign_id, participant_id, wallet_address, version, decision,
+          snapshot_version, snapshot_fingerprint, snapshot_manifest, reason_code,
+          note, operator_subject, operator_role, idempotency_key_hash, payload_hash,
+          trace_id, decided_at
+        ) VALUES (
+          'm242-decision', 'm242-campaign', 'm242-participant', '3E9M242Participant',
+          1, 'approved', 'review-snapshot-v1', repeat('c', 64),
+          '{"participantId":"m242-participant"}'::jsonb, 'M242_APPROVED',
+          'M242 compatibility decision.', '2F4M242Admin', 'review_operator',
+          repeat('d', 64), repeat('e', 64), 'trace-m242-decision',
+          '2026-07-15T00:02:00Z'
+        );
+        INSERT INTO campaign_os.campaign_export_artifacts (
+          id, campaign_id, source_version, source_fingerprint, source_manifest,
+          format, row_count, content_hash, content, content_bytes, file_name,
+          mime_type, creator_subject, creator_role, trace_id, created_at
+        ) VALUES (
+          'm242-artifact', 'm242-campaign', 'artifact-source-v1', repeat('f', 64),
+          '{"campaignId":"m242-campaign"}'::jsonb, 'json', 1, repeat('1', 64),
+          '[]', 2, 'm242-export.json', 'application/json;charset=utf-8',
+          '2F4M242Admin', 'review_operator', 'trace-m242-artifact',
+          '2026-07-15T00:03:00Z'
+        );
+      `);
+
+      const readSnapshot = async () => {
+        const result = await pool.query<{ snapshot: Record<string, unknown> }>(`
+          SELECT jsonb_build_object(
+            'campaign', (SELECT to_jsonb(row_value) FROM campaign_os.campaigns AS row_value WHERE id = 'm242-campaign'),
+            'task', (SELECT to_jsonb(row_value) - 'revision' FROM campaign_os.campaign_tasks AS row_value WHERE id = 'm242-task'),
+            'completion', (SELECT to_jsonb(row_value) - 'verification_attempt_id' FROM campaign_os.campaign_task_completions AS row_value WHERE id = 'm242-completion'),
+            'evidence', (SELECT to_jsonb(row_value) - 'verification_attempt_id' FROM campaign_os.campaign_task_evidence AS row_value WHERE id = 'm242-evidence'),
+            'decision', (SELECT to_jsonb(row_value) FROM campaign_os.campaign_review_decisions AS row_value WHERE id = 'm242-decision'),
+            'artifact', (SELECT to_jsonb(row_value) FROM campaign_os.campaign_export_artifacts AS row_value WHERE id = 'm242-artifact')
+          ) AS snapshot
+        `);
+
+        return result.rows[0]?.snapshot;
+      };
+
+      const before = await readSnapshot();
+      await pool.query(migration0004.upSql);
+      const after = await readSnapshot();
+
+      expect(after).toEqual(before);
+      await expect(pool.query(
+        `SELECT revision, points FROM campaign_os.campaign_task_revisions
+         WHERE campaign_id = 'm242-campaign' AND task_id = 'm242-task'`,
+      )).resolves.toMatchObject({ rows: [{ points: 40, revision: 1 }] });
+    } finally {
+      await pool.end();
+      await adminPool.query(`DROP DATABASE IF EXISTS "${compatibilityDatabaseName}" WITH (FORCE)`);
+    }
+  }, 60_000);
 
   it("recovers canonical Owner, Participant, Admin, and artifact facts after a full PostgreSQL restart", async () => {
     expect(CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME).toMatchObject({
@@ -3126,6 +3299,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     }
     const providerCountBeforeRuntimeBReplay = providerSandbox!.count();
     const transportCallsBeforeRuntimeBReplay = requireServerTransportStats(secondServer).callCount;
+    const terminalRecoveryTimings: number[] = [];
     const terminalReplay = await requestJson<VerificationData>(
       secondServer,
       `/api/tasks/${taskId}/verify`,
@@ -3134,6 +3308,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         headers: participantSessionA2.headers("trace-pg-runtime-b-terminal-replay"),
         method: "POST",
       },
+      terminalRecoveryTimings,
     );
     expect(terminalReplay).toMatchObject({
       campaignDbCompletion: {
@@ -3155,6 +3330,11 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(requireServerTransportStats(secondServer).callCount).toBe(
       transportCallsBeforeRuntimeBReplay,
     );
+    expect(terminalRecoveryTimings).toHaveLength(1);
+    expect(terminalRecoveryTimings[0]).toBeLessThan(1_000);
+    console.info(`WP06 terminal restart recovery timing ${JSON.stringify(
+      summarizeTimings(terminalRecoveryTimings),
+    )}`);
 
     const unknownOutcomeRecovery = await requestJson<AttemptOnlyVerificationData>(
       secondServer,
@@ -4067,6 +4247,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       })),
     ];
 
+    const liveVerificationTimings: number[] = [];
     const verifications = await Promise.all(verificationTargets.map((target, index) =>
       requestJson<VerificationData>(secondServer, `/api/tasks/${target.taskId}/verify`, {
         body: JSON.stringify({
@@ -4074,9 +4255,16 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         }),
         headers: target.session.headers(`trace-pg-concurrent-verify-${index}`),
         method: "POST",
-      })));
+      }, liveVerificationTimings)));
     expect(new Set(verifications.map((item) => item.campaignDbCompletion.completionId)).size).toBe(20);
     expect(new Set(verifications.map((item) => item.campaignDbEvidence.evidenceId)).size).toBe(20);
+    expect(liveVerificationTimings).toHaveLength(20);
+    expect(percentile95(liveVerificationTimings)).toBeLessThanOrEqual(3_000);
+    expect(liveVerificationTimings.filter((duration) => duration <= 3_000).length)
+      .toBeGreaterThanOrEqual(Math.ceil(liveVerificationTimings.length * 0.95));
+    console.info(`WP06 live verify API timings ${JSON.stringify(
+      summarizeTimings(liveVerificationTimings),
+    )}`);
 
     const auditPool = createAuditPool();
 
@@ -4549,6 +4737,48 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     expect(timings.length).toBeGreaterThanOrEqual(50);
     expect(percentile95(timings)).toBeLessThanOrEqual(500);
     await stopServer(secondServer);
+    const providerCountBeforeDisabledRuntime = providerSandbox!.count();
+    const disabledServer = await startServerWithVerificationDisabled();
+    const disabledParticipantSession = await issueParticipantSession(
+      disabledServer,
+      { adapterName: "PortkeyExtensionWallet", address: walletAddress },
+      "trace-pg-disabled-participant-session",
+    );
+    const disabledJourney = await requestJson<ParticipantJourneyData>(
+      disabledServer,
+      `/api/participant/campaigns/${campaignId}/journey`,
+      { headers: disabledParticipantSession.headers("trace-pg-disabled-journey") },
+    );
+    expect(disabledJourney.payload.tasks.find(({ taskId: itemTaskId }) => itemTaskId === taskId))
+      .toMatchObject({
+        completionId: firstVerification.campaignDbCompletion.completionId,
+        evidenceId: firstVerification.campaignDbEvidence.evidenceId,
+        pointsAwarded: task.payload.points,
+        status: "completed",
+        verificationAttemptId: firstVerification.payload.verificationAttemptId,
+      });
+    const disabledNewVerification = await requestApi(
+      disabledServer,
+      `/api/tasks/${adoptedTaskId}/verify`,
+      {
+        body: JSON.stringify({ campaignId }),
+        headers: disabledParticipantSession.headers("trace-pg-disabled-new-verification"),
+        method: "POST",
+      },
+    );
+    expect(disabledNewVerification).toMatchObject({
+      status: 503,
+      envelope: {
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
+        ok: false,
+        traceId: "trace-pg-disabled-new-verification",
+      },
+    });
+    expect(providerSandbox!.count()).toBe(providerCountBeforeDisabledRuntime);
+    await stopServer(disabledServer);
     expect(shutdownTimings.every((duration) => duration <= 10_000)).toBe(true);
     expect(servers.size).toBe(0);
     expect(await waitForRuntimeDatabaseConnectionsToClose()).toBeLessThanOrEqual(10_000);
