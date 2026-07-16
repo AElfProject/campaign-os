@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   findProviderHttpEndpointById,
   findProviderHttpEndpointForVerification,
@@ -20,9 +21,15 @@ export type ProviderHttpRequestPlannerDiagnosticCode =
   | "endpoint_required_config_missing"
   | "endpoint_unsafe_rollout_metadata"
   | "invalid_attempt"
+  | "invalid_matcher_context"
+  | "invalid_request_material_ref"
+  | "invalid_response_limit"
+  | "invalid_strategy_id"
+  | "invalid_timeout"
   | "missing_campaign_id"
   | "missing_idempotency_ref"
   | "missing_lease_ref"
+  | "missing_request_material_ref"
   | "missing_task_id"
   | "missing_timeout_policy"
   | "missing_trace_id"
@@ -57,10 +64,15 @@ export interface ProviderHttpVerificationRequestInput {
   evidenceRef?: string;
   idempotencyRef?: string;
   leaseRef?: string;
+  matcherContextDigest?: string;
+  maxResponseBytes?: number;
   operatorContextRefs?: Record<string, string>;
   providerGroupId?: string;
+  requestMaterialRef?: string;
+  strategyId?: string;
   taskId?: string;
   traceId?: string;
+  timeoutMs?: number;
   verificationType?: ProviderHttpVerificationType;
   walletAccountRef?: string;
   walletSessionRef?: string;
@@ -78,12 +90,17 @@ export interface ProviderHttpRequestPlan {
   headerRefs: string[];
   idempotencyRef: string;
   leaseRef: string;
+  matcherContextDigest?: string;
+  maxResponseBytes: number;
   method: ProviderHttpMethod;
   operatorContextRefs: Record<string, string>;
   providerGroupId: string;
+  requestMaterialRef?: string;
   requestMappingId: string;
+  requestDigest: string;
   responseMappingId: string;
   retryPolicyRef: string;
+  strategyId?: string;
   taskId: string;
   timeoutMs: number;
   timeoutPolicyRef: string;
@@ -116,10 +133,15 @@ const allowedRequestKeys = new Set([
   "evidenceRef",
   "idempotencyRef",
   "leaseRef",
+  "matcherContextDigest",
+  "maxResponseBytes",
   "operatorContextRefs",
   "providerGroupId",
+  "requestMaterialRef",
+  "strategyId",
   "taskId",
   "traceId",
+  "timeoutMs",
   "verificationType",
   "walletAccountRef",
   "walletSessionRef",
@@ -144,6 +166,8 @@ export const planProviderHttpRequest = (
 
   diagnostics.push(...validateRequiredFields(input));
   diagnostics.push(...validateAttempt(input.attempt));
+  diagnostics.push(...validateExecutionBounds(input));
+  diagnostics.push(...validateStrategyContext(input));
   diagnostics.push(...detectUnsafeRequestMaterial(input));
 
   const endpoint = input.endpointId
@@ -211,39 +235,65 @@ export const planProviderHttpRequest = (
     return { diagnostics, ok: false };
   }
 
+  const planWithoutDigest: Omit<ProviderHttpRequestPlan, "requestDigest"> = {
+    attempt: {
+      count: input.attempt.count,
+      maxAttempts: input.attempt.maxAttempts,
+    },
+    bodyHash: sanitizeOptionalRef(input.bodyHash),
+    bodyRef: sanitizeOptionalRef(input.bodyRef),
+    campaignId: input.campaignId!,
+    endpointId: endpoint.endpointId,
+    evidenceHash: sanitizeOptionalRef(input.evidenceHash),
+    evidenceRef: sanitizeOptionalRef(input.evidenceRef),
+    headerRefs: [...endpoint.headerRefs],
+    idempotencyRef: input.idempotencyRef!,
+    leaseRef: input.leaseRef!,
+    matcherContextDigest: sanitizeOptionalRef(input.matcherContextDigest),
+    maxResponseBytes: input.maxResponseBytes ?? 256 * 1024,
+    method: endpoint.method,
+    operatorContextRefs: { ...(input.operatorContextRefs ?? {}) },
+    providerGroupId: endpoint.providerGroupId,
+    requestMaterialRef: sanitizeOptionalRef(input.requestMaterialRef),
+    requestMappingId: endpoint.requestMappingId,
+    responseMappingId: endpoint.responseMappingId,
+    retryPolicyRef: endpoint.retryPolicyRef,
+    strategyId: sanitizeOptionalRef(input.strategyId),
+    taskId: input.taskId!,
+    timeoutMs: input.timeoutMs ?? parseTimeoutMs(endpoint.timeoutPolicyRef),
+    timeoutPolicyRef: endpoint.timeoutPolicyRef,
+    traceId: input.traceId!,
+    urlRef: endpoint.urlTemplateRef,
+    verificationType: input.verificationType!,
+    walletAccountRef: sanitizeOptionalRef(input.walletAccountRef),
+    walletSessionRef: sanitizeOptionalRef(input.walletSessionRef),
+  };
+
   return {
     diagnostics: [],
     ok: true,
     plan: {
-      attempt: {
-        count: input.attempt.count,
-        maxAttempts: input.attempt.maxAttempts,
-      },
-      bodyHash: sanitizeOptionalRef(input.bodyHash),
-      bodyRef: sanitizeOptionalRef(input.bodyRef),
-      campaignId: input.campaignId!,
-      endpointId: endpoint.endpointId,
-      evidenceHash: sanitizeOptionalRef(input.evidenceHash),
-      evidenceRef: sanitizeOptionalRef(input.evidenceRef),
-      headerRefs: [...endpoint.headerRefs],
-      idempotencyRef: input.idempotencyRef!,
-      leaseRef: input.leaseRef!,
-      method: endpoint.method,
-      operatorContextRefs: { ...(input.operatorContextRefs ?? {}) },
-      providerGroupId: endpoint.providerGroupId,
-      requestMappingId: endpoint.requestMappingId,
-      responseMappingId: endpoint.responseMappingId,
-      retryPolicyRef: endpoint.retryPolicyRef,
-      taskId: input.taskId!,
-      timeoutMs: parseTimeoutMs(endpoint.timeoutPolicyRef),
-      timeoutPolicyRef: endpoint.timeoutPolicyRef,
-      traceId: input.traceId!,
-      urlRef: endpoint.urlTemplateRef,
-      verificationType: input.verificationType!,
-      walletAccountRef: sanitizeOptionalRef(input.walletAccountRef),
-      walletSessionRef: sanitizeOptionalRef(input.walletSessionRef),
+      ...planWithoutDigest,
+      requestDigest: createCanonicalProviderHttpRequestDigest(planWithoutDigest),
     },
   };
+};
+
+export const createCanonicalProviderHttpRequestDigest = (
+  input: Readonly<Record<string, unknown>>,
+): string => {
+  const safeInput = Object.fromEntries(
+    Object.entries(input).filter(([key]) => key !== "requestDigest"),
+  );
+  const canonical = canonicalJson(safeInput);
+
+  return createHash("sha256")
+    .update(
+      `campaign-os/provider-http-request/v1\n${Buffer.byteLength(canonical, "utf8")}\n`,
+      "utf8",
+    )
+    .update(canonical, "utf8")
+    .digest("hex");
 };
 
 const validateRequiredFields = (
@@ -309,18 +359,104 @@ const validateAttempt = (
   return [];
 };
 
+const validateExecutionBounds = (
+  input: ProviderHttpVerificationRequestInput,
+): ProviderHttpRequestPlannerDiagnostic[] => {
+  const diagnostics: ProviderHttpRequestPlannerDiagnostic[] = [];
+
+  if (
+    input.timeoutMs !== undefined
+    && (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 100 || input.timeoutMs > 10_000)
+  ) {
+    diagnostics.push(diagnostic(
+      "invalid_timeout",
+      "timeoutMs",
+      "Provider HTTP timeout must be an integer from 100 to 10000 milliseconds.",
+    ));
+  }
+
+  if (
+    input.maxResponseBytes !== undefined
+    && (
+      !Number.isSafeInteger(input.maxResponseBytes)
+      || input.maxResponseBytes < 1_024
+      || input.maxResponseBytes > 256 * 1024
+    )
+  ) {
+    diagnostics.push(diagnostic(
+      "invalid_response_limit",
+      "maxResponseBytes",
+      "Provider HTTP response limit must be an integer from 1024 to 262144 bytes.",
+    ));
+  }
+
+  return diagnostics;
+};
+
+const validateStrategyContext = (
+  input: ProviderHttpVerificationRequestInput,
+): ProviderHttpRequestPlannerDiagnostic[] => {
+  const diagnostics: ProviderHttpRequestPlannerDiagnostic[] = [];
+
+  if (
+    input.matcherContextDigest !== undefined
+    && !/^[a-f0-9]{64}$/.test(input.matcherContextDigest)
+  ) {
+    diagnostics.push(diagnostic(
+      "invalid_matcher_context",
+      "matcherContextDigest",
+      "Provider HTTP matcher context digest is invalid.",
+    ));
+  }
+
+  if (
+    input.strategyId !== undefined
+    && !/^[a-z][a-z0-9-]{0,63}$/.test(input.strategyId)
+  ) {
+    diagnostics.push(diagnostic(
+      "invalid_strategy_id",
+      "strategyId",
+      "Provider HTTP strategy id is invalid.",
+    ));
+  }
+
+  if (input.strategyId !== undefined && !hasPresentValue(input.requestMaterialRef)) {
+    diagnostics.push(diagnostic(
+      "missing_request_material_ref",
+      "requestMaterialRef",
+      "Provider HTTP strategy requires a canonical request material reference.",
+    ));
+  }
+
+  if (
+    input.requestMaterialRef !== undefined
+    && !/^request-ref:[a-f0-9]{64}$/.test(input.requestMaterialRef)
+  ) {
+    diagnostics.push(diagnostic(
+      "invalid_request_material_ref",
+      "requestMaterialRef",
+      "Provider HTTP canonical request material reference is invalid.",
+    ));
+  }
+
+  if (input.requestMaterialRef !== undefined && input.strategyId === undefined) {
+    diagnostics.push(diagnostic(
+      "invalid_request_material_ref",
+      "requestMaterialRef",
+      "Provider HTTP canonical request material reference requires a strategy.",
+    ));
+  }
+
+  return diagnostics;
+};
+
 const detectUnsafeRequestMaterial = (
   input: ProviderHttpVerificationRequestInput,
 ): ProviderHttpRequestPlannerDiagnostic[] => {
   const unsafeFields = new Set<string>();
 
   Object.entries(input).forEach(([key, value]) => {
-    if (!allowedRequestKeys.has(key) && isUnsafeRequestKey(key)) {
-      unsafeFields.add(key);
-      return;
-    }
-
-    if (!allowedRequestKeys.has(key) && containsUnsafeProviderHttpRuntimeMaterial(value)) {
+    if (!allowedRequestKeys.has(key)) {
       unsafeFields.add(key);
       return;
     }
@@ -510,4 +646,22 @@ function readEndpointPath(endpoint: ProviderHttpEndpointEntry, path: string): un
 
     return (value as Record<string, unknown>)[part];
   }, endpoint);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === undefined) {
+    return "null";
+  }
+
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+
+  const record = value as Readonly<Record<string, unknown>>;
+  return `{${Object.keys(record).sort().map((key) =>
+    `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
 }

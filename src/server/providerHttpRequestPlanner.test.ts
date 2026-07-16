@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
-import { planProviderHttpRequest, type ProviderHttpVerificationRequestInput } from "./providerHttpRequestPlanner";
+import {
+  createCanonicalProviderHttpRequestDigest,
+  planProviderHttpRequest,
+  type ProviderHttpVerificationRequestInput,
+} from "./providerHttpRequestPlanner";
 import type { ProviderEndpointRolloutStatus, ProviderHttpEndpointEntry } from "./providerHttpRuntimeTypes";
 import { executeProviderHttpTransport, type ProviderHttpTransport } from "./providerHttpTransport";
 
@@ -43,6 +47,8 @@ const safeRequest: ProviderHttpVerificationRequestInput = {
     source: "unit-test",
   },
   providerGroupId: "aefinder-aelfscan-indexers",
+  requestMaterialRef: `request-ref:${"c".repeat(64)}`,
+  strategyId: "on-chain-indexer-v1",
   taskId: "task-ref:on-chain-1",
   traceId: "trace-provider-http-1",
   verificationType: "ON_CHAIN",
@@ -111,6 +117,8 @@ describe("provider HTTP request planner", () => {
       leaseRef: "lease-ref:worker-task",
       method: "POST",
       providerGroupId: "aefinder-aelfscan-indexers",
+      requestMaterialRef: `request-ref:${"c".repeat(64)}`,
+      strategyId: "on-chain-indexer-v1",
       taskId: "task-ref:on-chain-1",
       timeoutMs: 2500,
       traceId: "trace-provider-http-1",
@@ -197,9 +205,9 @@ describe("provider HTTP request planner", () => {
   it("rejects unsafe endpoint rollout metadata with redacted diagnostics", () => {
     const result = planWithEndpoint(
       endpointFixture({
-        credentialRef: "credential=plain-secret",
-        headerRefs: ["Bearer live-token", "header-ref:provider-http-trace"],
-        urlTemplateRef: "https://user:password@indexer.example/raw.csv?token=query-secret",
+        credentialRef: "credential=fake-credential-sentinel",
+        headerRefs: ["Bearer fake-live-token-sentinel", "header-ref:provider-http-trace"],
+        urlTemplateRef: "https://fake-user:fake-password-sentinel@indexer.invalid/raw.csv?token=fake-query-sentinel",
       }),
     );
     const serialized = JSON.stringify(result);
@@ -208,10 +216,10 @@ describe("provider HTTP request planner", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
       expect.arrayContaining(["endpoint_unsafe_rollout_metadata"]),
     );
-    expect(serialized).not.toContain("plain-secret");
-    expect(serialized).not.toContain("live-token");
-    expect(serialized).not.toContain("password");
-    expect(serialized).not.toContain("query-secret");
+    expect(serialized).not.toContain("fake-credential-sentinel");
+    expect(serialized).not.toContain("fake-live-token-sentinel");
+    expect(serialized).not.toContain("fake-password-sentinel");
+    expect(serialized).not.toContain("fake-query-sentinel");
   });
 
   it("rejects disabled or blocked runtime before planning", () => {
@@ -249,19 +257,37 @@ describe("provider HTTP request planner", () => {
     );
   });
 
+  it("requires a canonical request material ref for strategy plans", () => {
+    const missing = planProviderHttpRequest(
+      { ...safeRequest, requestMaterialRef: undefined },
+      activatedRuntime,
+    );
+    const malformed = planProviderHttpRequest(
+      { ...safeRequest, requestMaterialRef: "request-ref:not-a-digest" },
+      activatedRuntime,
+    );
+
+    expect(missing.diagnostics.map(({ code }) => code)).toContain(
+      "missing_request_material_ref",
+    );
+    expect(malformed.diagnostics.map(({ code }) => code)).toContain(
+      "invalid_request_material_ref",
+    );
+  });
+
   it("rejects unsafe request material before producing an executable plan", () => {
     const result = planProviderHttpRequest(
       {
         ...safeRequest,
-        authorization: "Bearer live-token",
-        evidenceRef: "https://storage.example/raw.csv?X-Amz-Signature=abc123",
-        idempotencyRef: "idem-token=secret-wallet",
-        leaseRef: "lease-token=secret-worker",
+        authorization: "Bearer fake-live-token-sentinel",
+        evidenceRef: "https://storage.invalid/raw.csv?X-Amz-Signature=fake-signature-sentinel",
+        idempotencyRef: "idem-token=fake-wallet-sentinel",
+        leaseRef: "lease-token=fake-worker-sentinel",
         objectKey: "tenant/raw/object-key.csv",
         operatorContextRefs: {
-          rawPayload: "{\"walletAddress\":\"ELF_SECRET\",\"providerPayload\":true}",
+          rawPayload: "{\"walletAddress\":\"ELF_FAKE_SECRET_SENTINEL\",\"providerPayload\":true}",
         },
-        rawRequestBody: "{\"walletAddress\":\"ELF_SECRET\",\"providerPayload\":true}",
+        rawRequestBody: "{\"walletAddress\":\"ELF_FAKE_SECRET_SENTINEL\",\"providerPayload\":true}",
         rawResponseBody: "{\"score\":99,\"providerResponse\":true}",
         stack: "Error: provider failed\n    at secret.ts:1:1",
         walletPrivateKey: "ELF_PRIVATE_WALLET",
@@ -274,10 +300,10 @@ describe("provider HTTP request planner", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
       expect.arrayContaining(["unsafe_request_material"]),
     );
-    expect(serialized).not.toContain("ELF_SECRET");
-    expect(serialized).not.toContain("secret-worker");
-    expect(serialized).not.toContain("abc123");
-    expect(serialized).not.toContain("live-token");
+    expect(serialized).not.toContain("ELF_FAKE_SECRET_SENTINEL");
+    expect(serialized).not.toContain("fake-worker-sentinel");
+    expect(serialized).not.toContain("fake-signature-sentinel");
+    expect(serialized).not.toContain("fake-live-token-sentinel");
   });
 
   it("does not call transport when request planning blocks", async () => {
@@ -301,5 +327,31 @@ describe("provider HTTP request planner", () => {
 
     expect(blockedPlan.ok).toBe(false);
     expect(calls).toBe(0);
+  });
+
+  it("creates a stable canonical request digest without resolved material", () => {
+    const first = createCanonicalProviderHttpRequestDigest({
+      endpointId: "aefinder-aelfscan-indexer-query",
+      operatorContextRefs: {
+        rule: "evidence-ref:rule-a",
+        subject: "account-ref:subject-a",
+      },
+      taskId: "task-ref:on-chain-1",
+      traceId: "trace-digest",
+    });
+    const second = createCanonicalProviderHttpRequestDigest({
+      traceId: "trace-digest",
+      taskId: "task-ref:on-chain-1",
+      operatorContextRefs: {
+        subject: "account-ref:subject-a",
+        rule: "evidence-ref:rule-a",
+      },
+      endpointId: "aefinder-aelfscan-indexer-query",
+    });
+
+    expect(first).toBe(second);
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify({ digest: first })).not.toContain("http://");
+    expect(JSON.stringify({ digest: first })).not.toContain("Bearer ");
   });
 });

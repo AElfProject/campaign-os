@@ -220,12 +220,14 @@ describe("provider HTTP runtime separation boundaries", () => {
     expect(runtime.downstreamLiveFlags).toEqual(expectedDownstreamLiveFlags);
     expect(calls).toBe(1);
     expect(result).toMatchObject({
-      evidenceHash: "sha256:provider-evidence",
-      evidenceRef: "evidence-ref:task-1",
+      diagnosticCodes: ["http_matcher_missing"],
       liveHttpCallsAttempted: true,
-      outcome: "completed",
+      outcome: "manual_review",
+      positiveMatch: false,
       transportExecuted: true,
     });
+    expect(result).not.toHaveProperty("evidenceHash");
+    expect(result).not.toHaveProperty("evidenceRef");
     expect(result.downstreamLiveFlags).toEqual(expectedDownstreamLiveFlags);
     expect(Object.values(result.downstreamLiveFlags).every((flag) => flag === false)).toBe(true);
   });

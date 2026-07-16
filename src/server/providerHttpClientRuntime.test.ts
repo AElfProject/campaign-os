@@ -30,8 +30,6 @@ const request: ProviderHttpVerificationRequestInput = {
   attempt: { count: 1, maxAttempts: 3 },
   campaignId: "campaign-ref:provider-http",
   endpointId: "aefinder-aelfscan-indexer-query",
-  evidenceHash: "sha256:provider-evidence",
-  evidenceRef: "evidence-ref:task-1",
   idempotencyRef: "idem-ref:campaign-task-wallet",
   leaseRef: "lease-ref:worker-task",
   providerGroupId: "aefinder-aelfscan-indexers",
@@ -42,13 +40,21 @@ const request: ProviderHttpVerificationRequestInput = {
 
 const successTransport: ProviderHttpTransport = () => ({
   body: {
-    evidenceHash: "sha256:provider-evidence",
+    evidenceHash: "a".repeat(64),
     evidenceRef: "evidence-ref:task-1",
     status: "completed",
   },
   durationMs: 12,
   statusCode: 200,
   timedOut: false,
+});
+
+const positiveMatcher = () => ({
+  diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+  evidenceHash: "a".repeat(64),
+  evidenceRef: "evidence-ref:task-1",
+  outcome: "completed" as const,
+  positiveMatch: true,
 });
 
 describe("provider HTTP client runtime", () => {
@@ -74,12 +80,13 @@ describe("provider HTTP client runtime", () => {
 
   it("executes safe activated requests through injected transport", async () => {
     const result = await executeProviderHttpRequest(request, {
+      matcher: positiveMatcher,
       runtime: activatedRuntime,
       transport: successTransport,
     });
 
     expect(result).toMatchObject({
-      evidenceHash: "sha256:provider-evidence",
+      evidenceHash: "a".repeat(64),
       evidenceRef: "evidence-ref:task-1",
       liveHttpCallsAttempted: true,
       outcome: "completed",
@@ -105,9 +112,9 @@ describe("provider HTTP client runtime", () => {
       runtime: activatedRuntime,
     });
 
-    expect(timeout).toMatchObject({ outcome: "pending", retryPosture: "retry_scheduled" });
+    expect(timeout).toMatchObject({ outcome: "pending", retryPosture: "not_retried" });
     expect(auth).toMatchObject({ diagnosticCodes: ["http_auth_or_config_failure"], outcome: "blocked" });
-    expect(malformed).toMatchObject({ diagnosticCodes: ["http_malformed_response"], outcome: "blocked" });
+    expect(malformed).toMatchObject({ diagnosticCodes: ["http_malformed_response"], outcome: "manual_review" });
     expect(missingTransport).toMatchObject({
       diagnosticCodes: ["transport_missing"],
       liveHttpCallsAttempted: false,
@@ -129,7 +136,7 @@ describe("provider HTTP client runtime", () => {
     const existing = await executeProviderHttpRequest(request, {
       idempotency: {
         decision: "existing_completion",
-        evidenceHash: "sha256:provider-evidence",
+        evidenceHash: "a".repeat(64),
         evidenceRef: "evidence-ref:task-1",
       },
       runtime: activatedRuntime,
@@ -145,7 +152,7 @@ describe("provider HTTP client runtime", () => {
     expect(duplicate).toMatchObject({ idempotencyDecision: "duplicate_drop", outcome: "blocked" });
     expect(existing).toMatchObject({
       idempotencyDecision: "existing_completion",
-      outcome: "completed",
+      outcome: "manual_review",
       transportExecuted: false,
     });
     expect(leaseConflict).toMatchObject({
@@ -160,7 +167,7 @@ describe("provider HTTP client runtime", () => {
       runtime: activatedRuntime,
       transport: () => ({
         body: {
-          rawResponseBody: "{\"walletAddress\":\"ELF_SECRET\",\"providerResponse\":true}",
+          rawResponseBody: "{\"walletAddress\":\"ELF_FAKE_SECRET_SENTINEL\",\"providerResponse\":true}",
           status: "completed",
         },
         durationMs: 10,
@@ -171,7 +178,7 @@ describe("provider HTTP client runtime", () => {
     const thrown = await executeProviderHttpRequest(request, {
       runtime: activatedRuntime,
       transport: () => {
-        throw new Error("provider token=secret payload={\"walletAddress\":\"ELF_SECRET\"}");
+        throw new Error("provider token=fake-secret-sentinel payload={\"walletAddress\":\"ELF_FAKE_SECRET_SENTINEL\"}");
       },
     });
     const serialized = JSON.stringify({ thrown, unsafe });
@@ -179,11 +186,11 @@ describe("provider HTTP client runtime", () => {
     expect(unsafe).toMatchObject({ diagnosticCodes: ["http_unsafe_response_material"], outcome: "manual_review" });
     expect(thrown).toMatchObject({
       diagnosticCodes: ["transport_thrown_error"],
-      liveHttpCallsAttempted: false,
-      transportExecuted: false,
+      liveHttpCallsAttempted: true,
+      transportExecuted: true,
     });
-    expect(serialized).not.toContain("ELF_SECRET");
-    expect(serialized).not.toContain("token=secret");
+    expect(serialized).not.toContain("ELF_FAKE_SECRET_SENTINEL");
+    expect(serialized).not.toContain("token=fake-secret-sentinel");
     expect(serialized).not.toContain("providerResponse");
   });
 });
