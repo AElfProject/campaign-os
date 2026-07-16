@@ -7,6 +7,7 @@ import {
   CampaignDbRepositoryError,
   createCampaignDbRepository,
   sanitizeCampaignDbDiagnosticValue,
+  type CampaignDbTaskEvidenceRecord,
 } from "./campaignDbRepository";
 import {
   createCampaignDurableStore,
@@ -1206,6 +1207,62 @@ describe("Campaign DB repository", () => {
           taskId: task.id,
         }),
       ],
+    });
+  });
+
+  it("preserves live provider provenance in repository export rows", async () => {
+    const store = createCampaignDurableStore();
+    const seedRepository = createCampaignDbRepository({
+      durableStore: store,
+      mode: "durable_test",
+    });
+    const campaign = await seedRepository.createDraft(validDraftInput());
+    const task = await seedRepository.addTaskDraft(validTaskDraftInput(campaign.id));
+    const completion = await seedRepository.upsertTaskCompletion!(
+      validCompletionInput(campaign.id, task.id),
+    );
+    const verificationAttemptId = "verification-attempt-live-provider-0001";
+    const liveProviderEvidence: CampaignDbTaskEvidenceRecord = {
+      accountType: completion.accountType,
+      campaignId: campaign.id,
+      capturedAt: completion.updatedAt,
+      completionId: completion.id,
+      createdAt: completion.createdAt,
+      diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+      evidenceHash: completion.evidenceHash!,
+      evidenceRef: "provider-evidence:live-provider-0001",
+      evidenceSource: completion.evidenceSource,
+      id: "campaign-db-live-provider-evidence-0001",
+      liveContractExecuted: false,
+      liveProviderExecuted: true,
+      liveRewardExecuted: false,
+      liveStorageExecuted: false,
+      pointsAwarded: completion.pointsAwarded,
+      status: completion.status,
+      taskId: task.id,
+      updatedAt: completion.updatedAt,
+      verificationAttemptId,
+      walletAddress: completion.walletAddress,
+      walletSource: completion.walletSource,
+    };
+    const providerBackedStore = {
+      ...store,
+      listTaskEvidence: async () => [liveProviderEvidence],
+    } satisfies CampaignDurableStore;
+    const repository = createCampaignDbRepository({
+      durableStore: providerBackedStore,
+      mode: "durable_test",
+    });
+
+    const projection = await repository.projectExport!({
+      campaignId: campaign.id,
+      format: "json",
+    });
+
+    expect(projection.rows[0]?.taskRecords[0]).toMatchObject({
+      evidenceId: "campaign-db-live-provider-evidence-0001",
+      liveProviderExecuted: true,
+      verificationType: "ON_CHAIN",
     });
   });
 

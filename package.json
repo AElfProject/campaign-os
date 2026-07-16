@@ -12,7 +12,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "test:postgres": "vitest run src/server/postgresCampaignRuntime.integration.test.ts src/server/postgresAdminReviewStore.test.ts src/server/adminHttpPostgresAcceptance.test.ts"
+    "test:postgres": "vitest run src/server/postgresMigration.test.ts src/server/postgresCampaignDurableStore.test.ts src/server/postgresCampaignRuntime.integration.test.ts src/server/postgresAdminReviewStore.test.ts src/server/adminHttpPostgresAcceptance.test.ts"
   },
   "dependencies": {
     "bullmq": "^5.79.3",

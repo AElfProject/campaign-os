@@ -35,6 +35,7 @@ import {
   toParticipantRankRow,
   type ParticipantJourneyProjection,
 } from "./participantJourney";
+import type { TaskVerificationAttemptStore } from "./taskVerificationAttemptStore";
 
 export type CampaignDbRepositoryMode =
   | "deterministic_test"
@@ -177,6 +178,7 @@ export interface CampaignDbTaskDraft {
   id: string;
   points: number;
   required: boolean;
+  revision?: number;
   templateCode: string;
   updatedAt: string;
   verificationType: VerificationType;
@@ -214,6 +216,7 @@ export interface CampaignDbTaskCompletion {
   status: CampaignDbTaskCompletionStatus;
   taskId: string;
   updatedAt: string;
+  verificationAttemptId?: string;
   walletAddress: string;
   walletSource: WalletSource;
 }
@@ -311,13 +314,14 @@ export interface CampaignDbTaskEvidenceRecord {
   evidenceSource: CampaignDbTaskCompletionEvidenceSource;
   id: string;
   liveContractExecuted: false;
-  liveProviderExecuted: false;
+  liveProviderExecuted: boolean;
   liveRewardExecuted: false;
   liveStorageExecuted: false;
   pointsAwarded: number;
   status: CampaignDbTaskCompletionStatus;
   taskId: string;
   updatedAt: string;
+  verificationAttemptId?: string;
   walletAddress: string;
   walletSource: WalletSource;
 }
@@ -470,7 +474,7 @@ export interface CampaignDbExportTaskRecord {
   evidenceRef?: string;
   evidenceSource?: CampaignDbTaskCompletionEvidenceSource;
   liveContractExecuted?: false;
-  liveProviderExecuted?: false;
+  liveProviderExecuted?: boolean;
   liveRewardExecuted?: false;
   liveStorageExecuted?: false;
   pointsAwarded: number;
@@ -755,6 +759,7 @@ export interface CampaignDbRepository {
     context?: CampaignDbOperationContext,
   ): Promise<CampaignDbExportProjection>;
   reset(): Promise<void>;
+  taskVerificationAttempts?: TaskVerificationAttemptStore;
   bindReferral?(
     input: CampaignDbBindReferralInput,
     context?: CampaignDbOperationContext,
@@ -3597,6 +3602,7 @@ export const createCampaignDbRepository = ({
   };
 
   const repositoryApi: CampaignDbRepository = {
+    taskVerificationAttempts: activeDurableStore?.taskVerificationAttempts,
     addTaskDraft: async (input, context = {}) => {
       await assertWritable(context);
 
@@ -3625,6 +3631,7 @@ export const createCampaignDbRepository = ({
         ...validated,
         createdAt,
         id: nextTaskId(),
+        revision: 1,
         updatedAt: createdAt,
       };
 

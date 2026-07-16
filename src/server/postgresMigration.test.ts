@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import pg, { type PoolClient } from "pg";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   POSTGRES_MIGRATION_ADVISORY_LOCK_KEY,
   PostgresMigrationError,
@@ -26,7 +28,39 @@ interface QueryCall {
   values: readonly unknown[];
 }
 
+const TEST_DATABASE_URL = process.env.CAMPAIGN_OS_TEST_DATABASE_URL?.trim();
+const REQUIRE_POSTGRES_TESTS = process.env.CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS?.trim() === "1";
+
+if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
+  throw new Error(
+    "Migration SQL acceptance requires CAMPAIGN_OS_TEST_DATABASE_URL when required mode is enabled.",
+  );
+}
+
+const postgresMigrationSqlSuite = TEST_DATABASE_URL ? describe : describe.skip;
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
+
+const createPostgresPool = (databaseUrl: string) => {
+  const parsed = new URL(databaseUrl);
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const isLoopback = hostname === "localhost"
+    || hostname === "::1"
+    || hostname.startsWith("127.");
+
+  return new pg.Pool({
+    connectionString: databaseUrl,
+    max: 4,
+    ssl: isLoopback ? false : { rejectUnauthorized: true },
+  });
+};
+
+const isolatedPostgresDatabaseUrl = (baseUrl: string, databaseName: string) => {
+  const parsed = new URL(baseUrl);
+  parsed.pathname = `/${databaseName}`;
+  parsed.search = "";
+
+  return parsed.toString();
+};
 
 class TranscriptClient implements PostgresMigrationClient {
   readonly calls: QueryCall[] = [];
@@ -115,10 +149,12 @@ describe("PostgreSQL migration runtime", () => {
       "0001_campaign_runtime",
       "0002_admin_review_export",
       "0003_admin_review_rank_projection",
+      "0004_live_provider_task_verification",
     ]);
     const campaignRuntime = first[0];
     const adminReviewExport = first[1];
     const adminReviewRankProjection = first[2];
+    const liveProviderTaskVerification = first[3];
 
     for (const table of [
       "campaigns",
@@ -202,6 +238,98 @@ describe("PostgreSQL migration runtime", () => {
     );
     expect(adminReviewRankProjection?.checksum).toBe(
       "c9236184b25820b36540942de86c2342c9098002a023db8da1f706cf287dd7e8",
+    );
+
+    expect(liveProviderTaskVerification?.upSql).toContain(
+      "ADD COLUMN revision integer NOT NULL DEFAULT 1",
+    );
+    expect(liveProviderTaskVerification?.upSql).toContain(
+      "CREATE TABLE campaign_os.verification_attempts",
+    );
+    for (const contractFragment of [
+      "CREATE TABLE campaign_os.campaign_task_revisions",
+      "campaign_task_revisions_append_only",
+      "capture_campaign_task_revision",
+      "REFERENCES campaign_os.campaign_task_revisions",
+      "ON DELETE RESTRICT",
+      "idempotency_key",
+      "lease_token_hash",
+      "lease_expires_at",
+      "fence",
+      "attempt_count",
+      "max_attempts",
+      "dispatch_state",
+      "transport_started_at",
+      "transport_finished_at",
+      "response_digest",
+      "retry_posture",
+      "verification_attempt_id",
+      "campaign_os_verification_attempts_idempotency_key",
+      "campaign_os_verification_attempts_recovery_idx",
+      "campaign_os_verification_attempts_participant_journey_idx",
+      "campaign_os_verification_attempts_state_dispatch_result_check",
+      "campaign_os_campaign_task_evidence_live_provider_check",
+      "live_provider_executed = false",
+      "status = 'completed'",
+      "verification_attempt_id IS NOT NULL",
+      "attempt.evidence_ref = NEW.evidence_ref",
+      "attempt.completed_at = NEW.captured_at",
+      "completion.points_awarded = NEW.points_awarded",
+      "completion.completed_at = attempt.completed_at",
+      "completion.verification_attempt_id = attempt.id",
+      "campaign_task_completion_live_provider_validation",
+    ]) {
+      expect(liveProviderTaskVerification?.upSql).toContain(contractFragment);
+    }
+    expect(liveProviderTaskVerification?.upSql).not.toContain(
+      "REFERENCES campaign_os.campaign_tasks (campaign_id, id, revision)",
+    );
+    expect(normalizeSql(liveProviderTaskVerification?.upSql ?? "")).toContain(normalizeSql(`
+      BEFORE INSERT OR UPDATE OF
+        id,
+        campaign_id,
+        task_id,
+        wallet_address,
+        completion_id,
+        account_type,
+        wallet_source,
+        status,
+        evidence_source,
+        evidence_hash,
+        evidence_ref,
+        points_awarded,
+        captured_at,
+        live_provider_executed,
+        verification_attempt_id
+    `));
+    expect(liveProviderTaskVerification?.upSql).not.toMatch(
+      /\b(?:UPDATE|DELETE\s+FROM|TRUNCATE|DROP)\s+(?:TABLE\s+)?(?:IF\s+EXISTS\s+)?campaign_os\.(?:campaigns|campaign_tasks|campaign_participants|campaign_task_completions|campaign_task_evidence|campaign_referral_bindings)\b/i,
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "LIVE PROVIDER VERIFICATION DATA EXISTS",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "TASK REVISION LINEAGE EXISTS",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain("revision > 1");
+    expect(liveProviderTaskVerification?.downSql).toContain("HAVING COUNT(*) > 1");
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "DROP TABLE campaign_os.verification_attempts",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "DROP TABLE campaign_os.campaign_task_revisions",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "DROP TRIGGER IF EXISTS campaign_task_revision_capture",
+    );
+    expect(liveProviderTaskVerification?.downSql).toContain(
+      "DROP TRIGGER IF EXISTS campaign_task_completion_live_provider_validation",
+    );
+    expect(liveProviderTaskVerification?.downSql).toMatch(
+      /ADD CONSTRAINT campaign_task_evidence_live_provider_executed_check\s+CHECK \(live_provider_executed = false\)/,
+    );
+    expect(liveProviderTaskVerification?.checksum).toBe(
+      "093857e554262a6eb52a2ec2582cba50e1603f883919784013f3790c77c78c52",
     );
 
     const factTables = [
@@ -700,6 +828,511 @@ describe("PostgreSQL migration runtime", () => {
     expect(result.appliedMigrationIds).toEqual([definition.id]);
     expect(client.calls.some((call) => call.text === normalizeSql(definition.upSql))).toBe(false);
     expect(client.calls.some((call) => call.text.includes("INSERT INTO"))).toBe(false);
+  });
+});
+
+postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
+  const TASK_REVISION_DIGEST = "a".repeat(64);
+  const EVIDENCE_RULE_DIGEST = "b".repeat(64);
+  const LEASE_TOKEN_HASH = "c".repeat(64);
+  const REQUEST_DIGEST = "d".repeat(64);
+  const RESPONSE_DIGEST = "e".repeat(64);
+  const EVIDENCE_HASH = "f".repeat(64);
+  const FINALIZATION_DIGEST = "0".repeat(64);
+  const campaignId = "campaign-migration-0004";
+  const taskId = "task-migration-0004";
+  const walletAddress = "wallet-migration-0004";
+  const databaseName = `campaign_os_m243_${process.pid}_${randomUUID()
+    .replace(/-/g, "")
+    .slice(0, 8)}`;
+  let adminPool: pg.Pool | undefined;
+  let databasePool: pg.Pool | undefined;
+  let client: PoolClient | undefined;
+  let liveProviderMigration: PostgresMigrationDefinition | undefined;
+  let savepointSequence = 0;
+
+  const requiredClient = () => {
+    if (!client) {
+      throw new Error("Migration SQL acceptance client is unavailable.");
+    }
+
+    return client;
+  };
+
+  const requiredLiveProviderMigration = () => {
+    if (!liveProviderMigration) {
+      throw new Error("Migration 0004 was not loaded for SQL acceptance.");
+    }
+
+    return liveProviderMigration;
+  };
+
+  const expectSqlError = async (
+    text: string,
+    values: readonly unknown[],
+    code: string,
+  ) => {
+    const sqlClient = requiredClient();
+    const savepoint = `migration_sql_error_${++savepointSequence}`;
+    await sqlClient.query(`SAVEPOINT ${savepoint}`);
+    let caught: unknown;
+
+    try {
+      await sqlClient.query(text, [...values]);
+    } catch (error) {
+      caught = error;
+    }
+
+    await sqlClient.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    await sqlClient.query(`RELEASE SAVEPOINT ${savepoint}`);
+    expect(caught).toMatchObject({ code });
+  };
+
+  const seedCampaignTask = async () => {
+    const sqlClient = requiredClient();
+    await sqlClient.query(
+      `
+        INSERT INTO campaign_os.campaigns (
+          id, project_id, owner_address, status, default_locale, supported_locales,
+          wallet_policy, contract_mode, goal, duration, reward_description,
+          reward_disclaimer_hash, metadata_uri, metadata_hash, start_time, end_time,
+          publish_readiness, created_at, updated_at
+        )
+        VALUES (
+          $1, 'project-migration-0004', 'owner-migration-0004', 'draft', 'en-US',
+          '["en-US"]'::jsonb, 'ANY', 'OFF_CHAIN_MVP', 'Migration verification',
+          '30 days', 'Migration reward', NULL, NULL, NULL,
+          '2026-07-16T00:00:00.000Z', '2026-08-16T00:00:00.000Z', '{}'::jsonb,
+          '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z'
+        )
+      `,
+      [campaignId],
+    );
+    await sqlClient.query(
+      `
+        INSERT INTO campaign_os.campaign_tasks (
+          id, campaign_id, template_code, verification_type, wallet_compatibility,
+          points, required, evidence_rule, created_at, updated_at
+        )
+        VALUES (
+          $1, $2, 'migration-task', 'ON_CHAIN', 'ANY', 120, true,
+          '{"source":"AELFSCAN"}'::jsonb,
+          '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z'
+        )
+      `,
+      [taskId, campaignId],
+    );
+  };
+
+  const insertRunningAttempt = async (
+    id: string,
+    idempotencyKey = "1".repeat(64),
+  ) => {
+    await requiredClient().query(
+      `
+        INSERT INTO campaign_os.verification_attempts (
+          id, idempotency_key, campaign_id, task_id, task_revision, wallet_address,
+          account_type, wallet_source, binding_id, binding_revision, provider_ref,
+          verification_type, task_revision_digest, evidence_rule_digest, status,
+          dispatch_state, lease_token_hash, lease_expires_at, fence, attempt_count,
+          max_attempts, retry_posture, diagnostic_codes, trace_id, created_at, updated_at
+        )
+        VALUES (
+          $1, $2, $3, $4, 1, $5, 'EOA', 'PORTKEY_EOA_EXTENSION',
+          'binding-migration-0004', 1, 'provider-migration-0004', 'ON_CHAIN',
+          $6, $7, 'running', 'not_started', $8,
+          '2026-07-16T00:10:00.000Z', 1, 1, 3, 'none', '[]'::jsonb,
+          'trace-migration-0004', '2026-07-16T00:00:00.000Z',
+          '2026-07-16T00:00:00.000Z'
+        )
+      `,
+      [
+        id,
+        idempotencyKey,
+        campaignId,
+        taskId,
+        walletAddress,
+        TASK_REVISION_DIGEST,
+        EVIDENCE_RULE_DIGEST,
+        LEASE_TOKEN_HASH,
+      ],
+    );
+  };
+
+  const insertCompletedAttempt = async () => {
+    await requiredClient().query(
+      `
+        INSERT INTO campaign_os.verification_attempts (
+          id, idempotency_key, campaign_id, task_id, task_revision, wallet_address,
+          account_type, wallet_source, binding_id, binding_revision, provider_ref,
+          verification_type, task_revision_digest, evidence_rule_digest, request_digest,
+          status, dispatch_state, fence, attempt_count, max_attempts, response_digest,
+          provider_code, retry_posture, diagnostic_codes, trace_id, evidence_hash,
+          evidence_ref, evidence_source, finalization_digest, transport_started_at,
+          transport_finished_at, completed_at, created_at, updated_at
+        )
+        VALUES (
+          'attempt-live-evidence', $1, $2, $3, 1, $4, 'EOA',
+          'PORTKEY_EOA_EXTENSION', 'binding-migration-0004', 1,
+          'provider-migration-0004', 'ON_CHAIN', $5, $6, $7, 'completed',
+          'result_observed', 1, 1, 3, $8, 'MATCH_CONFIRMED', 'none',
+          '["PROVIDER_MATCH_CONFIRMED"]'::jsonb, 'trace-migration-live-evidence',
+          $9, 'provider-evidence:migration-0004', 'AELFSCAN', $10,
+          '2026-07-16T00:00:01.000Z', '2026-07-16T00:00:02.000Z',
+          '2026-07-16T00:00:02.000Z', '2026-07-16T00:00:00.000Z',
+          '2026-07-16T00:00:02.000Z'
+        )
+      `,
+      [
+        "2".repeat(64),
+        campaignId,
+        taskId,
+        walletAddress,
+        TASK_REVISION_DIGEST,
+        EVIDENCE_RULE_DIGEST,
+        REQUEST_DIGEST,
+        RESPONSE_DIGEST,
+        EVIDENCE_HASH,
+        FINALIZATION_DIGEST,
+      ],
+    );
+  };
+
+  beforeAll(async () => {
+    adminPool = createPostgresPool(TEST_DATABASE_URL!);
+    await adminPool.query(`CREATE DATABASE "${databaseName}"`);
+    databasePool = createPostgresPool(
+      isolatedPostgresDatabaseUrl(TEST_DATABASE_URL!, databaseName),
+    );
+    client = await databasePool.connect();
+    const migrations = await loadPostgresMigrations();
+    liveProviderMigration = migrations.find(
+      ({ id }) => id === "0004_live_provider_task_verification",
+    );
+
+    for (const definition of migrations) {
+      await client.query(definition.upSql);
+    }
+  }, 60_000);
+
+  beforeEach(async () => {
+    savepointSequence = 0;
+    await requiredClient().query("BEGIN");
+  });
+
+  afterEach(async () => {
+    await requiredClient().query("ROLLBACK");
+  });
+
+  afterAll(async () => {
+    client?.release();
+    client = undefined;
+    await databasePool?.end();
+    databasePool = undefined;
+    if (adminPool) {
+      await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      await adminPool.end();
+      adminPool = undefined;
+    }
+  }, 60_000);
+
+  it("preserves revision-one attempt lineage when a Task advances revision or is deleted", async () => {
+    const sqlClient = requiredClient();
+    await seedCampaignTask();
+    await insertRunningAttempt("attempt-revision-lineage");
+
+    await expectSqlError(
+      `
+        UPDATE campaign_os.campaign_tasks
+        SET points = 121, updated_at = '2026-07-16T00:00:30.000Z'
+        WHERE campaign_id = $1 AND id = $2
+      `,
+      [campaignId, taskId],
+      "23514",
+    );
+    await expectSqlError(
+      `
+        UPDATE campaign_os.campaign_tasks
+        SET revision = 3, points = 180, updated_at = '2026-07-16T00:01:00.000Z'
+        WHERE campaign_id = $1 AND id = $2
+      `,
+      [campaignId, taskId],
+      "23514",
+    );
+    await expect(sqlClient.query(
+      `
+        UPDATE campaign_os.campaign_tasks
+        SET revision = 2, points = 180, updated_at = '2026-07-16T00:01:00.000Z'
+        WHERE campaign_id = $1 AND id = $2
+      `,
+      [campaignId, taskId],
+    )).resolves.toMatchObject({ rowCount: 1 });
+
+    const snapshots = await sqlClient.query(
+      `
+        SELECT revision, points
+        FROM campaign_os.campaign_task_revisions
+        WHERE campaign_id = $1 AND task_id = $2
+        ORDER BY revision
+      `,
+      [campaignId, taskId],
+    );
+    expect(snapshots.rows).toEqual([
+      { points: 120, revision: 1 },
+      { points: 180, revision: 2 },
+    ]);
+    await expectSqlError(
+      `UPDATE campaign_os.campaign_task_revisions SET points = 999
+       WHERE campaign_id = $1 AND task_id = $2 AND revision = 1`,
+      [campaignId, taskId],
+      "55000",
+    );
+
+    await expect(sqlClient.query(
+      "DELETE FROM campaign_os.campaign_tasks WHERE campaign_id = $1 AND id = $2",
+      [campaignId, taskId],
+    )).resolves.toMatchObject({ rowCount: 1 });
+    const lineage = await sqlClient.query(
+      `
+        SELECT
+          (SELECT COUNT(*)::integer FROM campaign_os.verification_attempts) AS attempts,
+          (SELECT COUNT(*)::integer FROM campaign_os.campaign_task_revisions) AS revisions
+      `,
+    );
+    expect(lineage.rows[0]).toEqual({ attempts: 1, revisions: 2 });
+  });
+
+  it("rejects unreachable state, dispatch, lease, and result combinations", async () => {
+    const sqlClient = requiredClient();
+    await seedCampaignTask();
+    await insertRunningAttempt("attempt-impossible-result");
+
+    await expectSqlError(
+      `
+        UPDATE campaign_os.verification_attempts
+        SET dispatch_state = 'result_observed', request_digest = $2,
+          response_digest = $3, provider_code = 'MATCH_CONFIRMED',
+          finalization_digest = $4,
+          transport_started_at = '2026-07-16T00:00:01.000Z',
+          transport_finished_at = '2026-07-16T00:00:02.000Z',
+          completed_at = '2026-07-16T00:00:02.000Z',
+          updated_at = '2026-07-16T00:00:02.000Z'
+        WHERE id = $1
+      `,
+      ["attempt-impossible-result", REQUEST_DIGEST, RESPONSE_DIGEST, FINALIZATION_DIGEST],
+      "23514",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.verification_attempts SET finalization_digest = $2 WHERE id = $1",
+      ["attempt-impossible-result", FINALIZATION_DIGEST],
+      "23514",
+    );
+
+    await sqlClient.query(
+      `
+        UPDATE campaign_os.verification_attempts
+        SET dispatch_state = 'started', request_digest = $2,
+          transport_started_at = '2026-07-16T00:00:01.000Z',
+          updated_at = '2026-07-16T00:00:01.000Z'
+        WHERE id = $1
+      `,
+      ["attempt-impossible-result", REQUEST_DIGEST],
+    );
+    await expect(sqlClient.query(
+      `
+        UPDATE campaign_os.verification_attempts
+        SET status = 'manual_review', lease_token_hash = NULL, lease_expires_at = NULL,
+          retry_posture = 'manual_review',
+          diagnostic_codes = '["TASK_VERIFICATION_OUTCOME_UNKNOWN"]'::jsonb,
+          updated_at = '2026-07-16T00:00:02.000Z'
+        WHERE id = $1
+      `,
+      ["attempt-impossible-result"],
+    )).resolves.toMatchObject({ rowCount: 1 });
+
+    await insertRunningAttempt("attempt-result-without-finalization", "3".repeat(64));
+    await expectSqlError(
+      `
+        UPDATE campaign_os.verification_attempts
+        SET status = 'failed', dispatch_state = 'result_observed',
+          lease_token_hash = NULL, lease_expires_at = NULL, request_digest = $2,
+          response_digest = $3, provider_code = 'NO_MATCH',
+          transport_started_at = '2026-07-16T00:00:01.000Z',
+          transport_finished_at = '2026-07-16T00:00:02.000Z',
+          completed_at = '2026-07-16T00:00:02.000Z',
+          updated_at = '2026-07-16T00:00:02.000Z'
+        WHERE id = $1
+      `,
+      ["attempt-result-without-finalization", REQUEST_DIGEST, RESPONSE_DIGEST],
+      "23514",
+    );
+  });
+
+  it("revalidates live Evidence when ref, points, or completion linkage changes", async () => {
+    const sqlClient = requiredClient();
+    await seedCampaignTask();
+    await insertCompletedAttempt();
+    await sqlClient.query(
+      `
+        INSERT INTO campaign_os.campaign_task_completions (
+          id, campaign_id, task_id, wallet_address, account_type, wallet_source,
+          status, evidence_source, evidence_id, evidence_hash, points_awarded,
+          completed_at, created_at, updated_at, verification_attempt_id
+        )
+        VALUES (
+          'completion-live-evidence', $1, $2, $3, 'EOA', 'PORTKEY_EOA_EXTENSION',
+          'completed', 'AELFSCAN', 'evidence-live-evidence', $4, 120,
+          '2026-07-16T00:00:02.000Z', '2026-07-16T00:00:02.000Z',
+          '2026-07-16T00:00:02.000Z', 'attempt-live-evidence'
+        )
+      `,
+      [campaignId, taskId, walletAddress, EVIDENCE_HASH],
+    );
+    await sqlClient.query(
+      `
+        INSERT INTO campaign_os.campaign_task_evidence (
+          id, campaign_id, task_id, wallet_address, completion_id, account_type,
+          wallet_source, status, evidence_source, evidence_hash, evidence_ref,
+          diagnostic_codes, points_awarded, captured_at, live_contract_executed,
+          live_provider_executed, live_reward_executed, live_storage_executed,
+          created_at, updated_at, verification_attempt_id
+        )
+        VALUES (
+          'evidence-live-evidence', $1, $2, $3, 'completion-live-evidence', 'EOA',
+          'PORTKEY_EOA_EXTENSION', 'completed', 'AELFSCAN', $4,
+          'provider-evidence:migration-0004', '["PROVIDER_MATCH_CONFIRMED"]'::jsonb,
+          120, '2026-07-16T00:00:02.000Z', false, true, false, false,
+          '2026-07-16T00:00:02.000Z', '2026-07-16T00:00:02.000Z',
+          'attempt-live-evidence'
+        )
+      `,
+      [campaignId, taskId, walletAddress, EVIDENCE_HASH],
+    );
+
+    await expectSqlError(
+      "UPDATE campaign_os.campaign_task_evidence SET evidence_ref = $2 WHERE id = $1",
+      ["evidence-live-evidence", "provider-evidence:mismatch"],
+      "23514",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.campaign_task_evidence SET points_awarded = 121 WHERE id = $1",
+      ["evidence-live-evidence"],
+      "23514",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.campaign_task_evidence SET completion_id = $2 WHERE id = $1",
+      ["evidence-live-evidence", "completion-mismatch"],
+      "23514",
+    );
+    await expectSqlError(
+      `UPDATE campaign_os.campaign_task_evidence
+       SET captured_at = '2026-07-16T00:00:03.000Z' WHERE id = $1`,
+      ["evidence-live-evidence"],
+      "23514",
+    );
+    await expectSqlError(
+      `UPDATE campaign_os.campaign_task_completions
+       SET completed_at = '2026-07-16T00:00:03.000Z' WHERE id = $1`,
+      ["completion-live-evidence"],
+      "23514",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.campaign_task_completions SET points_awarded = 121 WHERE id = $1",
+      ["completion-live-evidence"],
+      "23514",
+    );
+
+    const evidence = await sqlClient.query(
+      `SELECT evidence_ref, points_awarded, completion_id
+       FROM campaign_os.campaign_task_evidence WHERE id = $1`,
+      ["evidence-live-evidence"],
+    );
+    expect(evidence.rows[0]).toEqual({
+      completion_id: "completion-live-evidence",
+      evidence_ref: "provider-evidence:migration-0004",
+      points_awarded: 120,
+    });
+  });
+
+  it("refuses down with attempt data", async () => {
+    const sqlClient = requiredClient();
+    const migration0004 = requiredLiveProviderMigration();
+    await seedCampaignTask();
+    await insertRunningAttempt("attempt-down-guard");
+
+    await expectSqlError(migration0004.downSql, [], "55000");
+    await expect(sqlClient.query(
+      "SELECT COUNT(*)::integer AS count FROM campaign_os.verification_attempts",
+    )).resolves.toMatchObject({ rows: [{ count: 1 }] });
+  });
+
+  it("refuses down with advanced or detached multi-version Task lineage", async () => {
+    const sqlClient = requiredClient();
+    const migration0004 = requiredLiveProviderMigration();
+    await seedCampaignTask();
+    await sqlClient.query(
+      `
+        UPDATE campaign_os.campaign_tasks
+        SET revision = 2, points = 180, updated_at = '2026-07-16T00:01:00.000Z'
+        WHERE campaign_id = $1 AND id = $2
+      `,
+      [campaignId, taskId],
+    );
+
+    await expectSqlError(migration0004.downSql, [], "55000");
+    await sqlClient.query(
+      "DELETE FROM campaign_os.campaign_tasks WHERE campaign_id = $1 AND id = $2",
+      [campaignId, taskId],
+    );
+    await expectSqlError(migration0004.downSql, [], "55000");
+    await expect(sqlClient.query(
+      "SELECT COUNT(*)::integer AS count FROM campaign_os.campaign_task_revisions",
+    )).resolves.toMatchObject({ rows: [{ count: 2 }] });
+  });
+
+  it("backfills historical Task revision one without changing canonical row bytes", async () => {
+    const sqlClient = requiredClient();
+    const migration0004 = requiredLiveProviderMigration();
+    const historicalTaskId = "t".repeat(200);
+    await sqlClient.query(migration0004.downSql);
+    await seedCampaignTask();
+    await sqlClient.query(
+      `UPDATE campaign_os.campaign_tasks
+       SET id = $1, template_code = ' padded-historical-template '
+       WHERE id = $2`,
+      [historicalTaskId, taskId],
+    );
+    const before = await sqlClient.query(
+      "SELECT to_jsonb(task_row) AS row FROM campaign_os.campaign_tasks AS task_row",
+    );
+
+    await sqlClient.query(migration0004.upSql);
+    const afterUp = await sqlClient.query(
+      `SELECT to_jsonb(task_row) - 'revision' AS row, revision
+       FROM campaign_os.campaign_tasks AS task_row`,
+    );
+    expect(afterUp.rows[0]).toEqual({ revision: 1, row: before.rows[0]?.row });
+    await expect(sqlClient.query(
+      `SELECT revision, points FROM campaign_os.campaign_task_revisions
+       WHERE campaign_id = $1 AND task_id = $2`,
+      [campaignId, historicalTaskId],
+    )).resolves.toMatchObject({ rows: [{ points: 120, revision: 1 }] });
+
+    await sqlClient.query(migration0004.downSql);
+    const afterDown = await sqlClient.query(
+      "SELECT to_jsonb(task_row) AS row FROM campaign_os.campaign_tasks AS task_row",
+    );
+    expect(afterDown.rows[0]?.row).toEqual(before.rows[0]?.row);
+    const restoredConstraint = await sqlClient.query(
+      `
+        SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conname = 'campaign_task_evidence_live_provider_executed_check'
+      `,
+    );
+    expect(normalizeSql(restoredConstraint.rows[0]?.definition ?? "")).toContain(
+      "CHECK ((live_provider_executed = false))",
+    );
   });
 });
 

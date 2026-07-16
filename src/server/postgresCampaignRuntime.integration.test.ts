@@ -978,6 +978,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         "0001_campaign_runtime",
         "0002_admin_review_export",
         "0003_admin_review_rank_projection",
+        "0004_live_provider_task_verification",
       ]);
       const migration = await runPostgresMigrations({
         approved: true,
@@ -992,6 +993,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         "0001_campaign_runtime",
         "0002_admin_review_export",
         "0003_admin_review_rank_projection",
+        "0004_live_provider_task_verification",
       ]);
       expect(migration.pendingMigrationIds).toEqual([]);
     } finally {
