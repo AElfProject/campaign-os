@@ -220,10 +220,12 @@ const evidenceRow = (overrides: Record<string, unknown> = {}): Record<string, un
   evidence_ref: "aelfscan://transaction/admin-0001",
   evidence_source: "AELFSCAN",
   id: "evidence-admin-0001",
+  live_provider_executed: false,
   points_awarded: 120,
   status: "completed",
   task_id: "task-admin-0001",
   updated_at: timestamp("2026-07-15T00:00:06.000Z"),
+  verification_attempt_id: null,
   wallet_address: "2F4ParticipantWallet",
   ...overrides,
 });
@@ -934,6 +936,7 @@ describe("PostgreSQL Admin review snapshots", () => {
         evidenceRef: "aelfscan://transaction/admin-0001",
         evidenceSource: "AELFSCAN",
         id: "evidence-admin-0001",
+        liveProviderExecuted: false,
         pointsAwarded: 120,
         status: "completed",
         taskId: "task-admin-0001",
@@ -998,6 +1001,8 @@ describe("PostgreSQL Admin review snapshots", () => {
       "campaign-admin-0001",
       "2F4ParticipantWallet",
     ]);
+    expect(pool.calls[6]?.text).toContain("live_provider_executed");
+    expect(pool.calls[6]?.text).toContain("verification_attempt_id");
     expect(pool.calls[4]?.text).toContain(
       "WHERE ranked_participant.campaign_id = $1 AND ranked_participant.id = $2",
     );
@@ -1007,6 +1012,48 @@ describe("PostgreSQL Admin review snapshots", () => {
     expect(pool.calls.filter(({ text }) => text.includes("ROW_NUMBER() OVER"))).toHaveLength(1);
     expect(pool.calls.every(({ text }) => !/\b(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/i.test(text))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
+  });
+
+  it("projects live provider and verification attempt provenance from one bounded Evidence query", async () => {
+    const pool = new TranscriptPool((call) => {
+      if (call.text.includes("FROM campaign_os.schema_migrations")) {
+        return { rows: [readinessRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaigns")) {
+        return { rows: [campaignRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_tasks")) {
+        return { rows: [taskRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_participants")) {
+        return { rows: [rankedParticipantRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_task_completions")) {
+        return { rows: [completionRow()] };
+      }
+      if (call.text.includes("FROM campaign_os.campaign_task_evidence")) {
+        return { rows: [evidenceRow({
+          live_provider_executed: true,
+          verification_attempt_id: "attempt-admin-live-0001",
+        })] };
+      }
+      return { rows: [] };
+    });
+    const store = createStore(pool);
+    const rows = await store.readSnapshot({
+      campaignId: "campaign-admin-0001",
+      participantId: "participant-admin-0001",
+    }, { traceId: "trace-snapshot-live-provenance" });
+
+    expect(rows.evidence).toEqual([
+      expect.objectContaining({
+        id: "evidence-admin-0001",
+        liveProviderExecuted: true,
+        verificationAttemptId: "attempt-admin-live-0001",
+      }),
+    ]);
+    expect(pool.calls.filter(({ text }) =>
+      text.includes("FROM campaign_os.campaign_task_evidence"))).toHaveLength(1);
   });
 
   it("reads more than one page of ranked Participants once and derives both projections", async () => {

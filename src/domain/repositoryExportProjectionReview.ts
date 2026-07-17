@@ -65,7 +65,7 @@ export interface RepositoryExportProjectionTaskEvidence {
   evidenceId?: string;
   evidenceRef?: string;
   liveContractExecuted: false;
-  liveProviderExecuted: false;
+  liveProviderExecuted: boolean;
   liveRewardExecuted: false;
   liveStorageExecuted: false;
   status: CampaignDbExportTaskRecord["status"];

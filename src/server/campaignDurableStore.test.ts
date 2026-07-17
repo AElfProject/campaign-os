@@ -465,6 +465,23 @@ describe("Campaign durable store", () => {
     });
   });
 
+  it("rejects live provider provenance without a durable attempt store", async () => {
+    const store = createCampaignDurableStore();
+    const record = taskEvidence(
+      "campaign-db-task-evidence-live-provider",
+      "campaign-db-draft-live-provider",
+      "campaign-db-task-live-provider",
+      "2F4WalletLiveProvider",
+    );
+
+    await expect(store.upsertTaskEvidence({
+      ...record,
+      completionId: "campaign-db-completion-live-provider",
+      liveProviderExecuted: true,
+      verificationAttemptId: "verification-attempt-live-provider",
+    })).rejects.toThrow("Task evidence record is invalid");
+  });
+
   it("loads old campaign-only documents with empty task records", async () => {
     await withTempStorePath(async (filePath) => {
       await writeFile(

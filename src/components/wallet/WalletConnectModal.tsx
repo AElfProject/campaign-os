@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { X } from "lucide-react";
 import type { WalletSessionApiBridgeState } from "../../api/walletSessionApiBridge";
 import {
@@ -36,6 +36,20 @@ const stageReviewIdentityOptions = [
   { label: "Participant B", value: "participant-b" },
   { label: "Admin", value: "admin" },
 ] as const;
+
+const FOCUSABLE_DIALOG_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+const focusableDialogElements = (dialog: HTMLElement): HTMLElement[] =>
+  Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_DIALOG_SELECTOR)).filter(
+    (element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true",
+  );
 
 export type StageReviewIdentity = (typeof stageReviewIdentityOptions)[number]["value"];
 
@@ -703,6 +717,8 @@ export const WalletConnectModal = ({
   stageReviewMode = false,
   walletSessionBridgeState,
 }: WalletConnectModalProps) => {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const copy = modalCopy[locale];
   const groupedOptions = groupWalletOptions(options);
   const groupedAdapters = groupAdapterEntries(adapterReadiness.entries);
@@ -715,9 +731,50 @@ export const WalletConnectModal = ({
   );
 
   useEffect(() => {
+    const previouslyFocusedElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    closeButtonRef.current?.focus();
+
+    return () => {
+      if (previouslyFocusedElement?.isConnected) {
+        previouslyFocusedElement.focus();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         onClose();
+        return;
+      }
+
+      if (event.key !== "Tab" || !dialogRef.current) {
+        return;
+      }
+
+      const focusableElements = focusableDialogElements(dialogRef.current);
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (!firstElement || !lastElement) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const activeElement = document.activeElement;
+      const focusIsOutsideDialog = !dialogRef.current.contains(activeElement);
+
+      if (event.shiftKey && (activeElement === firstElement || focusIsOutsideDialog)) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && (activeElement === lastElement || focusIsOutsideDialog)) {
+        event.preventDefault();
+        firstElement.focus();
       }
     };
 
@@ -732,8 +789,10 @@ export const WalletConnectModal = ({
         aria-labelledby="wallet-connect-modal-title"
         aria-modal="true"
         onClick={(event) => event.stopPropagation()}
+        ref={dialogRef}
         role="dialog"
         style={dialogStyle}
+        tabIndex={-1}
       >
         <div style={rowStyle}>
           <div>
@@ -750,6 +809,7 @@ export const WalletConnectModal = ({
           <button
             aria-label={copy.close}
             onClick={onClose}
+            ref={closeButtonRef}
             style={closeButtonStyle}
             title={copy.close}
             type="button"

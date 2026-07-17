@@ -4,6 +4,9 @@ import {
 } from "./providerHttpRuntimeRedaction";
 import type {
   CreateProviderHttpRuntimeSummaryOptions,
+  ProviderHttpBindingCompatibilityInput,
+  ProviderHttpBindingCompatibilityDiagnosticCode,
+  ProviderHttpBindingCompatibilitySummary,
   ProviderEndpointRolloutDiagnostic,
   ProviderEndpointRolloutSummary,
   ProviderEndpointRolloutStatus,
@@ -24,6 +27,43 @@ import type {
 } from "./providerHttpRuntimeTypes";
 
 const RUNTIME_ID = "campaign-os-provider-http-client-runtime" as const;
+
+interface ProviderHttpSupportedMappingProfile {
+  category: ProviderHttpEndpointCategory;
+  responseMappingId: string;
+  verificationType: ProviderHttpVerificationType;
+}
+
+const supportedMappingProfileByRequestId = new Map<string, ProviderHttpSupportedMappingProfile>([
+  [
+    "provider-http-request-map:on-chain-indexer-v1",
+    {
+      category: "indexer",
+      responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+      verificationType: "ON_CHAIN",
+    },
+  ],
+  [
+    "provider-http-request-map:dapp-api-status-v1",
+    {
+      category: "dapp_api",
+      responseMappingId: "provider-http-response-map:dapp-api-status-v1",
+      verificationType: "DAPP_API",
+    },
+  ],
+]);
+const supportedResponseMappingIds = new Set(
+  [...supportedMappingProfileByRequestId.values()].map(({ responseMappingId }) => responseMappingId),
+);
+
+const compatibilityDiagnosticByRolloutStatus = new Map<
+  Exclude<ProviderEndpointRolloutStatus, "enabled">,
+  ProviderHttpBindingCompatibilityDiagnosticCode
+>([
+  ["blocked", "PROVIDER_HTTP_BINDING_ENDPOINT_BLOCKED"],
+  ["deferred", "PROVIDER_HTTP_BINDING_ENDPOINT_DEFERRED"],
+  ["disabled", "PROVIDER_HTTP_BINDING_ENDPOINT_DISABLED"],
+]);
 
 export const createProviderHttpDownstreamLiveFlags = (): ProviderHttpDownstreamLiveFlags => ({
   alternateQueuePublishing: false,
@@ -130,7 +170,7 @@ export const providerHttpRuntimeProductionPreconditions: ProviderHttpProductionP
   ),
 ];
 
-export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
+export const providerHttpEndpointRegistry: readonly ProviderHttpEndpointEntry[] = Object.freeze([
   endpoint({
     category: "indexer",
     credentialRef: "credential-ref:provider-http-indexer",
@@ -255,7 +295,159 @@ export const providerHttpEndpointRegistry: ProviderHttpEndpointEntry[] = [
     timeoutPolicyRef: "timeout-policy:provider-http-ai-2500ms",
     urlTemplateRef: "provider.endpoint.ai_provider.verification_status.url",
   }),
-];
+]);
+
+export interface ProviderHttpMappingCompatibilityRegistration {
+  readonly endpointId: string;
+  readonly requestMappingId: string;
+  readonly responseMappingId: string;
+  readonly verificationType: ProviderHttpVerificationType;
+}
+
+export const registerProviderHttpMappingCompatibilityProfiles = (
+  registrations: readonly ProviderHttpMappingCompatibilityRegistration[],
+): boolean => {
+  const stagedProfiles = new Map(supportedMappingProfileByRequestId);
+
+  for (const registration of registrations) {
+    const endpointEntry = providerHttpEndpointRegistry.find(
+      ({ endpointId }) => endpointId === registration.endpointId,
+    );
+    if (
+      !endpointEntry
+      || endpointEntry.rolloutStatus !== "enabled"
+      || endpointEntry.requestMappingId !== registration.requestMappingId
+      || endpointEntry.responseMappingId !== registration.responseMappingId
+      || !endpointEntry.supportedVerificationTypes.includes(registration.verificationType)
+    ) {
+      return false;
+    }
+    const profile: ProviderHttpSupportedMappingProfile = {
+      category: endpointEntry.category,
+      responseMappingId: registration.responseMappingId,
+      verificationType: registration.verificationType,
+    };
+    const existing = stagedProfiles.get(registration.requestMappingId);
+    if (
+      existing
+      && (
+        existing.category !== profile.category
+        || existing.responseMappingId !== profile.responseMappingId
+        || existing.verificationType !== profile.verificationType
+      )
+    ) {
+      return false;
+    }
+    stagedProfiles.set(registration.requestMappingId, profile);
+  }
+
+  supportedMappingProfileByRequestId.clear();
+  supportedResponseMappingIds.clear();
+  for (const [requestMappingId, profile] of stagedProfiles) {
+    supportedMappingProfileByRequestId.set(requestMappingId, profile);
+    supportedResponseMappingIds.add(profile.responseMappingId);
+  }
+  return true;
+};
+
+export const providerHttpVerificationBindingExamples = {
+  "aefinder-aelfscan": {
+    binding: {
+      id: "aefinder-aelfscan-on-chain",
+      verificationType: "ON_CHAIN",
+    },
+    enabled: false,
+    endpoint: {
+      endpointId: "aefinder-aelfscan-indexer-query",
+      providerFamily: "aefinder",
+      providerGroupId: "aefinder-aelfscan-indexers",
+      requestMappingId: "provider-http-request-map:on-chain-indexer-v1",
+      responseMappingId: "provider-http-response-map:on-chain-indexer-v1",
+    },
+  },
+  ebridge: {
+    binding: {
+      id: "ebridge-dapp-api",
+      verificationType: "DAPP_API",
+    },
+    enabled: false,
+    endpoint: {
+      endpointId: "dapp-api-verification-status",
+      providerFamily: "ebridge",
+      providerGroupId: "dapp-api-adapters",
+      requestMappingId: "provider-http-request-map:dapp-api-status-v1",
+      responseMappingId: "provider-http-response-map:dapp-api-status-v1",
+    },
+  },
+  awaken: {
+    binding: {
+      id: "awaken-dapp-api",
+      verificationType: "DAPP_API",
+    },
+    enabled: false,
+    endpoint: {
+      endpointId: "awaken-dapp-api-verification-status",
+      providerFamily: "awaken",
+      providerGroupId: "awaken-dapp-api-adapters",
+      requestMappingId: "provider-http-request-map:awaken-status-v1",
+      responseMappingId: "provider-http-response-map:awaken-status-v1",
+    },
+  },
+  "forest-schrodinger": {
+    binding: {
+      id: "forest-schrodinger-nft-dapp-api",
+      verificationType: "DAPP_API",
+    },
+    enabled: false,
+    endpoint: {
+      endpointId: "forest-schrodinger-dapp-api-verification-status",
+      providerFamily: "forest-schrodinger",
+      providerGroupId: "forest-schrodinger-dapp-api-adapters",
+      requestMappingId: "provider-http-request-map:forest-schrodinger-status-v1",
+      responseMappingId: "provider-http-response-map:forest-schrodinger-status-v1",
+    },
+  },
+  tmrwdao: {
+    binding: {
+      id: "tmrwdao-dapp-api",
+      verificationType: "DAPP_API",
+    },
+    enabled: false,
+    endpoint: {
+      endpointId: "tmrwdao-dapp-api-verification-status",
+      providerFamily: "tmrwdao",
+      providerGroupId: "tmrwdao-dapp-api-adapters",
+      requestMappingId: "provider-http-request-map:tmrwdao-status-v1",
+      responseMappingId: "provider-http-response-map:tmrwdao-status-v1",
+    },
+  },
+  daipp: {
+    binding: {
+      id: "daipp-dapp-api",
+      verificationType: "DAPP_API",
+    },
+    enabled: false,
+    endpoint: {
+      endpointId: "daipp-dapp-api-verification-status",
+      providerFamily: "daipp",
+      providerGroupId: "daipp-dapp-api-adapters",
+      requestMappingId: "provider-http-request-map:daipp-status-v1",
+      responseMappingId: "provider-http-response-map:daipp-status-v1",
+    },
+  },
+} as const satisfies Readonly<Record<string, ProviderHttpBindingCompatibilityInput>>;
+
+interface IndexedProviderHttpEndpoint {
+  entry: ProviderHttpEndpointEntry;
+  verificationTypes: ReadonlySet<ProviderHttpVerificationType>;
+}
+
+interface ProviderHttpEndpointIndex {
+  duplicateEndpointIds: ReadonlySet<string>;
+  endpointsById: ReadonlyMap<string, IndexedProviderHttpEndpoint>;
+}
+
+let defaultProviderHttpEndpointIndex: ProviderHttpEndpointIndex | undefined;
 
 export const listProviderHttpEndpointEntries = (): ProviderHttpEndpointEntry[] =>
   providerHttpEndpointRegistry.map(cloneEndpointEntry);
@@ -264,7 +456,7 @@ export const findProviderHttpEndpointById = (
   endpointId: string,
   registry: readonly ProviderHttpEndpointEntry[] = providerHttpEndpointRegistry,
 ): ProviderHttpEndpointEntry | undefined =>
-  registry.find((entry) => entry.endpointId === endpointId);
+  getProviderHttpEndpointIndex(registry).endpointsById.get(endpointId)?.entry;
 
 export const findProviderHttpEndpointForVerification = (
   input: {
@@ -274,9 +466,12 @@ export const findProviderHttpEndpointForVerification = (
   },
   registry: readonly ProviderHttpEndpointEntry[] = providerHttpEndpointRegistry,
 ): ProviderHttpEndpointEntry | undefined => {
-  const endpoint = findProviderHttpEndpointById(input.endpointId, registry);
+  const indexedEndpoint = getProviderHttpEndpointIndex(registry).endpointsById.get(
+    input.endpointId,
+  );
+  const endpoint = indexedEndpoint?.entry;
 
-  if (!endpoint) {
+  if (!endpoint || !indexedEndpoint) {
     return undefined;
   }
 
@@ -288,10 +483,214 @@ export const findProviderHttpEndpointForVerification = (
     return undefined;
   }
 
-  return endpoint.supportedVerificationTypes.includes(input.verificationType)
+  return indexedEndpoint.verificationTypes.has(input.verificationType)
     ? endpoint
     : undefined;
 };
+
+export const validateProviderHttpVerificationBindingCompatibility = (
+  input: ProviderHttpBindingCompatibilityInput,
+  registry: readonly ProviderHttpEndpointEntry[] = providerHttpEndpointRegistry,
+): ProviderHttpBindingCompatibilitySummary => {
+  const safeInput = input && typeof input === "object" ? input : undefined;
+  const summaryIds = createCompatibilitySummaryIds(safeInput);
+  const diagnosticCodes = new Set<ProviderHttpBindingCompatibilityDiagnosticCode>();
+
+  if (!safeInput || !hasSafeProviderHttpBindingCompatibilityInputShape(safeInput)) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_INVALID_SHAPE");
+    return compatibilitySummary(summaryIds, "incompatible", diagnosticCodes);
+  }
+
+  if (!safeInput.enabled) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_DISABLED");
+    return compatibilitySummary(summaryIds, "disabled", diagnosticCodes);
+  }
+
+  const binding = safeInput.binding;
+  const endpointBinding = safeInput.endpoint;
+  const endpointIndex = getProviderHttpEndpointIndex(registry);
+  const indexedEndpoint = endpointIndex.endpointsById.get(endpointBinding.endpointId);
+
+  if (!indexedEndpoint) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_ENDPOINT_NOT_FOUND");
+    return compatibilitySummary(summaryIds, "incompatible", diagnosticCodes);
+  }
+
+  const endpoint = indexedEndpoint.entry;
+
+  if (endpointIndex.duplicateEndpointIds.has(endpointBinding.endpointId)) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_ENDPOINT_DUPLICATED");
+  }
+
+  if (endpoint.rolloutStatus !== "enabled") {
+    diagnosticCodes.add(compatibilityDiagnosticByRolloutStatus.get(endpoint.rolloutStatus)!);
+  }
+
+  if (endpoint.providerFamily !== endpointBinding.providerFamily) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_FAMILY_MISMATCH");
+  }
+
+  if (endpoint.providerGroupId !== endpointBinding.providerGroupId) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_GROUP_MISMATCH");
+  }
+
+  if (!indexedEndpoint.verificationTypes.has(binding.verificationType)) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_VERIFICATION_TYPE_MISMATCH");
+  }
+
+  if (endpoint.requestMappingId !== endpointBinding.requestMappingId) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_REQUEST_MAPPING_MISMATCH");
+  }
+
+  if (endpoint.responseMappingId !== endpointBinding.responseMappingId) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_MISMATCH");
+  }
+
+  const mappingProfile = supportedMappingProfileByRequestId.get(endpointBinding.requestMappingId);
+  const responseMappingSupported = supportedResponseMappingIds.has(
+    endpointBinding.responseMappingId,
+  );
+
+  if (!mappingProfile) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_REQUEST_MAPPING_UNSUPPORTED");
+  }
+
+  if (!responseMappingSupported) {
+    diagnosticCodes.add("PROVIDER_HTTP_BINDING_RESPONSE_MAPPING_UNSUPPORTED");
+  }
+
+  if (mappingProfile) {
+    if (
+      responseMappingSupported
+      && mappingProfile.responseMappingId !== endpointBinding.responseMappingId
+    ) {
+      diagnosticCodes.add("PROVIDER_HTTP_BINDING_MAPPING_PAIR_MISMATCH");
+    }
+
+    if (mappingProfile.verificationType !== binding.verificationType) {
+      diagnosticCodes.add("PROVIDER_HTTP_BINDING_TYPE_MAPPING_MISMATCH");
+    }
+
+    if (mappingProfile.category !== endpoint.category) {
+      diagnosticCodes.add("PROVIDER_HTTP_BINDING_ENDPOINT_CATEGORY_MISMATCH");
+    }
+  }
+
+  return compatibilitySummary(
+    summaryIds,
+    diagnosticCodes.size === 0 ? "compatible" : "incompatible",
+    diagnosticCodes,
+  );
+};
+
+type ProviderHttpCompatibilitySummaryIds = Omit<
+  ProviderHttpBindingCompatibilitySummary,
+  "diagnosticCodes" | "diagnosticCount" | "status"
+>;
+
+function getProviderHttpEndpointIndex(
+  registry: readonly ProviderHttpEndpointEntry[],
+): ProviderHttpEndpointIndex {
+  if (registry === providerHttpEndpointRegistry && defaultProviderHttpEndpointIndex) {
+    return defaultProviderHttpEndpointIndex;
+  }
+
+  const duplicateEndpointIds = new Set<string>();
+  const endpointsById = new Map<string, IndexedProviderHttpEndpoint>();
+
+  registry.forEach((entry) => {
+    if (endpointsById.has(entry.endpointId)) {
+      duplicateEndpointIds.add(entry.endpointId);
+      return;
+    }
+
+    endpointsById.set(entry.endpointId, {
+      entry,
+      verificationTypes: new Set(entry.supportedVerificationTypes),
+    });
+  });
+
+  const index = { duplicateEndpointIds, endpointsById };
+
+  if (registry === providerHttpEndpointRegistry) {
+    defaultProviderHttpEndpointIndex = index;
+  }
+
+  return index;
+}
+
+function createCompatibilitySummaryIds(
+  input?: Partial<ProviderHttpBindingCompatibilityInput>,
+): ProviderHttpCompatibilitySummaryIds {
+  return {
+    bindingId: safeCompatibilityId(input?.binding?.id, "unresolved-binding-id"),
+    endpointId: safeCompatibilityId(input?.endpoint?.endpointId, "unresolved-endpoint-id"),
+    providerFamily: safeCompatibilityId(
+      input?.endpoint?.providerFamily,
+      "unresolved-provider-family",
+    ),
+    providerGroupId: safeCompatibilityId(
+      input?.endpoint?.providerGroupId,
+      "unresolved-provider-group-id",
+    ),
+    requestMappingId: safeCompatibilityId(
+      input?.endpoint?.requestMappingId,
+      "unresolved-request-mapping-id",
+    ),
+    responseMappingId: safeCompatibilityId(
+      input?.endpoint?.responseMappingId,
+      "unresolved-response-mapping-id",
+    ),
+    verificationType: safeCompatibilityId(
+      input?.binding?.verificationType,
+      "unresolved-verification-type",
+    ),
+  };
+}
+
+function compatibilitySummary(
+  ids: ProviderHttpCompatibilitySummaryIds,
+  status: ProviderHttpBindingCompatibilitySummary["status"],
+  diagnosticCodes: ReadonlySet<ProviderHttpBindingCompatibilityDiagnosticCode>,
+): ProviderHttpBindingCompatibilitySummary {
+  return Object.freeze({
+    ...ids,
+    diagnosticCodes: Object.freeze([...diagnosticCodes]),
+    diagnosticCount: diagnosticCodes.size,
+    status,
+  });
+}
+
+function hasSafeProviderHttpBindingCompatibilityInputShape(
+  input: ProviderHttpBindingCompatibilityInput,
+): boolean {
+  return typeof input.enabled === "boolean"
+    && Boolean(input.binding)
+    && typeof input.binding === "object"
+    && Boolean(input.endpoint)
+    && typeof input.endpoint === "object"
+    && [
+      input.binding.id,
+      input.binding.verificationType,
+      input.endpoint.endpointId,
+      input.endpoint.providerFamily,
+      input.endpoint.providerGroupId,
+      input.endpoint.requestMappingId,
+      input.endpoint.responseMappingId,
+    ].every(isSafeCompatibilityId);
+}
+
+function safeCompatibilityId(value: unknown, fallback: string): string {
+  return isSafeCompatibilityId(value) ? value : fallback;
+}
+
+function isSafeCompatibilityId(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 160
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+    && !containsUnsafeProviderHttpRuntimeMaterial(value);
+}
 
 export const createProviderHttpRuntimeSummary = (
   options: CreateProviderHttpRuntimeSummaryOptions = {},
@@ -350,11 +749,15 @@ function endpoint(
     rolloutStatus?: ProviderEndpointRolloutStatus;
   },
 ): ProviderHttpEndpointEntry {
-  return {
+  return Object.freeze({
     ...entry,
-    requiredConfigKeys: entry.requiredConfigKeys ?? endpointRequiredConfigKeys(entry.providerFamily),
+    headerRefs: Object.freeze([...entry.headerRefs]),
+    requiredConfigKeys: Object.freeze([
+      ...(entry.requiredConfigKeys ?? endpointRequiredConfigKeys(entry.providerFamily)),
+    ]),
     rolloutStatus: entry.rolloutStatus ?? "enabled",
-  };
+    supportedVerificationTypes: Object.freeze([...entry.supportedVerificationTypes]),
+  }) as ProviderHttpEndpointEntry;
 }
 
 function precondition(

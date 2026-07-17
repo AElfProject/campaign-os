@@ -357,6 +357,15 @@ describe("repository export projection review model", () => {
     expect(model.previewRows[2]).not.toHaveProperty("rank");
   });
 
+  it("preserves live provider provenance in task evidence", () => {
+    const projection = projectionFixture();
+    projection.rows[0]!.taskRecords[0]!.liveProviderExecuted = true;
+
+    const model = createRepositoryExportProjectionReviewModel(projection, "en-US");
+
+    expect(model.previewRows[0]?.taskEvidence[0]?.liveProviderExecuted).toBe(true);
+  });
+
   it("keeps all live side-effect safety flags disabled", () => {
     const model = createRepositoryExportProjectionReviewModel(projectionFixture(), "en-US");
 

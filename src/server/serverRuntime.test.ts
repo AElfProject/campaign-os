@@ -331,7 +331,7 @@ describe("API server resource shutdown", () => {
     }
   });
 
-  it("stops HTTP intake, drains an active request, then closes runtime once", async () => {
+  it("starts runtime shutdown before an active HTTP request drains", async () => {
     const order: string[] = [];
     let releaseRequest: (() => void) | undefined;
     let markEntered: (() => void) | undefined;
@@ -342,7 +342,9 @@ describe("API server resource shutdown", () => {
       releaseRequest = resolve;
     });
     const close = vi.fn(async () => {
-      order.push("runtime.close");
+      order.push("runtime.close.start");
+      await requestReleased;
+      order.push("runtime.close.end");
     });
     const runtime: CampaignOsApiRuntime = {
       close,
@@ -367,19 +369,23 @@ describe("API server resource shutdown", () => {
     const firstStop = server.stop();
     const secondStop = server.stop();
     expect(firstStop).toBe(secondStop);
-    expect(close).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["request.start", "runtime.close.start"]);
 
     releaseRequest?.();
     await request;
     await firstStop;
 
     expect(close).toHaveBeenCalledTimes(1);
-    expect(order).toEqual([
-      "request.start",
+    expect(order[0]).toBe("request.start");
+    expect(order[1]).toBe("runtime.close.start");
+    expect(order).toEqual(expect.arrayContaining([
       "request.end",
+      "runtime.close.end",
       "http.close",
-      "runtime.close",
-    ]);
+    ]));
+    expect(order.indexOf("runtime.close.start")).toBeLessThan(order.indexOf("request.end"));
+    expect(order.indexOf("runtime.close.start")).toBeLessThan(order.indexOf("http.close"));
   });
 
   it("releases HTTP connections and runtime resources within the acceptance budget", async () => {

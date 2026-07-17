@@ -155,6 +155,8 @@ const EVIDENCE_SNAPSHOT_COLUMNS = `
   evidence_source,
   evidence_hash,
   evidence_ref,
+  live_provider_executed,
+  verification_attempt_id,
   diagnostic_codes,
   points_awarded,
   captured_at,
@@ -606,6 +608,11 @@ const mapCompletionRow = (value: unknown): AdminReviewCompletionRow => {
 
 const mapEvidenceRow = (value: unknown): AdminReviewEvidenceRow => {
   const row = decodeRow(value);
+  const verificationAttemptId = decodeOptionalString(
+    row,
+    "verification_attempt_id",
+    IDENTIFIER_MAX_LENGTH,
+  );
 
   return {
     campaignId: decodeString(row, "campaign_id", IDENTIFIER_MAX_LENGTH),
@@ -616,10 +623,12 @@ const mapEvidenceRow = (value: unknown): AdminReviewEvidenceRow => {
     evidenceRef: decodeOptionalString(row, "evidence_ref", 2_048),
     evidenceSource: decodeEnum(row, "evidence_source", EVIDENCE_SOURCES),
     id: decodeString(row, "id", IDENTIFIER_MAX_LENGTH),
+    liveProviderExecuted: decodeBoolean(row, "live_provider_executed"),
     pointsAwarded: decodeInteger(row, "points_awarded"),
     status: decodeEnum(row, "status", COMPLETION_STATUSES),
     taskId: decodeString(row, "task_id", IDENTIFIER_MAX_LENGTH),
     updatedAt: decodeTimestamp(row, "updated_at"),
+    ...(verificationAttemptId ? { verificationAttemptId } : {}),
     walletAddress: decodeString(row, "wallet_address", SUBJECT_MAX_LENGTH),
   };
 };

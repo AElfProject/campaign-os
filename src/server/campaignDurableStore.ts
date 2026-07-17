@@ -17,6 +17,10 @@ import {
   withoutParticipantRank,
   type ParticipantRankRow,
 } from "./participantJourney";
+import type {
+  TaskVerificationAttemptSafeRecord,
+  TaskVerificationAttemptStore,
+} from "./taskVerificationAttemptStore";
 
 export type CampaignDurableStoreMode =
   | "local_seeded"
@@ -76,6 +80,7 @@ export interface CampaignDurableStoreManifest {
   storeId: "campaign-db";
   taskEvidenceRecordCount: number;
   taskRecordCount: number;
+  verificationAttemptRecordCount?: number;
 }
 
 export interface CampaignDurableStoreListOptions {
@@ -128,6 +133,7 @@ export interface CampaignDurableStoreParticipantJourneySnapshotInput {
 }
 
 export interface CampaignDurableStoreParticipantJourneySnapshot {
+  attempts: TaskVerificationAttemptSafeRecord[];
   campaign: CampaignDbDraft | undefined;
   completions: CampaignDbTaskCompletion[];
   evidence: CampaignDbTaskEvidenceRecord[];
@@ -194,6 +200,7 @@ export interface CampaignDurableStore {
   ): Promise<CampaignDbTaskDraft[]>;
   manifest(context?: CampaignDurableStoreOperationContext): Promise<CampaignDurableStoreManifest>;
   reset(): Promise<void>;
+  taskVerificationAttempts?: TaskVerificationAttemptStore;
   upsertReferralBinding(
     binding: CampaignDbReferralBindingRecord,
     context?: CampaignDurableStoreOperationContext,
@@ -461,6 +468,7 @@ const isTaskDraft = (value: unknown): value is CampaignDbTaskDraft => isRecord(v
   && isNonEmptyString(value.id)
   && isSafeNonNegativeInteger(value.points)
   && typeof value.required === "boolean"
+  && (value.revision === undefined || isOptionalPositiveInteger(value.revision))
   && isNonEmptyString(value.templateCode)
   && isEnumValue(value.verificationType, verificationTypes)
   && isEnumValue(value.walletCompatibility, walletPolicies);
@@ -479,7 +487,8 @@ const isTaskCompletion = (value: unknown): value is CampaignDbTaskCompletion => 
   && (value.status !== "completed" || value.completedAt !== undefined)
   && isNonEmptyString(value.taskId)
   && isNonEmptyString(value.walletAddress)
-  && isEnumValue(value.walletSource, walletSources);
+  && isEnumValue(value.walletSource, walletSources)
+  && isOptionalNonEmptyString(value.verificationAttemptId);
 
 const isParticipantRecord = (value: unknown): value is CampaignDbParticipantRecord => isRecord(value)
   && isEnumValue(value.accountType, accountTypes)
@@ -534,7 +543,18 @@ const isTaskEvidenceRecord = (value: unknown): value is CampaignDbTaskEvidenceRe
   && isEnumValue(value.status, completionStatuses)
   && isNonEmptyString(value.taskId)
   && isNonEmptyString(value.walletAddress)
-  && isEnumValue(value.walletSource, walletSources);
+  && isEnumValue(value.walletSource, walletSources)
+  && isOptionalNonEmptyString(value.verificationAttemptId);
+
+const assertTaskEvidenceRecord = (
+  value: CampaignDbTaskEvidenceRecord,
+): CampaignDbTaskEvidenceRecord => {
+  if (!isTaskEvidenceRecord(value)) {
+    throw new TypeError("Task evidence record is invalid.");
+  }
+
+  return value;
+};
 
 const parseCollection = <TValue>(
   document: UnknownRecord,
@@ -920,6 +940,7 @@ export const createCampaignDurableStore = ({
       id: evidenceId,
       pointsAwarded: completion.pointsAwarded,
     };
+    assertTaskEvidenceRecord(evidence);
 
     taskCompletionsById.set(completion.id, completion);
     taskEvidenceById.set(evidence.id, evidence);
@@ -1008,6 +1029,7 @@ export const createCampaignDurableStore = ({
 
       if (!campaign) {
         return {
+          attempts: [],
           campaign: undefined,
           completions: [],
           evidence: [],
@@ -1031,6 +1053,7 @@ export const createCampaignDurableStore = ({
         .sort(compareParticipantRankRows);
 
       return cloneRecord({
+        attempts: [],
         campaign,
         completions,
         evidence,
@@ -1170,10 +1193,11 @@ export const createCampaignDurableStore = ({
     },
     upsertTaskEvidence: async (evidence) => {
       await ensureInitialized();
-      taskEvidenceById.set(evidence.id, evidence);
+      const validated = assertTaskEvidenceRecord(evidence);
+      taskEvidenceById.set(validated.id, validated);
       await writeDocument();
 
-      return evidence;
+      return validated;
     },
     upsertTaskVerification,
     upsertReferralBinding: async (binding) => {

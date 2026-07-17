@@ -52,7 +52,9 @@ describe("API foundation registry", () => {
       expect(route.requestContractId).toBe(`${route.routeId}.request`);
       expect(route.responseEnvelopeId).toBe("api.response.success.v1");
       expect(route.errorEnvelopeId).toBe("api.response.error.v1");
-      expect(route.supportMode).toBe("local_seeded");
+      expect(route.supportMode).toBe(
+        route.routeId === "tasks.verify" ? "provider_live" : "local_seeded",
+      );
       expect(route.description).not.toHaveLength(0);
     }
   });

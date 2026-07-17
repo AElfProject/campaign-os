@@ -12,6 +12,8 @@ import {
   projectParticipantRanking,
   type ParticipantJourneyProjectionInput,
 } from "./participantJourney";
+import { createCanonicalTaskVerificationRevision } from "./taskVerification";
+import type { TaskVerificationAttemptSafeRecord } from "./taskVerificationAttemptStore";
 
 const CAMPAIGN_ID = "campaign-journey-0001";
 const WALLET_A = "ELF_2F4WalletA";
@@ -84,7 +86,7 @@ const completion = (
   campaignId: CAMPAIGN_ID,
   completedAt: "2026-07-14T00:00:03.000Z",
   createdAt: "2026-07-14T00:00:01.000Z",
-  evidenceHash: `private-completion-hash-${walletAddress}-${taskId}`,
+  evidenceHash: `private-evidence-hash-${walletAddress}-${taskId}`,
   evidenceId: `evidence-${walletAddress}-${taskId}`,
   evidenceSource: "AELFSCAN",
   id: `completion-${walletAddress}-${taskId}`,
@@ -125,6 +127,58 @@ const evidence = (
   ...overrides,
 });
 
+const verificationAttempt = (
+  taskRecord: CampaignDbTaskDraft,
+  status: TaskVerificationAttemptSafeRecord["status"],
+  overrides: Partial<TaskVerificationAttemptSafeRecord> = {},
+): TaskVerificationAttemptSafeRecord => {
+  const canonicalTask = createCanonicalTaskVerificationRevision({
+    campaignId: taskRecord.campaignId,
+    evidenceRule: taskRecord.evidenceRule,
+    points: taskRecord.points,
+    required: taskRecord.required,
+    revision: taskRecord.revision ?? 1,
+    taskId: taskRecord.id,
+    traceId: "trace-journey-attempt-fixture",
+    updatedAt: taskRecord.updatedAt,
+    verificationType: taskRecord.verificationType,
+    walletPolicy: taskRecord.walletCompatibility,
+  });
+
+  return {
+    accountType: "EOA",
+    attemptCount: 1,
+    bindingId: "journey-on-chain-binding",
+    bindingRevision: 1,
+    campaignId: taskRecord.campaignId,
+    createdAt: "2026-07-14T00:00:02.000Z",
+    diagnosticCodes: [],
+    dispatchState: status === "requested"
+      ? "not_started"
+      : status === "running"
+        ? "started"
+        : "result_observed",
+    evidenceRuleDigest: canonicalTask.evidenceRuleDigest,
+    externalDispatchLimit: 1,
+    fence: 1,
+    id: `attempt-${taskRecord.id}-${status}`,
+    idempotencyKey: "a".repeat(64),
+    maxAttempts: 3,
+    providerRef: "provider-ref:journey-on-chain",
+    retryPosture: status === "manual_review" ? "manual_review" : "none",
+    status,
+    taskId: taskRecord.id,
+    taskRevision: canonicalTask.revision,
+    taskRevisionDigest: canonicalTask.taskRevisionDigest,
+    traceId: `trace-journey-${status}`,
+    updatedAt: "2026-07-14T00:00:04.000Z",
+    verificationType: "ON_CHAIN",
+    walletAddress: WALLET_A,
+    walletSource: "PORTKEY_EOA_EXTENSION",
+    ...overrides,
+  };
+};
+
 const repository = {
   adapterId: "campaign-db-deterministic-adapter",
   createdViaRepository: true as const,
@@ -135,6 +189,7 @@ const repository = {
 const input = (
   overrides: Partial<ParticipantJourneyProjectionInput> = {},
 ): ParticipantJourneyProjectionInput => ({
+  attempts: [],
   campaign: campaign(),
   completions: [],
   evidence: [],
@@ -388,24 +443,33 @@ describe("Participant journey projector", () => {
   it.each([
     {
       diagnosticCode: "SUBJECT_METADATA_MISMATCH",
+      eligible: false,
       label: "subject metadata mismatch",
       participant: participant(WALLET_A, { accountType: "AA", totalPoints: 0 }),
+      status: "not_eligible",
     },
     {
       diagnosticCode: "PARTICIPANT_POINTS_MISMATCH",
+      eligible: true,
       label: "durable points drift",
       participant: participant(WALLET_A, { totalPoints: 100 }),
+      status: "eligible",
     },
-  ])("fails closed for optional-only Participant $label", ({ diagnosticCode, participant: record }) => {
+  ])("handles optional-only Participant $label from canonical progress", ({
+    diagnosticCode,
+    eligible,
+    participant: record,
+    status,
+  }) => {
     const result = projectParticipantJourney(input({
       participant: record,
       tasks: [task("task-optional-only", { required: false })],
     }));
 
     expect(result.eligibility).toMatchObject({
-      eligible: false,
+      eligible,
       missingTasks: [],
-      status: "not_eligible",
+      status,
     });
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: diagnosticCode,
@@ -473,7 +537,7 @@ describe("Participant journey projector", () => {
     }
   });
 
-  it("uses durable Participant points as the single aggregate authority and diagnoses drift", () => {
+  it("recomputes Participant, eligibility, and ranking points from completed logical Tasks", () => {
     const result = projectParticipantJourney(input({
       completions: [completion("task-required-a")],
       evidence: [evidence("task-required-a")],
@@ -481,12 +545,230 @@ describe("Participant journey projector", () => {
       rankingParticipants: [participant(WALLET_A, { totalPoints: 175 })],
     }));
 
-    expect(result.participant.totalPoints).toBe(175);
-    expect(result.ranking.totalPoints).toBe(175);
-    expect(result.eligibility.score).toBe(175);
+    expect(result.participant.totalPoints).toBe(100);
+    expect(result.ranking.totalPoints).toBe(100);
+    expect(result.eligibility.score).toBe(100);
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "PARTICIPANT_POINTS_MISMATCH",
     }));
+  });
+
+  it("projects safe live provider provenance and attempt linkage from canonical Evidence", () => {
+    const evidenceHash = "c".repeat(64);
+    const verificationAttemptId = "attempt-journey-live-0001";
+    const taskRecord = task("task-required-a");
+    const result = projectParticipantJourney(input({
+      attempts: [verificationAttempt(taskRecord, "completed", {
+        completedAt: "2026-07-14T00:00:03.000Z",
+        evidenceHash,
+        evidenceRef: "evidence-ref:journey-live-0001",
+        evidenceSource: "AELFSCAN",
+        id: verificationAttemptId,
+      })],
+      completions: [completion("task-required-a", WALLET_A, {
+        evidenceHash,
+        verificationAttemptId,
+      })],
+      evidence: [evidence("task-required-a", WALLET_A, {
+        diagnosticCodes: ["PROVIDER_MATCH_POSITIVE"],
+        evidenceHash,
+        evidenceRef: "evidence-ref:journey-live-0001",
+        liveProviderExecuted: true,
+        verificationAttemptId,
+      })],
+      participant: participant(WALLET_A, { totalPoints: 100 }),
+      rankingParticipants: [participant(WALLET_A, { totalPoints: 100 })],
+      tasks: [taskRecord],
+    }));
+
+    expect(result.tasks[0]).toMatchObject({
+      completionId: `completion-${WALLET_A}-task-required-a`,
+      evidenceHash,
+      evidenceId: `evidence-${WALLET_A}-task-required-a`,
+      evidenceRef: "evidence-ref:journey-live-0001",
+      evidenceSource: "AELFSCAN",
+      liveProviderExecuted: true,
+      pointsAwarded: 100,
+      status: "completed",
+      verificationAttemptId,
+    });
+  });
+
+  it.each(["pending", "failed", "manual_review"] as const)(
+    "projects durable %s attempt posture with zero points and no fabricated Completion or Evidence",
+    (status) => {
+      const taskRecord = task("task-required-a");
+      const attempt = verificationAttempt(taskRecord, status);
+      const result = projectParticipantJourney(input({
+        attempts: [attempt],
+        completions: [],
+        evidence: [],
+        participant: undefined,
+        rankingParticipants: [],
+        tasks: [taskRecord],
+      }));
+
+      expect(result.tasks[0]).toMatchObject({
+        completionId: null,
+        evidenceHash: null,
+        evidenceId: null,
+        evidenceRef: null,
+        liveProviderExecuted: false,
+        pointsAwarded: 0,
+        status,
+        verificationAttemptId: attempt.id,
+      });
+      expect(result.participant.totalPoints).toBe(0);
+      expect(result.eligibility.score).toBe(0);
+    },
+  );
+
+  it.each(["requested", "running"] as const)(
+    "maps durable %s execution posture to pending Journey state",
+    (status) => {
+      const taskRecord = task("task-required-a");
+      const attempt = verificationAttempt(taskRecord, status);
+      const result = projectParticipantJourney(input({
+        attempts: [attempt],
+        tasks: [taskRecord],
+      }));
+
+      expect(result.tasks[0]).toMatchObject({
+        action: "await_review",
+        completionId: null,
+        evidenceId: null,
+        pointsAwarded: 0,
+        status: "pending",
+        verificationAttemptId: attempt.id,
+      });
+      expect(result.eligibility).toMatchObject({
+        eligible: false,
+        score: 0,
+        status: "pending",
+      });
+    },
+  );
+
+  it("fails closed when a current completed attempt has no canonical Completion and Evidence", () => {
+    const taskRecord = task("task-required-a");
+    const result = projectParticipantJourney(input({
+      attempts: [verificationAttempt(taskRecord, "completed")],
+      tasks: [taskRecord],
+    }));
+
+    expect(result.tasks[0]).toMatchObject({
+      action: "blocked",
+      blockedReason: "inconsistent_records",
+      completionId: null,
+      evidenceId: null,
+      pointsAwarded: 0,
+      status: "not_started",
+      verificationAttemptId: null,
+    });
+    expect(result.diagnostics).toContainEqual({
+      code: "LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID",
+      scope: "task",
+      taskId: taskRecord.id,
+    });
+  });
+
+  it("fails closed when an older current completed attempt has no canonical pair", () => {
+    const taskRecord = task("task-required-a");
+    const completedAttempt = verificationAttempt(taskRecord, "completed", {
+      id: "attempt-current-completed",
+      updatedAt: "2026-07-14T00:00:03.000Z",
+    });
+    const latestAttempt = verificationAttempt(taskRecord, "pending", {
+      id: "attempt-current-pending",
+      updatedAt: "2026-07-14T00:00:05.000Z",
+    });
+    const result = projectParticipantJourney(input({
+      attempts: [latestAttempt, completedAttempt],
+      tasks: [taskRecord],
+    }));
+
+    expect(result.tasks[0]).toMatchObject({
+      action: "blocked",
+      blockedReason: "inconsistent_records",
+      status: "not_started",
+      verificationAttemptId: null,
+    });
+    expect(result.diagnostics).toContainEqual({
+      code: "LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID",
+      scope: "task",
+      taskId: taskRecord.id,
+    });
+  });
+
+  it("ignores stale Task lineage and fails closed on duplicate current attempt records", () => {
+    const taskRecord = task("task-required-a", { revision: 2 });
+    const staleAttempt = verificationAttempt(taskRecord, "failed", {
+      taskRevision: 1,
+      taskRevisionDigest: "b".repeat(64),
+    });
+    const currentAttempt = verificationAttempt(taskRecord, "pending");
+    const staleOnly = projectParticipantJourney(input({
+      attempts: [staleAttempt],
+      tasks: [taskRecord],
+    }));
+    const duplicateCurrent = projectParticipantJourney(input({
+      attempts: [currentAttempt, { ...currentAttempt }],
+      tasks: [taskRecord],
+    }));
+
+    expect(staleOnly.tasks[0]).toMatchObject({
+      status: "not_started",
+      verificationAttemptId: null,
+    });
+    expect(duplicateCurrent.tasks[0]).toMatchObject({
+      action: "blocked",
+      blockedReason: "inconsistent_records",
+      status: "not_started",
+      verificationAttemptId: null,
+    });
+    expect(duplicateCurrent.diagnostics).toContainEqual({
+      code: "LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID",
+      scope: "task",
+      taskId: taskRecord.id,
+    });
+  });
+
+  it("selects the latest current attempt and fails closed on current-revision digest drift", () => {
+    const taskRecord = task("task-required-a", { revision: 2 });
+    const olderAttempt = verificationAttempt(taskRecord, "failed", {
+      id: "attempt-current-older",
+      updatedAt: "2026-07-14T00:00:03.000Z",
+    });
+    const latestAttempt = verificationAttempt(taskRecord, "pending", {
+      id: "attempt-current-latest",
+      updatedAt: "2026-07-14T00:00:05.000Z",
+    });
+    const currentJourney = projectParticipantJourney(input({
+      attempts: [latestAttempt, olderAttempt],
+      tasks: [taskRecord],
+    }));
+    const digestDriftJourney = projectParticipantJourney(input({
+      attempts: [{ ...latestAttempt, taskRevisionDigest: "c".repeat(64) }],
+      tasks: [taskRecord],
+    }));
+
+    expect(currentJourney.tasks[0]).toMatchObject({
+      action: "await_review",
+      status: "pending",
+      updatedAt: latestAttempt.updatedAt,
+      verificationAttemptId: latestAttempt.id,
+    });
+    expect(digestDriftJourney.tasks[0]).toMatchObject({
+      action: "blocked",
+      blockedReason: "inconsistent_records",
+      status: "not_started",
+      verificationAttemptId: null,
+    });
+    expect(digestDriftJourney.diagnostics).toContainEqual({
+      code: "LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID",
+      scope: "task",
+      taskId: taskRecord.id,
+    });
   });
 
   it("blocks wallet-incompatible Tasks without projecting a completion", () => {

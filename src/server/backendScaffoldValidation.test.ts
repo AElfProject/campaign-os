@@ -376,6 +376,7 @@ describe("backend scaffold public guardrails", () => {
         env: providerHttpReadyEnv,
         profileId: "production-required",
       },
+      providerHttpTransportProvided: true,
     });
     const expectedDownstreamFlags = createProviderHttpDownstreamLiveFlags();
 
@@ -542,8 +543,13 @@ describe("backend scaffold public guardrails", () => {
 
     for (const route of apiRuntimeRoutes) {
       expect(route.path).toMatch(/^\/api\//);
-      expect(route.supportMode).toBe("local_seeded");
-      expect(route.boundary["en-US"]).toContain("No live API");
+      if (route.id === "tasks.verify") {
+        expect(route.supportMode).toBe("provider_live");
+        expect(route.boundary["en-US"]).toContain("provider-live");
+      } else {
+        expect(route.supportMode).toBe("local_seeded");
+        expect(route.boundary["en-US"]).toContain("No live API");
+      }
       expect(route.productionDependencies).toEqual(expect.any(Array));
       expect(route.productionDependencies).toEqual(
         expect.not.arrayContaining(["production_ready"]),

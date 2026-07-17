@@ -1,4 +1,14 @@
 import {
+  CheckCircle2,
+  CircleAlert,
+  Clock3,
+  LoaderCircle,
+  RefreshCw,
+  ShieldCheck,
+  WifiOff,
+  type LucideIcon,
+} from "lucide-react";
+import {
   useCallback,
   useEffect,
   useReducer,
@@ -14,6 +24,7 @@ import type {
 } from "../../../api/participantJourneyApiBridge";
 import type { NormalizedWalletSession, SupportedLocale } from "../../../domain";
 import {
+  canPollParticipantJourneyTask,
   canReconnectParticipantJourney,
   canSelectParticipantCampaign,
   canVerifyParticipantJourneyTask,
@@ -22,9 +33,15 @@ import {
   nextParticipantJourneyRequestToken,
   participantJourneyWorkflowReducer,
   selectParticipantJourneyRetryOperation,
+  selectParticipantJourneyRefreshTaskId,
+  selectParticipantJourneyTaskAction,
+  selectParticipantJourneyTaskAttempt,
+  selectParticipantJourneyTaskPoll,
+  selectParticipantJourneyTaskRefresh,
   type ParticipantJourneyRequestOperation,
   type ParticipantJourneyRequestReason,
   type ParticipantJourneyRequestToken,
+  type ParticipantJourneyTaskAttemptStatus,
   type ParticipantJourneyWorkflowEvent,
   type ParticipantJourneyWorkflowState,
 } from "./participantJourneyWorkflow";
@@ -66,11 +83,16 @@ const durableCopy = {
     noMissingTasks: "None",
     noRiskFlags: "None",
     notRanked: "Not ranked",
+    notStarted: "Not started",
+    noFurtherAction: "No further action",
     participantCount: "Participants",
     participantPreview: "Participant preview",
+    pendingDetail: "The provider result is still pending.",
+    pendingStatus: "Verification pending",
     points: "Points",
     rank: "Rank",
     reconnect: "Reconnect wallet",
+    retryVerification: "Retry verification",
     refreshing: "Refreshing journey",
     retryFeed: "Retry Campaign feed",
     retryJourney: "Retry journey read",
@@ -80,6 +102,12 @@ const durableCopy = {
     status: "Status",
     task: "Task",
     tasks: "Tasks",
+    verificationCompleted: "Verification completed",
+    verificationFailed: "Verification failed",
+    verificationManualReview: "Awaiting manual review",
+    verificationManualReviewDetail: "No action is needed while review is in progress.",
+    verificationStatus: "Verification status",
+    verificationUnavailable: "Verification temporarily unavailable",
     verify: "Verify Task",
     verifying: "Verifying Task",
   },
@@ -105,11 +133,16 @@ const durableCopy = {
     noMissingTasks: "无",
     noRiskFlags: "无",
     notRanked: "暂无排名",
+    notStarted: "尚未开始",
+    noFurtherAction: "无需进一步操作",
     participantCount: "参与人数",
     participantPreview: "参与者预览",
+    pendingDetail: "服务商结果仍在处理中。",
+    pendingStatus: "验证处理中",
     points: "积分",
     rank: "排名",
     reconnect: "重新连接钱包",
+    retryVerification: "重试验证",
     refreshing: "正在刷新旅程",
     retryFeed: "重试活动列表",
     retryJourney: "重试读取旅程",
@@ -119,6 +152,12 @@ const durableCopy = {
     status: "状态",
     task: "任务",
     tasks: "任务",
+    verificationCompleted: "验证已完成",
+    verificationFailed: "验证失败",
+    verificationManualReview: "等待人工审核",
+    verificationManualReviewDetail: "审核进行中，无需重复操作。",
+    verificationStatus: "验证状态",
+    verificationUnavailable: "验证服务暂不可用",
     verify: "验证任务",
     verifying: "正在验证任务",
   },
@@ -144,11 +183,16 @@ const durableCopy = {
     noMissingTasks: "無",
     noRiskFlags: "無",
     notRanked: "暫無排名",
+    notStarted: "尚未開始",
+    noFurtherAction: "無需進一步操作",
     participantCount: "參與人數",
     participantPreview: "參與者預覽",
+    pendingDetail: "服務商結果仍在處理中。",
+    pendingStatus: "驗證處理中",
     points: "積分",
     rank: "排名",
     reconnect: "重新連接錢包",
+    retryVerification: "重試驗證",
     refreshing: "正在重新整理旅程",
     retryFeed: "重試活動列表",
     retryJourney: "重試讀取旅程",
@@ -158,6 +202,12 @@ const durableCopy = {
     status: "狀態",
     task: "任務",
     tasks: "任務",
+    verificationCompleted: "驗證已完成",
+    verificationFailed: "驗證失敗",
+    verificationManualReview: "等待人工審核",
+    verificationManualReviewDetail: "審核進行中，無需重複操作。",
+    verificationStatus: "驗證狀態",
+    verificationUnavailable: "驗證服務暫不可用",
     verify: "驗證任務",
     verifying: "正在驗證任務",
   },
@@ -289,6 +339,28 @@ const localizedCampaignTitle = (
   fallback: string,
 ) => title?.[locale] ?? title?.["en-US"] ?? fallback;
 
+type ParticipantJourneyReadOperation = Exclude<ParticipantJourneyRequestOperation, "verify">;
+type ParticipantJourneyTaskRequestKind = "command" | "poll";
+
+interface ParticipantJourneyTaskRequestResource {
+  controller: AbortController;
+  kind: ParticipantJourneyTaskRequestKind;
+  token: ParticipantJourneyRequestToken;
+}
+
+interface ParticipantJourneyPollTimerResource {
+  ownerId: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface ParticipantJourneyTaskStatusPresentation {
+  detail: string | null;
+  Icon: LucideIcon;
+  label: string;
+}
+
+type ParticipantJourneyTaskDisplayStatus = ParticipantJourneyTaskAttemptStatus | "not_started";
+
 export const DurableParticipantJourneyPanel = ({
   bridge,
   locale,
@@ -307,9 +379,13 @@ export const DurableParticipantJourneyPanel = ({
   );
   const stateRef = useRef<ParticipantJourneyWorkflowState>(state);
   const mountedRef = useRef(true);
-  const controllersRef = useRef<Partial<Record<ParticipantJourneyRequestOperation, AbortController>>>({});
+  const readControllersRef = useRef<Partial<Record<ParticipantJourneyReadOperation, AbortController>>>({});
+  const taskControllersRef = useRef(new Map<string, ParticipantJourneyTaskRequestResource>());
+  const pollTimersRef = useRef(new Map<string, ParticipantJourneyPollTimerResource>());
   const journeyHeadingRef = useRef<HTMLHeadingElement>(null);
   const journeyFocusPendingRef = useRef(false);
+  const taskStatusFocusPendingRef = useRef<string | null>(null);
+  const taskStatusRefs = useRef(new Map<string, HTMLDivElement>());
 
   stateRef.current = state;
 
@@ -325,12 +401,37 @@ export const DurableParticipantJourneyPanel = ({
     return next;
   }, []);
 
-  const abortRequests = useCallback(() => {
-    for (const controller of Object.values(controllersRef.current)) {
+  const abortReadRequests = useCallback(() => {
+    for (const controller of Object.values(readControllersRef.current)) {
       controller?.abort();
     }
-    controllersRef.current = {};
+    readControllersRef.current = {};
   }, []);
+
+  const clearPollTimer = useCallback((taskId: string) => {
+    const resource = pollTimersRef.current.get(taskId);
+    if (resource) {
+      clearTimeout(resource.timer);
+      pollTimersRef.current.delete(taskId);
+    }
+  }, []);
+
+  const stopTaskResources = useCallback((taskId?: string) => {
+    const taskIds = taskId === undefined
+      ? new Set([...taskControllersRef.current.keys(), ...pollTimersRef.current.keys()])
+      : new Set([taskId]);
+
+    for (const ownedTaskId of taskIds) {
+      clearPollTimer(ownedTaskId);
+      taskControllersRef.current.get(ownedTaskId)?.controller.abort();
+      taskControllersRef.current.delete(ownedTaskId);
+    }
+  }, [clearPollTimer]);
+
+  const disposeRuntime = useCallback(() => {
+    abortReadRequests();
+    stopTaskResources();
+  }, [abortReadRequests, stopTaskResources]);
 
   const requestContext = useCallback((
     token: ParticipantJourneyRequestToken,
@@ -343,11 +444,17 @@ export const DurableParticipantJourneyPanel = ({
   }), [authoritySession, mode]);
 
   const finishRequest = useCallback((
-    operation: ParticipantJourneyRequestOperation,
+    operation: ParticipantJourneyReadOperation,
     controller: AbortController,
   ) => {
-    if (controllersRef.current[operation] === controller) {
-      delete controllersRef.current[operation];
+    if (readControllersRef.current[operation] === controller) {
+      delete readControllersRef.current[operation];
+    }
+  }, []);
+
+  const finishTaskRequest = useCallback((taskId: string, controller: AbortController) => {
+    if (taskControllersRef.current.get(taskId)?.controller === controller) {
+      taskControllersRef.current.delete(taskId);
     }
   }, []);
 
@@ -363,7 +470,7 @@ export const DurableParticipantJourneyPanel = ({
     }
 
     const controller = new AbortController();
-    controllersRef.current.feed = controller;
+    readControllersRef.current.feed = controller;
 
     try {
       const result = await bridge.listCampaigns(requestContext(token, controller.signal));
@@ -389,19 +496,20 @@ export const DurableParticipantJourneyPanel = ({
   const runJourney = useCallback(async (
     reason: ParticipantJourneyRequestReason,
     baseState = stateRef.current,
+    taskId?: string | null,
   ) => {
     if (!authoritySession || !sessionKey || !baseState.selectedCampaignId) {
       return;
     }
 
-    const token = nextParticipantJourneyRequestToken(baseState, "journey");
+    const token = nextParticipantJourneyRequestToken(baseState, "journey", taskId);
     const requested = commit({ reason, token, type: "journey_requested" });
     if (requested.activeRequests.journey !== token) {
       return;
     }
 
     const controller = new AbortController();
-    controllersRef.current.journey = controller;
+    readControllersRef.current.journey = controller;
 
     try {
       const result: ParticipantJourneyResult = await bridge.getJourney(
@@ -426,32 +534,49 @@ export const DurableParticipantJourneyPanel = ({
     }
   }, [authoritySession, bridge, commit, finishRequest, requestContext, sessionKey]);
 
-  const runVerify = useCallback(async (taskId: string) => {
+  const runVerify = useCallback(async (
+    taskId: string,
+    kind: ParticipantJourneyTaskRequestKind = "command",
+  ) => {
     const baseState = stateRef.current;
     if (
       !authoritySession
       || !sessionKey
-      || !canVerifyParticipantJourneyTask(baseState, taskId)
+      || (kind === "command"
+        ? !canVerifyParticipantJourneyTask(baseState, taskId)
+        : !canPollParticipantJourneyTask(baseState, taskId))
     ) {
       return;
     }
 
-    const token = nextParticipantJourneyRequestToken(baseState, "verify");
-    journeyFocusPendingRef.current = true;
-    const requested = commit({ taskId, token, type: "verify_requested" });
-    if (requested.activeRequests.verify !== token) {
+    clearPollTimer(taskId);
+    const token = nextParticipantJourneyRequestToken(baseState, "verify", taskId);
+    if (kind === "command") {
+      taskStatusFocusPendingRef.current = taskId;
+    }
+    const requested = commit(kind === "command"
+      ? { taskId, token, type: "verify_requested" }
+      : { taskId, token, type: "verification_poll_requested" });
+    if (selectParticipantJourneyTaskAttempt(requested, taskId)?.activeRequest !== token) {
+      if (taskStatusFocusPendingRef.current === taskId) {
+        taskStatusFocusPendingRef.current = null;
+      }
       return;
     }
 
     const controller = new AbortController();
-    controllersRef.current.verify = controller;
+    const previousResource = taskControllersRef.current.get(taskId);
+    if (previousResource && previousResource.token !== token) {
+      previousResource.controller.abort();
+    }
+    taskControllersRef.current.set(taskId, { controller, kind, token });
 
     try {
       const result: ParticipantVerifyResult = await bridge.verifyTask(
         taskId,
         requestContext(token, controller.signal),
       );
-      finishRequest("verify", controller);
+      finishTaskRequest(taskId, controller);
       if (!mountedRef.current || controller.signal.aborted) {
         return;
       }
@@ -461,10 +586,9 @@ export const DurableParticipantJourneyPanel = ({
         return;
       }
 
-      const acknowledged = commit({ result, token, type: "verify_succeeded" });
-      await runJourney("refresh", acknowledged);
+      commit({ result, token, type: "verify_succeeded" });
     } catch {
-      finishRequest("verify", controller);
+      finishTaskRequest(taskId, controller);
       if (mountedRef.current && !controller.signal.aborted) {
         commit({
           failure: safeUnexpectedFailure("verify", token),
@@ -473,7 +597,15 @@ export const DurableParticipantJourneyPanel = ({
         });
       }
     }
-  }, [authoritySession, bridge, commit, finishRequest, requestContext, runJourney, sessionKey]);
+  }, [
+    authoritySession,
+    bridge,
+    clearPollTimer,
+    commit,
+    finishTaskRequest,
+    requestContext,
+    sessionKey,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -489,9 +621,108 @@ export const DurableParticipantJourneyPanel = ({
     return () => {
       active = false;
       mountedRef.current = false;
-      abortRequests();
+      disposeRuntime();
     };
-  }, [abortRequests, authoritySession, bridge, runFeed, sessionKey]);
+  }, [authoritySession, bridge, disposeRuntime, runFeed, sessionKey]);
+
+  useEffect(() => {
+    const refreshTaskId = selectParticipantJourneyRefreshTaskId(state);
+    if (refreshTaskId && state.activeRequests.journey === null) {
+      void runJourney("refresh", state, refreshTaskId);
+    }
+  }, [runJourney, state]);
+
+  useEffect(() => {
+    const scheduledTaskIds = new Set<string>();
+    const pageHidden = document.visibilityState === "hidden";
+
+    for (const taskId of Object.keys(state.taskAttempts)) {
+      const poll = selectParticipantJourneyTaskPoll(state, taskId);
+      if (poll?.phase === "scheduled" && pageHidden) {
+        commit({ taskId, type: "verification_poll_paused" });
+        continue;
+      }
+      if (!poll || poll.phase !== "scheduled") {
+        continue;
+      }
+
+      scheduledTaskIds.add(taskId);
+      const existing = pollTimersRef.current.get(taskId);
+      if (existing?.ownerId === poll.ownerId) {
+        continue;
+      }
+      clearPollTimer(taskId);
+
+      const ownerId = poll.ownerId;
+      const timer = setTimeout(() => {
+        const activeResource = pollTimersRef.current.get(taskId);
+        if (activeResource?.ownerId !== ownerId) {
+          return;
+        }
+        pollTimersRef.current.delete(taskId);
+        const currentPoll = selectParticipantJourneyTaskPoll(stateRef.current, taskId);
+        if (currentPoll?.ownerId === ownerId && currentPoll.phase === "scheduled") {
+          void runVerify(taskId, "poll");
+        }
+      }, poll.delayMs);
+      pollTimersRef.current.set(taskId, { ownerId, timer });
+    }
+
+    for (const taskId of pollTimersRef.current.keys()) {
+      if (!scheduledTaskIds.has(taskId)) {
+        clearPollTimer(taskId);
+      }
+    }
+
+    for (const [taskId, resource] of taskControllersRef.current) {
+      if (state.taskAttempts[taskId]?.activeRequest !== resource.token) {
+        resource.controller.abort();
+        taskControllersRef.current.delete(taskId);
+      }
+    }
+  }, [clearPollTimer, commit, runVerify, state.taskAttempts]);
+
+  useEffect(() => {
+    const taskId = taskStatusFocusPendingRef.current;
+    if (!taskId) {
+      return;
+    }
+
+    const status = taskStatusRefs.current.get(taskId);
+    if (status) {
+      status.focus({ preventScroll: true });
+      taskStatusFocusPendingRef.current = null;
+    } else if (!state.taskAttempts[taskId]) {
+      taskStatusFocusPendingRef.current = null;
+    }
+  }, [state.taskAttempts]);
+
+  useEffect(() => {
+    const updatePollVisibility = () => {
+      const current = stateRef.current;
+      for (const taskId of Object.keys(current.taskAttempts)) {
+        const poll = selectParticipantJourneyTaskPoll(current, taskId);
+        if (!poll) {
+          continue;
+        }
+
+        if (document.visibilityState === "hidden" && poll.phase !== "paused") {
+          clearPollTimer(taskId);
+          const resource = taskControllersRef.current.get(taskId);
+          if (resource?.kind === "poll") {
+            resource.controller.abort();
+            taskControllersRef.current.delete(taskId);
+          }
+          commit({ taskId, type: "verification_poll_paused" });
+        } else if (document.visibilityState !== "hidden" && poll.phase === "paused") {
+          commit({ taskId, type: "verification_poll_resumed" });
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", updatePollVisibility);
+    return () => document.removeEventListener("visibilitychange", updatePollVisibility);
+  }, [clearPollTimer, commit]);
 
   useEffect(() => {
     if (!journeyFocusPendingRef.current || !state.selectedCampaignId) {
@@ -510,8 +741,9 @@ export const DurableParticipantJourneyPanel = ({
       return;
     }
 
-    controllersRef.current.journey?.abort();
-    delete controllersRef.current.journey;
+    readControllersRef.current.journey?.abort();
+    delete readControllersRef.current.journey;
+    stopTaskResources();
     journeyFocusPendingRef.current = true;
     const selected = commit({ campaignId, type: "campaign_selected" });
     if (selected !== current && selected.selectedCampaignId === campaignId) {
@@ -534,6 +766,35 @@ export const DurableParticipantJourneyPanel = ({
   const retryOperation = selectParticipantJourneyRetryOperation(state);
   const sessionMissing = !sessionKey;
   const journey = state.journey;
+
+  const taskStatusPresentation = (
+    status: ParticipantJourneyTaskDisplayStatus,
+    diagnosticCode: string | null,
+  ): ParticipantJourneyTaskStatusPresentation => {
+    if (status === "not_started") {
+      return { detail: null, Icon: Clock3, label: copy.notStarted };
+    }
+    if (status === "verifying") {
+      return { detail: null, Icon: LoaderCircle, label: copy.verifying };
+    }
+    if (status === "pending") {
+      return { detail: copy.pendingDetail, Icon: Clock3, label: copy.pendingStatus };
+    }
+    if (status === "completed") {
+      return { detail: copy.noFurtherAction, Icon: CheckCircle2, label: copy.verificationCompleted };
+    }
+    if (status === "manual_review") {
+      return {
+        detail: copy.verificationManualReviewDetail,
+        Icon: ShieldCheck,
+        label: copy.verificationManualReview,
+      };
+    }
+    if (status === "failed") {
+      return { detail: diagnosticCode, Icon: CircleAlert, label: copy.verificationFailed };
+    }
+    return { detail: diagnosticCode, Icon: WifiOff, label: copy.verificationUnavailable };
+  };
 
   return (
     <div data-participant-mode="durable" style={rootStyle}>
@@ -721,30 +982,87 @@ export const DurableParticipantJourneyPanel = ({
 
           <div aria-label={copy.tasks} style={{ display: "grid", gap: 12 }}>
             {journey.tasks.map((task) => {
-              const pending = state.pendingTaskId === task.taskId;
-              const refreshPending = pending && state.pendingOperation === "refresh_journey";
-              const verifyPending = pending && state.pendingOperation === "verify";
+              const attempt = selectParticipantJourneyTaskAttempt(state, task.taskId);
+              const refresh = selectParticipantJourneyTaskRefresh(state, task.taskId);
+              const action = selectParticipantJourneyTaskAction(state, task.taskId);
+              const attemptStatus = attempt?.status ?? task.status;
+              const diagnosticCode = attempt?.diagnostic?.code
+                ?? attempt?.receipt?.diagnosticCodes[0]
+                ?? null;
+              const diagnosticTraceId = attempt?.diagnostic?.traceId ?? null;
+              const statusPresentation = taskStatusPresentation(attemptStatus, diagnosticCode);
+              const StatusIcon = statusPresentation.Icon;
+              const refreshing = refresh?.status === "in_flight" || refresh?.status === "required";
+              const requestActive = attempt?.activeRequest !== null && attempt?.activeRequest !== undefined;
               const verifyEnabled = canVerifyParticipantJourneyTask(state, task.taskId);
-              const commandLabel = refreshPending
+              const commandLabel = refreshing
                 ? copy.refreshing
-                : verifyPending
-                  ? `${copy.verifying} ${task.taskId}`
-                  : task.action === "completed"
-                    ? copy.completed
-                    : `${copy.verify} ${task.taskId}`;
-              const commandAccessibleLabel = commandLabel.includes(task.taskId)
-                ? commandLabel
+                : requestActive
+                  ? copy.verifying
+                  : action === "verify"
+                    ? copy.verify
+                    : action === "retry"
+                      ? copy.retryVerification
+                      : attemptStatus === "completed"
+                        ? copy.completed
+                        : statusPresentation.label;
+              const commandAccessibleLabel = action === "verify" || action === "retry"
+                ? `${commandLabel} ${task.taskId}`
                 : `${commandLabel} (${task.taskId})`;
+              const CommandIcon = action === "retry"
+                ? RefreshCw
+                : action === "verify"
+                  ? ShieldCheck
+                  : statusPresentation.Icon;
 
               return (
-                <article key={task.taskId} style={{ ...feedItemStyle, background: "#ffffff" }}>
+                <article
+                  className="participant-verification-task"
+                  data-verification-task={task.taskId}
+                  key={task.taskId}
+                  style={{ ...feedItemStyle, background: "#ffffff" }}
+                >
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between" }}>
                     <div style={{ minWidth: 0 }}>
                       <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, margin: 0 }}>{copy.task}</p>
                       <code style={{ overflowWrap: "anywhere" }}>{task.taskId}</code>
                     </div>
-                    <span style={badgeStyle("neutral")}>{task.status}</span>
+                    <div
+                      aria-atomic="true"
+                      aria-label={`${copy.verificationStatus} ${task.taskId}: ${statusPresentation.label}`}
+                      aria-live="polite"
+                      className="participant-verification-status"
+                      data-verification-status={attemptStatus}
+                      ref={(node) => {
+                        if (node) {
+                          taskStatusRefs.current.set(task.taskId, node);
+                        } else {
+                          taskStatusRefs.current.delete(task.taskId);
+                        }
+                      }}
+                      role="status"
+                      tabIndex={-1}
+                    >
+                      <StatusIcon
+                        aria-hidden="true"
+                        className={attemptStatus === "verifying" ? "participant-verification-spin" : undefined}
+                        size={16}
+                        strokeWidth={2}
+                      />
+                      <span>{statusPresentation.label}</span>
+                    </div>
                   </div>
+                  <p
+                    aria-hidden={statusPresentation.detail || diagnosticTraceId ? undefined : "true"}
+                    className="participant-verification-detail"
+                  >
+                    {statusPresentation.detail ? <span>{statusPresentation.detail}</span> : null}
+                    {diagnosticTraceId ? (
+                      <span className="participant-verification-trace">
+                        {copy.commandTrace}: <code>{diagnosticTraceId}</code>
+                      </span>
+                    ) : null}
+                  </p>
                   <dl style={metricsStyle}>
                     <div style={metricStyle}>
                       <dt>{copy.completion}</dt>
@@ -759,16 +1077,26 @@ export const DurableParticipantJourneyPanel = ({
                       <dd style={{ margin: 0 }}>{task.pointsAwarded}</dd>
                     </div>
                   </dl>
-                  <button
-                    aria-busy={pending || undefined}
-                    aria-label={commandAccessibleLabel}
-                    disabled={!verifyEnabled}
-                    onClick={() => void runVerify(task.taskId)}
-                    style={verifyEnabled ? buttonStyle : disabledButtonStyle}
-                    type="button"
-                  >
-                    {commandLabel}
-                  </button>
+                  <div className="participant-verification-action-slot">
+                    <button
+                      aria-busy={requestActive || refreshing || attemptStatus === "pending" || undefined}
+                      aria-label={commandAccessibleLabel}
+                      className="participant-verification-action"
+                      disabled={!verifyEnabled}
+                      onClick={() => void runVerify(task.taskId)}
+                      style={verifyEnabled ? buttonStyle : disabledButtonStyle}
+                      title={commandAccessibleLabel}
+                      type="button"
+                    >
+                      <CommandIcon
+                        aria-hidden="true"
+                        className={requestActive || refreshing ? "participant-verification-spin" : undefined}
+                        size={17}
+                        strokeWidth={2}
+                      />
+                      <span>{commandLabel}</span>
+                    </button>
+                  </div>
                 </article>
               );
             })}

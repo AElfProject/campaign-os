@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { resolve } from "node:path";
 import {
   createCampaignOsApiServiceContract,
   type CampaignOsApiServiceContract,
@@ -32,6 +33,7 @@ import {
   resolveApiServerRuntimeContract,
   type ApiServerRuntimeContract,
 } from "./serverRuntime";
+import type { ProviderHttpTransport } from "./providerHttpTransport";
 
 export interface CampaignOsApiServerHandle {
   getReadiness(): ServerRuntimeReadiness;
@@ -54,6 +56,7 @@ export interface StartCampaignOsApiServerOptions {
   profileId?: string;
   runtimeFactory?: (options: CreateCampaignOsApiRuntimeOptions) => CampaignOsApiRuntime;
   shutdownTimeoutMs?: number;
+  taskVerificationTransport?: ProviderHttpTransport;
   version?: string;
 }
 
@@ -204,6 +207,14 @@ const settleWithin = <T>(promise: Promise<T>, timeoutMs: number) =>
     );
   });
 
+const taskVerificationEnvironmentForProfile = (
+  profileId: ApiServerRuntimeContract["profileId"],
+): "local" | "production" | "stage" => profileId === "production-required"
+  ? "production"
+  : profileId === "staging-scaffold"
+    ? "stage"
+    : "local";
+
 export const startCampaignOsApiServer = async ({
   allowedCorsOrigins,
   env,
@@ -214,11 +225,13 @@ export const startCampaignOsApiServer = async ({
   profileId,
   runtimeFactory = createCampaignOsApiRuntime,
   shutdownTimeoutMs,
+  taskVerificationTransport,
   version,
 }: StartCampaignOsApiServerOptions = {}): Promise<CampaignOsApiServerHandle> => {
+  const runtimeEnv = env ?? (typeof process === "undefined" ? {} : process.env);
   const runtimeContract = resolveApiServerRuntimeContract({
     allowedCorsOrigins,
-    env,
+    env: runtimeEnv,
     host,
     maxBodyBytes,
     port,
@@ -228,20 +241,29 @@ export const startCampaignOsApiServer = async ({
   });
   const backendServiceReadiness = createBackendServiceReadinessReport({
     configOptions: {
-      env,
+      env: runtimeEnv,
       host: runtimeContract.host,
       port: runtimeContract.port,
       profileId: runtimeContract.profileId,
       version: runtimeContract.runtimeVersion,
     },
+    providerHttpTransportProvided: Boolean(taskVerificationTransport),
   });
   const runtime = runtimeFactory({
     backendServiceReadiness: () => backendServiceReadiness,
     logger,
     runtimeConfigOptions: {
-      env,
+      env: runtimeEnv,
       version: runtimeContract.runtimeVersion,
     },
+    taskVerificationConfigOptions: {
+      env: runtimeEnv,
+      environment: taskVerificationEnvironmentForProfile(runtimeContract.profileId),
+      providerHttpTransportProvided: Boolean(taskVerificationTransport),
+    },
+    taskVerificationProviderRuntime:
+      backendServiceReadiness.providerClientReadiness.providerHttpRuntime,
+    ...(taskVerificationTransport ? { taskVerificationTransport } : {}),
     version: runtimeContract.runtimeVersion,
   });
   const shutdownState: ServerShutdownState = {
@@ -256,7 +278,7 @@ export const startCampaignOsApiServer = async ({
   });
   const getServiceContract = () => createCampaignOsApiServiceContract({
     allowedCorsOrigins,
-    env,
+    env: runtimeEnv,
     host: runtimeContract.host,
     maxBodyBytes: runtimeContract.requestGuard.maxBodyBytes,
     port: runtimeContract.port,
@@ -445,6 +467,16 @@ export const startCampaignOsApiServer = async ({
       const shutdownTraceId = randomUUID();
       const deadline = Date.now() + runtimeContract.shutdown.shutdownTimeoutMs;
       let failureCode: ApiServerShutdownErrorCode | undefined;
+      let runtimeClosePromise: Promise<void>;
+      try {
+        runtimeClosePromise = runtime.close();
+      } catch (error) {
+        runtimeClosePromise = Promise.reject(error);
+      }
+      const runtimeCloseResultPromise = settleWithin(
+        runtimeClosePromise,
+        Math.max(0, deadline - Date.now()),
+      );
 
       const httpClosePromise = new Promise<void>((resolve, reject) => {
         server.close((error) => {
@@ -479,10 +511,7 @@ export const startCampaignOsApiServer = async ({
         server.closeAllConnections();
       }
 
-      const runtimeCloseResult = await settleWithin(
-        runtime.close(),
-        Math.max(0, deadline - Date.now()),
-      );
+      const runtimeCloseResult = await runtimeCloseResultPromise;
       if (runtimeCloseResult === "rejected") {
         failureCode ??= "API_SERVER_RUNTIME_CLOSE_FAILED";
       } else if (runtimeCloseResult === "timeout") {
@@ -520,7 +549,14 @@ export const startCampaignOsApiServer = async ({
   };
 };
 
-if (process.argv.includes("--listen")) {
+const CAMPAIGN_OS_API_SERVER_ENTRY_PATH = resolve(process.cwd(), "src/server/server.ts");
+
+export const isCampaignOsApiServerDirectExecution = (
+  entryPath = process.argv[1],
+): boolean => typeof entryPath === "string"
+  && resolve(entryPath) === CAMPAIGN_OS_API_SERVER_ENTRY_PATH;
+
+if (isCampaignOsApiServerDirectExecution() && process.argv.includes("--listen")) {
   startCampaignOsApiServer().catch((error: unknown) => {
     console.error("[campaign-os-api-runtime] failed to start", error);
     process.exitCode = 1;

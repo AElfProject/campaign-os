@@ -100,6 +100,7 @@ export interface UserAppPanelProps extends SeededUserAppPanelProps {
   bridge?: ParticipantJourneyApiBridge;
   mode?: ParticipantJourneyMode;
   onReconnect?: () => void;
+  participantLifecycleEpoch?: number;
   session?: NormalizedWalletSession | null;
   sessionReady?: boolean;
 }
@@ -3332,6 +3333,7 @@ export const UserAppPanel = ({
   mode = "seeded_preview",
   onReconnect = () => undefined,
   participant,
+  participantLifecycleEpoch = 0,
   session = null,
   sessionReady = false,
   shareLocale,
@@ -3339,12 +3341,16 @@ export const UserAppPanel = ({
 }: UserAppPanelProps) => {
   if (mode === "durable") {
     const authoritySession = sessionReady ? session : null;
+    const lifecycleEpoch = Number.isSafeInteger(participantLifecycleEpoch)
+      && participantLifecycleEpoch >= 0
+      ? participantLifecycleEpoch
+      : 0;
     const sessionKey = createParticipantSessionKey(authoritySession) ?? "no-session";
 
     return (
       <DurableParticipantJourneyPanel
         bridge={bridge ?? unavailableParticipantJourneyBridge}
-        key={`durable:${sessionKey}`}
+        key={`durable:${lifecycleEpoch}:${sessionKey}`}
         locale={locale}
         mode="durable"
         onReconnect={onReconnect}

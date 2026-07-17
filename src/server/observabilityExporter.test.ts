@@ -881,9 +881,9 @@ describe("observability exporter foundation", () => {
     });
     expect(result).toMatchObject({
       diagnosticCodes: ["transport_thrown_error"],
-      liveHttpCallsAttempted: false,
+      liveHttpCallsAttempted: true,
       outcome: "blocked",
-      transportExecuted: false,
+      transportExecuted: true,
     });
     expect(result.downstreamLiveFlags).toEqual({
       alternateQueuePublishing: false,

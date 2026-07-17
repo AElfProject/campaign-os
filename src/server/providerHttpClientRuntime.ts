@@ -1,13 +1,18 @@
 import { createProviderHttpRuntimeSummary } from "./providerHttpRuntimeRegistry";
 import type { ProviderHttpRequestPlannerDiagnostic, ProviderHttpVerificationRequestInput } from "./providerHttpRequestPlanner";
 import { planProviderHttpRequest } from "./providerHttpRequestPlanner";
-import type { ProviderHttpTransport, ProviderHttpTransportDiagnostic } from "./providerHttpTransport";
+import type {
+  ProviderHttpTransport,
+  ProviderHttpTransportContext,
+  ProviderHttpTransportDiagnostic,
+} from "./providerHttpTransport";
 import { executeProviderHttpTransport } from "./providerHttpTransport";
 import type {
   ProviderHttpIdempotencyDecision,
   ProviderHttpLeaseDecision,
   ProviderHttpNormalizationPolicy,
   ProviderHttpNormalizedResult,
+  ProviderHttpResponseMatcher,
 } from "./providerHttpResponseNormalizer";
 import { normalizeProviderHttpResponse } from "./providerHttpResponseNormalizer";
 import type { ProviderHttpDownstreamLiveFlags, ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
@@ -37,8 +42,11 @@ export interface ExecuteProviderHttpRequestOptions {
   idempotency?: ProviderHttpExecutionGuard;
   lease?: ProviderHttpLeaseGuard;
   normalizationPolicy?: ProviderHttpNormalizationPolicy;
+  matcher?: ProviderHttpResponseMatcher;
+  responseMatcher?: ProviderHttpResponseMatcher;
   runtime?: ProviderHttpRuntimeSummary;
   transport?: ProviderHttpTransport;
+  transportContext?: Partial<ProviderHttpTransportContext>;
 }
 
 export type ProviderHttpRuntimeResult = ProviderHttpNormalizedResult | ProviderHttpBlockedResult;
@@ -52,12 +60,13 @@ export interface ProviderHttpBlockedResult {
   evidenceRef?: string;
   idempotencyDecision: ProviderHttpIdempotencyDecision;
   leaseDecision: ProviderHttpLeaseDecision;
-  liveHttpCallsAttempted: false;
+  liveHttpCallsAttempted: boolean;
   outcome: "blocked" | "manual_review" | "completed";
+  positiveMatch: false;
   retryPosture: "blocked" | "none";
   taskId?: string;
   traceId?: string;
-  transportExecuted: false;
+  transportExecuted: boolean;
 }
 
 export const executeProviderHttpRequest = async (
@@ -84,13 +93,18 @@ export const executeProviderHttpRequest = async (
     });
   }
 
-  const transportResult = await executeProviderHttpTransport(planResult.plan, options.transport);
+  const transportResult = await executeProviderHttpTransport(
+    planResult.plan,
+    options.transport,
+    options.transportContext,
+  );
 
   if (!transportResult.ok) {
     return createBlockedResult(input, runtime, {
       diagnostics: transportResult.diagnostics,
       idempotencyDecision: "unique",
       leaseDecision: "acquired",
+      transportExecuted: transportResult.transportExecuted,
     });
   }
 
@@ -98,6 +112,7 @@ export const executeProviderHttpRequest = async (
     planResult.plan,
     transportResult.result,
     options.normalizationPolicy,
+    options.matcher ?? options.responseMatcher,
   );
 };
 
@@ -108,12 +123,18 @@ function createIdempotencyResult(
 ): ProviderHttpBlockedResult {
   if (idempotency.decision === "existing_completion") {
     return createBlockedResult(input, runtime, {
-      diagnostics: [],
-      evidenceHash: idempotency.evidenceHash,
-      evidenceRef: idempotency.evidenceRef,
+      diagnostics: [
+        {
+          code: "duplicate_idempotency",
+          field: "idempotencyRef",
+          message: "Provider HTTP completion replay requires durable attempt authority.",
+          redactedFields: ["idempotencyRef"],
+          severity: "blocker",
+        },
+      ],
       idempotencyDecision: "existing_completion",
       leaseDecision: "acquired",
-      outcome: idempotency.evidenceHash && idempotency.evidenceRef ? "completed" : "manual_review",
+      outcome: "manual_review",
       retryPosture: "none",
     });
   }
@@ -166,6 +187,7 @@ function createBlockedResult(
     leaseDecision: ProviderHttpLeaseDecision;
     outcome?: "blocked" | "manual_review" | "completed";
     retryPosture?: "blocked" | "none";
+    transportExecuted?: boolean;
   },
 ): ProviderHttpBlockedResult {
   const outcome = state.outcome ?? "blocked";
@@ -179,11 +201,12 @@ function createBlockedResult(
     evidenceRef: state.evidenceRef,
     idempotencyDecision: state.idempotencyDecision,
     leaseDecision: state.leaseDecision,
-    liveHttpCallsAttempted: false,
+    liveHttpCallsAttempted: state.transportExecuted ?? false,
     outcome,
+    positiveMatch: false,
     retryPosture: state.retryPosture ?? (outcome === "completed" ? "none" : "blocked"),
     taskId: input.taskId,
     traceId: input.traceId,
-    transportExecuted: false,
+    transportExecuted: state.transportExecuted ?? false,
   };
 }

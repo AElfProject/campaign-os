@@ -14,7 +14,19 @@ const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
 
 const route = (contract: ApiRuntimeRouteContract): ApiRuntimeRouteContract => contract;
 
+type ProviderLiveRouteContract = Omit<ApiRuntimeRouteContract, "supportMode"> & {
+  supportMode: "provider_live";
+};
+
+const providerLiveRoute = (
+  contract: ProviderLiveRouteContract,
+): ApiRuntimeRouteContract => contract as unknown as ApiRuntimeRouteContract;
+
 const boundary = runtimeBoundary;
+const taskVerificationBoundary = text(
+  "Protected provider-live verification backed by PostgreSQL schema 0004. Activation is default-disabled, production disabled until a pinned runtime is supplied, and no client material or provider configuration is exposed.",
+  "受保护的 provider-live 验证，由 PostgreSQL schema 0004 支撑。默认关闭；在提供 pinned runtime 前 production disabled；不会暴露 client material 或 provider 配置。",
+);
 const dependenciesFor = (serviceGroup: ApiRuntimeRouteContract["serviceGroup"]) =>
   apiRuntimeServiceGroupById[serviceGroup].deferredDependencies;
 
@@ -353,19 +365,29 @@ export const apiRuntimeRoutes = [
     summary: text("Generate local campaign task suggestions.", "生成本地活动任务建议。"),
     supportMode: "local_seeded",
   }),
-  route({
+  providerLiveRoute({
     apiGroup: "task_verification",
     apiSkillId: "verify_task",
-    boundary,
+    boundary: taskVerificationBoundary,
     id: "tasks.verify",
     method: "POST",
     path: "/api/tasks/:taskId/verify",
-    productionDependencies: dependenciesFor("verification"),
-    readiness: "review_required",
+    productionDependencies: [
+      "auth_session",
+      "migration_runner",
+      "production_database",
+      "provider_adapters",
+      "sensitive_material_boundary",
+      "worker_queue",
+    ],
+    readiness: "blocked",
     riskLevel: "high",
     serviceGroup: "verification",
-    summary: text("Verify seeded task evidence locally.", "本地验证 seeded 任务 evidence。"),
-    supportMode: "local_seeded",
+    summary: text(
+      "Verify task evidence through a protected provider-live runtime requiring PostgreSQL schema 0004.",
+      "通过要求 PostgreSQL schema 0004 的受保护 provider-live runtime 验证任务 evidence。",
+    ),
+    supportMode: "provider_live",
   }),
   route({
     apiGroup: "task_verification",

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import type { Pool } from "pg";
+import { randomUUID } from "node:crypto";
+import pg, { type Pool } from "pg";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CampaignDbDraft,
   CampaignDbParticipantRecord,
@@ -14,6 +15,37 @@ import {
   type PostgresCampaignStorePool,
   type PostgresCampaignStoreQueryResult,
 } from "./postgresCampaignDurableStore";
+import { resolveCampaignOsCampaignDbConfig } from "./config";
+import {
+  loadPostgresMigrations,
+  runPostgresMigrations,
+  type PostgresMigrationDefinition,
+  type PostgresMigrationPool,
+} from "./postgresMigration";
+import {
+  createCanonicalTaskVerificationRevision,
+  deriveTaskVerificationIdentity,
+  issueTrustedTaskVerificationIdentityInput,
+  transitionTaskVerificationAttempt,
+  type TaskVerificationIdentity,
+} from "./taskVerification";
+import type {
+  BeginTaskVerificationAttemptInput,
+  FinalizeTaskVerificationAttemptInput,
+  TaskVerificationAttemptFinalizeWrite,
+  TaskVerificationAttemptOwner,
+} from "./taskVerificationAttemptStore";
+
+const TEST_DATABASE_URL = process.env.CAMPAIGN_OS_TEST_DATABASE_URL?.trim();
+const REQUIRE_POSTGRES_TESTS = process.env.CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS?.trim() === "1";
+
+if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
+  throw new Error(
+    "Durable verification attempt PostgreSQL acceptance requires CAMPAIGN_OS_TEST_DATABASE_URL when required mode is enabled.",
+  );
+}
+
+const postgresIntegrationSuite = TEST_DATABASE_URL ? describe : describe.skip;
 
 interface QueryCall {
   text: string;
@@ -126,6 +158,7 @@ const task = (overrides: Partial<CampaignDbTaskDraft> = {}): CampaignDbTaskDraft
   id: "task-postgres-0001",
   points: 120,
   required: true,
+  revision: 1,
   templateCode: "bridge_ebridge",
   updatedAt: "2026-07-07T00:00:03.000Z",
   verificationType: "ON_CHAIN",
@@ -140,6 +173,7 @@ const taskRow = (overrides: Record<string, unknown> = {}): Record<string, unknow
   id: "task-postgres-0001",
   points: 120,
   required: true,
+  revision: 1,
   template_code: "bridge_ebridge",
   updated_at: timestamp("2026-07-07T00:00:03.000Z"),
   verification_type: "ON_CHAIN",
@@ -272,6 +306,184 @@ const evidenceRow = (overrides: Record<string, unknown> = {}): Record<string, un
   wallet_source: "PORTKEY_EOA_EXTENSION",
   ...overrides,
 });
+
+const ATTEMPT_REQUEST_DIGEST = "a".repeat(64);
+const ATTEMPT_EVIDENCE_DIGEST = "b".repeat(64);
+const ATTEMPT_RESPONSE_DIGEST = "c".repeat(64);
+
+const verificationIdentityForTask = (
+  traceId: string,
+  taskDraft: CampaignDbTaskDraft,
+): TaskVerificationIdentity =>
+  deriveTaskVerificationIdentity(issueTrustedTaskVerificationIdentityInput({
+    binding: {
+      bindingId: "binding-postgres-aelfscan",
+      bindingRevision: 1,
+    },
+    issuedSubject: {
+      accountType: "EOA",
+      sessionRef: "session-postgres-attempt",
+      walletAddress: "2F4ParticipantWallet",
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    },
+    task: createCanonicalTaskVerificationRevision({
+      campaignId: taskDraft.campaignId,
+      evidenceRule: taskDraft.evidenceRule,
+      points: taskDraft.points,
+      required: taskDraft.required,
+      revision: taskDraft.revision ?? 1,
+      taskId: taskDraft.id,
+      traceId,
+      updatedAt: taskDraft.updatedAt,
+      verificationType: taskDraft.verificationType,
+      walletPolicy: taskDraft.walletCompatibility,
+    }),
+    traceId,
+  }));
+
+const verificationIdentity = (traceId: string): TaskVerificationIdentity =>
+  verificationIdentityForTask(traceId, task());
+
+const verificationBeginInput = (
+  identity: TaskVerificationIdentity,
+  traceId: string,
+  overrides: Partial<BeginTaskVerificationAttemptInput> = {},
+): BeginTaskVerificationAttemptInput => ({
+  identity,
+  leaseDurationMs: 1_000,
+  maxAttempts: 3,
+  providerRef: "provider-postgres-aelfscan",
+  traceId,
+  verificationType: "ON_CHAIN",
+  ...overrides,
+});
+
+const verificationTransition = (traceId: string) => transitionTaskVerificationAttempt({
+  bindingEnabled: true,
+  currentStatus: "running",
+  diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+  evidence: {
+    diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+    evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+    evidenceRef: "provider-evidence:postgres-attempt",
+    evidenceSource: "AELFSCAN",
+    traceId,
+  },
+  positiveMatch: true,
+  targetStatus: "completed",
+  traceId,
+  transportExecuted: true,
+});
+
+const verificationFinalizeWrite = (): TaskVerificationAttemptFinalizeWrite => ({
+  completion: completion({
+    completedAt: "2026-07-16T00:00:01.000Z",
+    evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+    evidenceId: "evidence-postgres-attempt",
+    id: "completion-postgres-attempt",
+    updatedAt: "2026-07-16T00:00:01.000Z",
+  }),
+  evidence: evidence({
+    capturedAt: "2026-07-16T00:00:01.000Z",
+    completionId: "completion-postgres-attempt",
+    diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+    evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+    evidenceRef: "provider-evidence:postgres-attempt",
+    id: "evidence-postgres-attempt",
+    liveProviderExecuted: true,
+    updatedAt: "2026-07-16T00:00:01.000Z",
+  }),
+  participant: participant({
+    id: "participant-postgres-attempt",
+    totalPoints: 0,
+    updatedAt: "2026-07-16T00:00:01.000Z",
+  }),
+});
+
+const verificationFinalizeInput = (
+  owner: TaskVerificationAttemptOwner,
+  traceId: string,
+  responseDigest = ATTEMPT_RESPONSE_DIGEST,
+): FinalizeTaskVerificationAttemptInput => ({
+  completedAt: "2026-07-16T00:00:01.000Z",
+  owner,
+  providerCode: "MATCH_CONFIRMED",
+  responseDigest,
+  retryPosture: "none",
+  traceId,
+  transition: verificationTransition(traceId),
+  write: verificationFinalizeWrite(),
+});
+
+const verificationFinalizeInputForTask = (
+  owner: TaskVerificationAttemptOwner,
+  traceId: string,
+  taskDraft: CampaignDbTaskDraft,
+  options: {
+    evidenceHash: string;
+    evidenceRef: string;
+    idSuffix: string;
+    responseDigest: string;
+  },
+): FinalizeTaskVerificationAttemptInput => {
+  const completionId = `completion-${options.idSuffix}`;
+  const evidenceId = `evidence-${options.idSuffix}`;
+  return {
+    completedAt: "2026-07-16T00:00:01.000Z",
+    owner,
+    providerCode: "MATCH_CONFIRMED",
+    responseDigest: options.responseDigest,
+    retryPosture: "none",
+    traceId,
+    transition: transitionTaskVerificationAttempt({
+      bindingEnabled: true,
+      currentStatus: "running",
+      diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+      evidence: {
+        diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+        evidenceHash: options.evidenceHash,
+        evidenceRef: options.evidenceRef,
+        evidenceSource: "AELFSCAN",
+        traceId,
+      },
+      positiveMatch: true,
+      targetStatus: "completed",
+      traceId,
+      transportExecuted: true,
+    }),
+    write: {
+      completion: completion({
+        campaignId: taskDraft.campaignId,
+        completedAt: "2026-07-16T00:00:01.000Z",
+        evidenceHash: options.evidenceHash,
+        evidenceId,
+        id: completionId,
+        pointsAwarded: taskDraft.points,
+        taskId: taskDraft.id,
+        updatedAt: "2026-07-16T00:00:01.000Z",
+      }),
+      evidence: evidence({
+        campaignId: taskDraft.campaignId,
+        capturedAt: "2026-07-16T00:00:01.000Z",
+        completionId,
+        diagnosticCodes: ["PROVIDER_MATCH_CONFIRMED"],
+        evidenceHash: options.evidenceHash,
+        evidenceRef: options.evidenceRef,
+        id: evidenceId,
+        liveProviderExecuted: true,
+        pointsAwarded: taskDraft.points,
+        taskId: taskDraft.id,
+        updatedAt: "2026-07-16T00:00:01.000Z",
+      }),
+      participant: participant({
+        campaignId: taskDraft.campaignId,
+        id: `participant-${options.idSuffix}`,
+        totalPoints: 0,
+        updatedAt: "2026-07-16T00:00:01.000Z",
+      }),
+    },
+  };
+};
 
 const referral = (
   overrides: Partial<CampaignDbReferralBindingRecord> = {},
@@ -800,6 +1012,7 @@ describe("PostgreSQL Campaign durable store", () => {
       JSON.stringify(input.evidenceRule),
       input.createdAt,
       input.updatedAt,
+      input.revision,
     ]);
     expect(pool.calls[1]?.text).toContain("WHERE campaign_id = $1 ORDER BY id ASC LIMIT $2");
     expectParameterized(pool.calls[1]!, [input.campaignId, 25]);
@@ -862,6 +1075,7 @@ describe("PostgreSQL Campaign durable store", () => {
     }, { traceId: "trace-postgres-snapshot" });
 
     expect(snapshot).toMatchObject({
+      attempts: [],
       campaign: { id: "campaign-postgres-0001" },
       completions: [{ walletAddress }],
       evidence: [{ walletAddress }],
@@ -891,6 +1105,7 @@ describe("PostgreSQL Campaign durable store", () => {
       expect.stringContaining("FROM campaign_os.campaign_participants"),
       expect.stringContaining("FROM campaign_os.campaign_task_completions"),
       expect.stringContaining("FROM campaign_os.campaign_task_evidence"),
+      expect.stringContaining("FROM campaign_os.verification_attempts"),
       expect.stringContaining("ORDER BY total_points DESC"),
       "COMMIT",
     ]);
@@ -899,10 +1114,12 @@ describe("PostgreSQL Campaign durable store", () => {
     expectParameterized(pool.calls[3]!, ["campaign-postgres-0001", walletAddress]);
     expectParameterized(pool.calls[4]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
     expectParameterized(pool.calls[5]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
-    expectParameterized(pool.calls[6]!, ["campaign-postgres-0001", 100, 0]);
-    expect(pool.calls[6]?.text).toContain("created_at ASC");
-    expect(pool.calls[6]?.text).toContain("id COLLATE \"C\" ASC");
-    expect(pool.calls[6]?.text).toContain("wallet_address COLLATE \"C\" ASC");
+    expectParameterized(pool.calls[6]!, ["campaign-postgres-0001", walletAddress, 100, 0]);
+    expect(pool.calls[6]?.text).toContain("updated_at DESC");
+    expectParameterized(pool.calls[7]!, ["campaign-postgres-0001", 100, 0]);
+    expect(pool.calls[7]?.text).toContain("created_at ASC");
+    expect(pool.calls[7]?.text).toContain("id COLLATE \"C\" ASC");
+    expect(pool.calls[7]?.text).toContain("wallet_address COLLATE \"C\" ASC");
     expect(pool.calls.every((call) => !call.text.match(/UPDATE\s+campaign_os\.campaign_participants/i))).toBe(true);
     expect(pool.release).toHaveBeenCalledOnce();
   });
@@ -994,6 +1211,7 @@ describe("PostgreSQL Campaign durable store", () => {
       campaignId: "missing-campaign",
       walletAddress: "ELF_2F4MissingSnapshotWallet",
     }, { traceId: "trace-postgres-snapshot-missing" })).resolves.toEqual({
+      attempts: [],
       campaign: undefined,
       completions: [],
       evidence: [],
@@ -1102,6 +1320,8 @@ describe("PostgreSQL Campaign durable store", () => {
 
     const upsert = pool.calls[1]!;
     expect(upsert.text).toContain("ON CONFLICT (campaign_id, task_id, wallet_address) DO UPDATE");
+    expect(upsert.text).toContain("campaign_os.campaign_task_completions.verification_attempt_id IS NULL");
+    expect(upsert.text).toContain("EXCLUDED.verification_attempt_id IS NULL");
     expect(upsert.text).toContain("RETURNING");
     expectParameterized(upsert, [
       input.id,
@@ -1118,6 +1338,8 @@ describe("PostgreSQL Campaign durable store", () => {
       input.completedAt,
       input.createdAt,
       input.updatedAt,
+      null,
+      "completed",
     ]);
   });
 
@@ -1510,6 +1732,8 @@ describe("PostgreSQL Campaign durable store", () => {
     expectParameterized(pool.calls[0]!, [input.campaignId, input.taskId, input.walletAddress, 10]);
     const upsert = pool.calls[1]!;
     expect(upsert.text).toContain("ON CONFLICT (campaign_id, task_id, wallet_address) DO UPDATE");
+    expect(upsert.text).toContain("campaign_os.campaign_task_evidence.verification_attempt_id IS NULL");
+    expect(upsert.text).toContain("EXCLUDED.verification_attempt_id IS NULL");
     expect(upsert.text).toContain("RETURNING");
     expect(upsert.text).toContain("$12::jsonb");
     expectParameterized(upsert, [
@@ -1533,6 +1757,8 @@ describe("PostgreSQL Campaign durable store", () => {
       false,
       input.createdAt,
       input.updatedAt,
+      null,
+      "completed",
     ]);
   });
 
@@ -1862,20 +2088,31 @@ describe("PostgreSQL Campaign durable store", () => {
   it("reports actual six-entity counts and migration state in its safe manifest", async () => {
     const pool = new TranscriptPool(() => ({
       rows: [{
-        applied_migration_ids: ["0001_campaign_runtime"],
+        applied_migration_ids: [
+          "0001_campaign_runtime",
+          "0002_admin_review_export",
+          "0003_admin_review_rank_projection",
+          "0004_live_provider_task_verification",
+        ],
         campaign_count: "2",
         completion_count: "5",
         participant_count: "4",
         referral_binding_count: "7",
         task_count: "3",
         task_evidence_count: "6",
+        verification_attempt_count: "8",
       }],
     }));
     const store = createPostgresCampaignDurableStore({ boundedListLimit: 42, pool });
 
     await expect(store.manifest()).resolves.toEqual({
       adapterId: "campaign-db-postgresql-adapter",
-      appliedMigrationIds: ["0001_campaign_runtime"],
+      appliedMigrationIds: [
+        "0001_campaign_runtime",
+        "0002_admin_review_export",
+        "0003_admin_review_rank_projection",
+        "0004_live_provider_task_verification",
+      ],
       boundedListLimit: 42,
       completionRecordCount: 5,
       diagnosticCodes: [],
@@ -1888,11 +2125,12 @@ describe("PostgreSQL Campaign durable store", () => {
       recordCount: 2,
       referralBindingRecordCount: 7,
       schemaId: "campaign_os",
-      schemaVersion: "0001_campaign_runtime",
+      schemaVersion: "0004_live_provider_task_verification",
       status: "ready",
       storeId: "campaign-db",
       taskEvidenceRecordCount: 6,
       taskRecordCount: 3,
+      verificationAttemptRecordCount: 8,
     });
     expect(pool.calls[0]?.text).toContain("campaign_os.schema_migrations");
     expect(pool.calls[0]?.text).toContain("campaign_os.campaign_referral_bindings");
@@ -1902,13 +2140,19 @@ describe("PostgreSQL Campaign durable store", () => {
   it("reports a migrated empty database as ready with zero actual counts", async () => {
     const pool = new TranscriptPool(() => ({
       rows: [{
-        applied_migration_ids: ["0001_campaign_runtime"],
+        applied_migration_ids: [
+          "0001_campaign_runtime",
+          "0002_admin_review_export",
+          "0003_admin_review_rank_projection",
+          "0004_live_provider_task_verification",
+        ],
         campaign_count: "0",
         completion_count: "0",
         participant_count: "0",
         referral_binding_count: "0",
         task_count: "0",
         task_evidence_count: "0",
+        verification_attempt_count: "0",
       }],
     }));
     const store = createPostgresCampaignDurableStore({ pool });
@@ -2045,11 +2289,30 @@ describe("PostgreSQL Campaign durable store", () => {
 
     await testStore.reset();
 
-    expect(testPool.calls).toHaveLength(1);
-    expect(testPool.calls[0]?.text).toMatch(/^TRUNCATE TABLE/);
-    expect(testPool.calls[0]?.text).toContain("campaign_os.campaign_task_evidence");
-    expect(testPool.calls[0]?.text).toContain("campaign_os.campaigns");
-    expect(testPool.calls[0]?.values).toEqual([]);
+    expect(testPool.calls.map(({ text }) => text)).toEqual([
+      "BEGIN",
+      expect.stringContaining(
+        "DISABLE TRIGGER verification_attempt_finalization_results_truncate_append_only",
+      ),
+      expect.stringContaining("DISABLE TRIGGER campaign_task_revisions_truncate_append_only"),
+      expect.stringContaining("DISABLE TRIGGER campaign_review_decisions_truncate_append_only"),
+      expect.stringContaining("DISABLE TRIGGER campaign_export_artifacts_truncate_append_only"),
+      expect.stringMatching(/^TRUNCATE TABLE/),
+      expect.stringContaining("ENABLE TRIGGER campaign_export_artifacts_truncate_append_only"),
+      expect.stringContaining("ENABLE TRIGGER campaign_review_decisions_truncate_append_only"),
+      expect.stringContaining("ENABLE TRIGGER campaign_task_revisions_truncate_append_only"),
+      expect.stringContaining(
+        "ENABLE TRIGGER verification_attempt_finalization_results_truncate_append_only",
+      ),
+      "COMMIT",
+    ]);
+    expect(testPool.calls[5]?.text).toContain(
+      "campaign_os.verification_attempt_finalization_results",
+    );
+    expect(testPool.calls[5]?.text).toContain("campaign_os.campaign_task_revisions");
+    expect(testPool.calls[5]?.text).toContain("campaign_os.campaign_task_evidence");
+    expect(testPool.calls[5]?.text).toContain("campaign_os.campaigns");
+    expect(testPool.calls.every(({ values }) => values.length === 0)).toBe(true);
   });
 
   it.each([
@@ -2264,4 +2527,1400 @@ describe("PostgreSQL Campaign durable store", () => {
     });
     expect(pool.end).toHaveBeenCalledOnce();
   });
+});
+
+type PostgresFaultPoint =
+  | "attempt_update"
+  | "completion"
+  | "evidence"
+  | "points_sum"
+  | "participant"
+  | "snapshot"
+  | "reset_truncate"
+  | "commit";
+
+const matchesPostgresFault = (point: PostgresFaultPoint, sql: string) => {
+  switch (point) {
+    case "attempt_update":
+      return sql.startsWith("UPDATE campaign_os.verification_attempts")
+        && sql.includes("response_digest = $3");
+    case "completion":
+      return sql.startsWith("INSERT INTO campaign_os.campaign_task_completions");
+    case "evidence":
+      return sql.startsWith("INSERT INTO campaign_os.campaign_task_evidence");
+    case "points_sum":
+      return sql.includes("SELECT COALESCE(SUM(points_awarded)");
+    case "participant":
+      return sql.startsWith("INSERT INTO campaign_os.campaign_participants");
+    case "snapshot":
+      return sql.startsWith(
+        "INSERT INTO campaign_os.verification_attempt_finalization_results",
+      );
+    case "reset_truncate":
+      return sql.startsWith("TRUNCATE TABLE")
+        && sql.includes("campaign_os.verification_attempt_finalization_results");
+    case "commit":
+      return sql === "COMMIT";
+  }
+};
+
+class FaultInjectingPostgresPool implements PostgresCampaignStorePool {
+  readonly end = vi.fn(async () => undefined);
+  private faultPoint: PostgresFaultPoint | undefined;
+  private faulted = false;
+
+  constructor(private readonly delegate: Pool) {}
+
+  arm(point: PostgresFaultPoint) {
+    this.faultPoint = point;
+    this.faulted = false;
+  }
+
+  async query(text: string, values: readonly unknown[] = []) {
+    const result = await this.delegate.query(text, [...values]);
+    return { rows: result.rows as Array<Record<string, unknown>> };
+  }
+
+  async connect() {
+    const client = await this.delegate.connect();
+    return {
+      query: async (text: string, values: readonly unknown[] = []) => {
+        const normalized = normalizeSql(text);
+        if (
+          this.faultPoint
+          && !this.faulted
+          && matchesPostgresFault(this.faultPoint, normalized)
+        ) {
+          this.faulted = true;
+          throw Object.assign(new Error(`private fault at ${this.faultPoint}`), { code: "XX000" });
+        }
+        const result = await client.query(text, [...values]);
+        return { rows: result.rows as Array<Record<string, unknown>> };
+      },
+      release: () => client.release(),
+    };
+  }
+}
+
+class LostCommitResponsePostgresPool implements PostgresCampaignStorePool {
+  readonly end = vi.fn(async () => undefined);
+  private armed = false;
+  private lost = false;
+
+  constructor(private readonly delegate: Pool) {}
+
+  arm() {
+    this.armed = true;
+  }
+
+  async query(text: string, values: readonly unknown[] = []) {
+    const result = await this.delegate.query(text, [...values]);
+    return { rows: result.rows as Array<Record<string, unknown>> };
+  }
+
+  async connect() {
+    const client = await this.delegate.connect();
+    return {
+      query: async (text: string, values: readonly unknown[] = []) => {
+        const result = await client.query(text, [...values]);
+        if (this.armed && !this.lost && normalizeSql(text) === "COMMIT") {
+          this.lost = true;
+          throw Object.assign(new Error("private commit response lost"), { code: "XX000" });
+        }
+        return { rows: result.rows as Array<Record<string, unknown>> };
+      },
+      release: () => client.release(),
+    };
+  }
+}
+
+class GatedPostgresPool implements PostgresCampaignStorePool {
+  readonly end = vi.fn(async () => undefined);
+  readonly entered: Promise<void>;
+  private enter: (() => void) | undefined;
+  private open: (() => void) | undefined;
+  private readonly opened: Promise<void>;
+  private blocked = false;
+
+  constructor(
+    private readonly delegate: Pool,
+    private readonly shouldGate: (sql: string) => boolean,
+  ) {
+    this.entered = new Promise<void>((resolve) => {
+      this.enter = resolve;
+    });
+    this.opened = new Promise<void>((resolve) => {
+      this.open = resolve;
+    });
+  }
+
+  releaseGate() {
+    this.open?.();
+  }
+
+  async query(text: string, values: readonly unknown[] = []) {
+    const result = await this.delegate.query(text, [...values]);
+    return { rows: result.rows as Array<Record<string, unknown>> };
+  }
+
+  async connect() {
+    const client = await this.delegate.connect();
+    return {
+      query: async (text: string, values: readonly unknown[] = []) => {
+        const normalized = normalizeSql(text);
+        if (!this.blocked && this.shouldGate(normalized)) {
+          this.blocked = true;
+          this.enter?.();
+          await this.opened;
+        }
+        const result = await client.query(text, [...values]);
+        return { rows: result.rows as Array<Record<string, unknown>> };
+      },
+      release: () => client.release(),
+    };
+  }
+}
+
+const postgresPoolConfig = (databaseUrl: string) => {
+  const parsed = new URL(databaseUrl);
+  const loopback = parsed.hostname === "127.0.0.1"
+    || parsed.hostname === "localhost"
+    || parsed.hostname === "::1";
+  const sslMode = process.env.CAMPAIGN_OS_DATABASE_SSL_MODE?.trim()
+    || (loopback ? "disable" : "verify-full");
+  const config = resolveCampaignOsCampaignDbConfig({
+    databaseUrl,
+    env: {},
+    mode: "postgres",
+    sslMode,
+  });
+  if (config.mode !== "postgres") {
+    throw new Error("PostgreSQL attempt acceptance did not resolve PostgreSQL mode.");
+  }
+  return config.pool;
+};
+
+const migrationPoolAdapter = (pool: Pool): PostgresMigrationPool => ({
+  connect: async () => {
+    const client = await pool.connect();
+    return {
+      query: async (text, values = []) => {
+        const result = await client.query(text, [...values]);
+        return { rows: result.rows as Array<Record<string, unknown>> };
+      },
+      release: () => client.release(),
+    };
+  },
+  end: async () => pool.end(),
+});
+
+postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", () => {
+  const databaseName = `campaign_os_wp02_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  let adminPool: Pool | undefined;
+  let databasePool: Pool | undefined;
+  let migrations: PostgresMigrationDefinition[] = [];
+
+  const requiredDatabasePool = () => {
+    if (!databasePool) {
+      throw new Error("PostgreSQL attempt acceptance database is not initialized.");
+    }
+    return databasePool;
+  };
+
+  const seedVerificationTask = async (taskDraft: CampaignDbTaskDraft) => {
+    const store = createPostgresCampaignDurableStore({
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    await store.createTaskDraft(taskDraft, {
+      traceId: `trace-seed-${taskDraft.id}`,
+    });
+    await store.close();
+  };
+
+  beforeAll(async () => {
+    adminPool = new pg.Pool(postgresPoolConfig(TEST_DATABASE_URL!));
+    await adminPool.query(`CREATE DATABASE "${databaseName}"`);
+
+    const isolatedUrl = new URL(TEST_DATABASE_URL!);
+    isolatedUrl.pathname = `/${databaseName}`;
+    isolatedUrl.search = "";
+    databasePool = new pg.Pool(postgresPoolConfig(isolatedUrl.toString()));
+    migrations = await loadPostgresMigrations();
+    expect(migrations.map(({ id }) => id)).toEqual([
+      "0001_campaign_runtime",
+      "0002_admin_review_export",
+      "0003_admin_review_rank_projection",
+      "0004_live_provider_task_verification",
+    ]);
+    const migration = await runPostgresMigrations({
+      approved: true,
+      migrations,
+      mode: "apply",
+      pool: migrationPoolAdapter(databasePool),
+      traceId: "m243-wp02-postgres-migration",
+    });
+    expect(migration.status).toBe("ready");
+    expect(migration.pendingMigrationIds).toEqual([]);
+    const seedStore = createPostgresCampaignDurableStore({
+      ownsPool: false,
+      pool: databasePool,
+    });
+    await seedStore.create(campaign(), { traceId: "trace-postgres-attempt-seed-campaign" });
+    await seedStore.createTaskDraft(task(), { traceId: "trace-postgres-attempt-seed-task" });
+    await seedStore.close();
+  }, 60_000);
+
+  beforeEach(async () => {
+    const client = await requiredDatabasePool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempt_finalization_results
+         DISABLE TRIGGER verification_attempt_finalization_results_append_only`,
+      );
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempts
+         DISABLE TRIGGER verification_attempt_terminal_immutability`,
+      );
+      await client.query("DELETE FROM campaign_os.verification_attempt_finalization_results");
+      await client.query("DELETE FROM campaign_os.campaign_task_evidence");
+      await client.query("DELETE FROM campaign_os.campaign_task_completions");
+      await client.query("DELETE FROM campaign_os.verification_attempts");
+      await client.query("DELETE FROM campaign_os.campaign_participants");
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempts
+         ENABLE TRIGGER verification_attempt_terminal_immutability`,
+      );
+      await client.query(
+        `ALTER TABLE campaign_os.verification_attempt_finalization_results
+         ENABLE TRIGGER verification_attempt_finalization_results_append_only`,
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  });
+
+  afterAll(async () => {
+    const cleanupErrors: unknown[] = [];
+    if (databasePool) {
+      try {
+        await databasePool.end();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (adminPool) {
+      try {
+        await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await adminPool.end();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new Error(`PostgreSQL attempt acceptance cleanup failed (${cleanupErrors.length} errors).`);
+    }
+  }, 60_000);
+
+  it("allows empty maintenance down in a rollback-only transaction and refuses it once attempt data exists", async () => {
+    const downSql = migrations.find(({ id }) => id === "0004_live_provider_task_verification")?.downSql;
+    expect(downSql).toBeDefined();
+    const client = await requiredDatabasePool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(downSql!);
+      const insideDown = await client.query(
+        `SELECT to_regclass('campaign_os.verification_attempts') AS attempt_table,
+          EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'campaign_task_evidence_live_provider_executed_check'
+          ) AS legacy_constraint`,
+      );
+      expect(insideDown.rows[0]).toMatchObject({ attempt_table: null, legacy_constraint: true });
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+
+    const traceId = "trace-postgres-attempt-down-guard";
+    const identity = verificationIdentity(traceId);
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-down-guard",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-down-guard",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    await store.taskVerificationAttempts!.begin(verificationBeginInput(identity, traceId));
+    await expect(requiredDatabasePool().query(downSql!)).rejects.toMatchObject({ code: "55000" });
+    const retained = await requiredDatabasePool().query(
+      "SELECT to_regclass('campaign_os.verification_attempts') AS attempt_table",
+    );
+    expect(retained.rows[0]?.attempt_table).toBeTruthy();
+    await store.close();
+  });
+
+  it("resets finalized provider facts only in test mode and restores snapshot protection", async () => {
+    let sequence = 0;
+    const store = createPostgresCampaignDurableStore({
+      allowTestReset: true,
+      attemptId: () => `attempt-postgres-reset-lifecycle-${++sequence}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-reset-lifecycle-${sequence}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const finalizePositive = async (traceId: string) => {
+      const acquired = await store.taskVerificationAttempts!.begin(
+        verificationBeginInput(verificationIdentity(traceId), traceId),
+      );
+      expect(acquired.kind).toBe("acquired");
+      if (acquired.kind !== "acquired") {
+        throw new Error("Expected reset lifecycle owner.");
+      }
+      await store.taskVerificationAttempts!.markTransportStarted({
+        owner: acquired.owner,
+        requestDigest: ATTEMPT_REQUEST_DIGEST,
+        traceId,
+      });
+      const finalized = await store.taskVerificationAttempts!.finalize(
+        verificationFinalizeInput(acquired.owner, traceId),
+      );
+      expect(finalized.kind).toBe("committed");
+      return finalized.attempt.id;
+    };
+    const expectSnapshotProtection = async (attemptId: string) => {
+      await expect(requiredDatabasePool().query(
+        `UPDATE campaign_os.verification_attempt_finalization_results
+         SET participant_snapshot = jsonb_set(
+           participant_snapshot,
+           '{total_points}',
+           '999'::jsonb
+         )
+         WHERE attempt_id = $1`,
+        [attemptId],
+      )).rejects.toMatchObject({ code: "55000" });
+      await expect(requiredDatabasePool().query(
+        `DELETE FROM campaign_os.verification_attempt_finalization_results
+         WHERE attempt_id = $1`,
+        [attemptId],
+      )).rejects.toMatchObject({ code: "55000" });
+      await expect(requiredDatabasePool().query(
+        "TRUNCATE TABLE campaign_os.verification_attempt_finalization_results",
+      )).rejects.toMatchObject({ code: "55000" });
+    };
+
+    const firstAttemptId = await finalizePositive("trace-postgres-reset-lifecycle-first");
+    const faultPool = new FaultInjectingPostgresPool(requiredDatabasePool());
+    faultPool.arm("reset_truncate");
+    const failingResetStore = createPostgresCampaignDurableStore({
+      allowTestReset: true,
+      ownsPool: false,
+      pool: faultPool,
+    });
+    await expect(failingResetStore.reset()).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "reset",
+    });
+    await failingResetStore.close();
+    await expectSnapshotProtection(firstAttemptId);
+
+    await store.reset();
+    await expect(store.manifest({ traceId: "trace-postgres-reset-lifecycle-manifest" }))
+      .resolves.toMatchObject({
+        completionRecordCount: 0,
+        participantRecordCount: 0,
+        recordCount: 0,
+        referralBindingRecordCount: 0,
+        taskEvidenceRecordCount: 0,
+        taskRecordCount: 0,
+        verificationAttemptRecordCount: 0,
+      });
+    await expect(requiredDatabasePool().query(
+      `SELECT COUNT(*)::integer AS count
+       FROM campaign_os.verification_attempt_finalization_results`,
+    )).resolves.toMatchObject({ rows: [{ count: 0 }] });
+
+    await store.create(campaign(), { traceId: "trace-postgres-reset-lifecycle-campaign" });
+    await store.createTaskDraft(task(), { traceId: "trace-postgres-reset-lifecycle-task" });
+    const secondAttemptId = await finalizePositive("trace-postgres-reset-lifecycle-second");
+    await expectSnapshotProtection(secondAttemptId);
+    await store.close();
+  });
+
+  it("issues one owner and one row across twenty concurrent begin calls", async () => {
+    const traceId = "trace-postgres-attempt-concurrent";
+    const identity = verificationIdentity(traceId);
+    let tokenSequence = 0;
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-concurrent",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-${++tokenSequence}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+
+    const results = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+      store.taskVerificationAttempts!.begin(verificationBeginInput(
+        identity,
+        `${traceId}-${index}`,
+      ))));
+
+    expect(results.filter(({ kind }) => kind === "acquired")).toHaveLength(1);
+    expect(results.filter(({ kind }) => kind === "in_progress")).toHaveLength(19);
+    expect(JSON.stringify(results)).not.toContain("owner-token-postgres");
+    const rows = await requiredDatabasePool().query(
+      `SELECT COUNT(*)::integer AS count, MIN(attempt_count)::integer AS attempt_count,
+        MIN(fence)::integer AS fence, MIN(lease_token_hash) AS lease_token_hash
+       FROM campaign_os.verification_attempts`,
+    );
+    expect(rows.rows[0]).toMatchObject({ count: 1, attempt_count: 1, fence: 1 });
+    expect(rows.rows[0]?.lease_token_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(rows.rows[0]?.lease_token_hash).not.toContain("owner-token-postgres");
+    await store.close();
+  });
+
+  it("begins a Stage attempt for an issued dotted local-review wallet", async () => {
+    const traceId = "trace-postgres-stage-dotted-wallet";
+    const stageTask = task({
+      evidenceRule: {
+        chainId: "AELF",
+        expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
+        providerBindingId: "stage-on-chain-v1",
+        source: "AELFSCAN",
+      },
+      id: "task-postgres-stage-dotted-wallet",
+      updatedAt: "2026-07-17T19:47:45.354Z",
+    });
+    await seedVerificationTask(stageTask);
+    const identity = deriveTaskVerificationIdentity(issueTrustedTaskVerificationIdentityInput({
+      binding: {
+        bindingId: "stage-on-chain-v1",
+        bindingRevision: 1,
+      },
+      issuedSubject: {
+        accountType: "EOA",
+        sessionRef: "session-postgres-stage-dotted-wallet",
+        walletAddress: "8A2...1eF",
+        walletSource: "PORTKEY_EOA_APP",
+      },
+      task: createCanonicalTaskVerificationRevision({
+        campaignId: stageTask.campaignId,
+        evidenceRule: stageTask.evidenceRule,
+        points: stageTask.points,
+        required: stageTask.required,
+        revision: stageTask.revision ?? 1,
+        taskId: stageTask.id,
+        traceId,
+        updatedAt: stageTask.updatedAt,
+        verificationType: stageTask.verificationType,
+        walletPolicy: stageTask.walletCompatibility,
+      }),
+      traceId,
+    }));
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-stage-dotted-wallet",
+      now: () => "2026-07-18T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-stage-dotted-wallet",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+
+    await expect(store.taskVerificationAttempts!.begin({
+      identity,
+      leaseDurationMs: 15_000,
+      maxAttempts: 3,
+      providerRef: "stage-on-chain-v1",
+      traceId,
+      verificationType: "ON_CHAIN",
+    })).resolves.toMatchObject({
+      attempt: {
+        bindingId: "stage-on-chain-v1",
+        taskId: stageTask.id,
+        walletAddress: "8A2...1eF",
+      },
+      kind: "acquired",
+    });
+    await expect(requiredDatabasePool().query(
+      `SELECT wallet_address, binding_id
+       FROM campaign_os.verification_attempts
+       WHERE task_id = $1`,
+      [stageTask.id],
+    )).resolves.toMatchObject({
+      rows: [{
+        binding_id: "stage-on-chain-v1",
+        wallet_address: "8A2...1eF",
+      }],
+    });
+    await store.close();
+  });
+
+  it("serializes twenty concurrent dispatch markers and finalizers to one terminal write", async () => {
+    const traceId = "trace-postgres-attempt-concurrent-finalize";
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-concurrent-finalize",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-concurrent-finalize",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const acquired = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(verificationIdentity(traceId), traceId),
+    );
+    expect(acquired.kind).toBe("acquired");
+    if (acquired.kind !== "acquired") {
+      throw new Error("Expected concurrent-finalize PostgreSQL attempt owner.");
+    }
+
+    const markers = await Promise.all(Array.from({ length: 20 }, () =>
+      store.taskVerificationAttempts!.markTransportStarted({
+        owner: acquired.owner,
+        requestDigest: ATTEMPT_REQUEST_DIGEST,
+        traceId,
+      })));
+    expect(markers.filter(({ kind }) => kind === "marked")).toHaveLength(1);
+    expect(markers.filter(({ kind }) => kind === "already_marked_same_owner")).toHaveLength(19);
+
+    const finalization = verificationFinalizeInput(acquired.owner, traceId);
+    const results = await Promise.all(Array.from({ length: 20 }, () =>
+      store.taskVerificationAttempts!.finalize(finalization)));
+    expect(results.filter(({ kind }) => kind === "committed")).toHaveLength(1);
+    expect(results.filter(({ kind }) => kind === "terminal_replay")).toHaveLength(19);
+    expect(new Set(results.map((result) => result.writeResult?.completion.id))).toEqual(
+      new Set(["completion-postgres-attempt"]),
+    );
+    const counts = await requiredDatabasePool().query(
+      `SELECT
+        (SELECT COUNT(*) FROM campaign_os.verification_attempts) AS attempts,
+        (SELECT COUNT(*) FROM campaign_os.campaign_task_completions) AS completions,
+        (SELECT COUNT(*) FROM campaign_os.campaign_task_evidence) AS evidence,
+        (SELECT COUNT(*) FROM campaign_os.campaign_participants) AS participants`,
+    );
+    expect(counts.rows[0]).toMatchObject({
+      attempts: "1",
+      completions: "1",
+      evidence: "1",
+      participants: "1",
+    });
+    await store.close();
+  });
+
+  it("commits dispatch and positive finalize once, then replays exact canonical rows after restart", async () => {
+    const traceId = "trace-postgres-attempt-finalize";
+    const identity = verificationIdentity(traceId);
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-finalize",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-finalize",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const acquired = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    );
+    expect(acquired.kind).toBe("acquired");
+    if (acquired.kind !== "acquired") {
+      throw new Error("Expected PostgreSQL attempt owner.");
+    }
+
+    await expect(store.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(acquired.owner, traceId),
+    )).resolves.toMatchObject({ kind: "blocked" });
+    await expect(store.taskVerificationAttempts!.markTransportStarted({
+      owner: acquired.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    })).resolves.toMatchObject({ kind: "marked" });
+    await expect(store.taskVerificationAttempts!.markTransportStarted({
+      owner: acquired.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    })).resolves.toMatchObject({ kind: "already_marked_same_owner" });
+
+    const finalization = verificationFinalizeInput(acquired.owner, traceId);
+    const committed = await store.taskVerificationAttempts!.finalize(finalization);
+    const replay = await store.taskVerificationAttempts!.finalize(finalization);
+    const conflict = await store.taskVerificationAttempts!.finalize({
+      ...finalization,
+      responseDigest: "d".repeat(64),
+    });
+    expect(committed).toMatchObject({
+      attempt: {
+        dispatchState: "result_observed",
+        evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+        id: "attempt-postgres-finalize",
+        responseDigest: ATTEMPT_RESPONSE_DIGEST,
+        status: "completed",
+      },
+      kind: "committed",
+      writeResult: {
+        completion: { id: "completion-postgres-attempt", verificationAttemptId: "attempt-postgres-finalize" },
+        evidence: { id: "evidence-postgres-attempt", liveProviderExecuted: true },
+        participant: { totalPoints: 120 },
+      },
+    });
+    expect(replay).toEqual({ ...committed, kind: "terminal_replay" });
+    expect(conflict).toMatchObject({ kind: "conflict" });
+
+    const facts = await requiredDatabasePool().query(
+      `SELECT
+        (SELECT COUNT(*) FROM campaign_os.verification_attempts) AS attempts,
+        (SELECT COUNT(*) FROM campaign_os.campaign_task_completions) AS completions,
+        (SELECT COUNT(*) FROM campaign_os.campaign_task_evidence) AS evidence,
+        (SELECT COUNT(*) FROM campaign_os.campaign_participants) AS participants`,
+    );
+    expect(facts.rows[0]).toMatchObject({
+      attempts: "1",
+      completions: "1",
+      evidence: "1",
+      participants: "1",
+    });
+    await expect(requiredDatabasePool().query(
+      `UPDATE campaign_os.campaign_task_evidence
+       SET evidence_hash = $1
+       WHERE verification_attempt_id = $2`,
+      ["e".repeat(64), "attempt-postgres-finalize"],
+    )).rejects.toMatchObject({ code: "23514" });
+    await store.close();
+
+    const restarted = createPostgresCampaignDurableStore({
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const beginReplay = await restarted.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, "trace-postgres-attempt-restart", {
+        maxAttempts: 1,
+        providerRef: "provider-postgres-deactivated",
+      }),
+    );
+    expect(beginReplay).toEqual({
+      attempt: committed.attempt,
+      kind: "existing_terminal",
+    });
+    const restartTraceId = "trace-postgres-attempt-restart-finalize";
+    await expect(restarted.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(acquired.owner, restartTraceId),
+    )).resolves.toMatchObject({
+      attempt: { id: "attempt-postgres-finalize", status: "completed" },
+      kind: "terminal_replay",
+      writeResult: {
+        completion: { id: "completion-postgres-attempt" },
+        evidence: { id: "evidence-postgres-attempt" },
+        participant: { totalPoints: 120 },
+      },
+    });
+    const tamperedReplay = verificationFinalizeInput(acquired.owner, restartTraceId);
+    tamperedReplay.write = {
+      ...tamperedReplay.write!,
+      evidence: {
+        ...tamperedReplay.write!.evidence,
+        evidenceRef: "provider-evidence:tampered-replay",
+      },
+    };
+    await expect(restarted.taskVerificationAttempts!.finalize(tamperedReplay))
+      .resolves.toMatchObject({ kind: "conflict" });
+    await expect(restarted.taskVerificationAttempts!.get(
+      "attempt-postgres-finalize",
+      { traceId: "trace-postgres-attempt-restart-get" },
+    )).resolves.toMatchObject({ status: "completed" });
+    await restarted.close();
+  });
+
+  it.each([
+    "revision",
+    "task_digest",
+    "evidence_rule_digest",
+  ] as const)("rejects a stale Task %s at begin without creating an attempt", async (mismatch) => {
+    const traceId = `trace-postgres-attempt-stale-begin-${mismatch}`;
+    const taskV1 = task({
+      id: `task-postgres-stale-begin-${mismatch}`,
+      updatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    await seedVerificationTask(taskV1);
+    const identityTask = mismatch === "task_digest"
+      ? task({ ...taskV1, updatedAt: "2026-07-08T00:01:00.000Z" })
+      : mismatch === "evidence_rule_digest"
+      ? task({ ...taskV1, evidenceRule: { minAmount: 2, source: "AELFSCAN" } })
+      : taskV1;
+    const staleIdentity = verificationIdentityForTask(traceId, identityTask);
+    if (mismatch === "revision") {
+      await requiredDatabasePool().query(
+        `UPDATE campaign_os.campaign_tasks
+         SET revision = 2, points = 180, updated_at = '2026-07-08T00:01:00.000Z'
+         WHERE campaign_id = $1 AND id = $2`,
+        [taskV1.campaignId, taskV1.id],
+      );
+    }
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => `attempt-postgres-stale-begin-${mismatch}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-stale-begin-${mismatch}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+
+    await expect(store.taskVerificationAttempts!.begin(
+      verificationBeginInput(staleIdentity, traceId),
+    )).rejects.toMatchObject({
+      code: "TASK_VERIFICATION_ATTEMPT_INPUT_INVALID",
+      field: "identity.taskRevisionDigest",
+      traceId,
+    });
+    await expect(requiredDatabasePool().query(
+      "SELECT COUNT(*)::integer AS count FROM campaign_os.verification_attempts WHERE task_id = $1",
+      [taskV1.id],
+    )).resolves.toMatchObject({ rows: [{ count: 0 }] });
+    await store.close();
+  });
+
+  it.each([
+    "updated_after_begin",
+    "updated_after_transport_started",
+    "deleted_after_transport_started",
+  ] as const)("blocks positive finalize when the current Task is %s", async (mutation) => {
+    const traceId = `trace-postgres-attempt-${mutation}`;
+    const taskV1 = task({
+      id: `task-postgres-${mutation}`,
+      updatedAt: "2026-07-09T00:00:00.000Z",
+    });
+    await seedVerificationTask(taskV1);
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => `attempt-postgres-${mutation}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-${mutation}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const acquired = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(verificationIdentityForTask(traceId, taskV1), traceId),
+    );
+    expect(acquired.kind).toBe("acquired");
+    if (acquired.kind !== "acquired") {
+      throw new Error("Expected stale-Task test owner.");
+    }
+
+    if (mutation === "updated_after_begin") {
+      await requiredDatabasePool().query(
+        `UPDATE campaign_os.campaign_tasks
+         SET revision = 2, points = 180, updated_at = '2026-07-09T00:01:00.000Z'
+         WHERE campaign_id = $1 AND id = $2`,
+        [taskV1.campaignId, taskV1.id],
+      );
+    }
+    await store.taskVerificationAttempts!.markTransportStarted({
+      owner: acquired.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    });
+    if (mutation === "updated_after_transport_started") {
+      await requiredDatabasePool().query(
+        `UPDATE campaign_os.campaign_tasks
+         SET revision = 2, points = 180, updated_at = '2026-07-09T00:01:00.000Z'
+         WHERE campaign_id = $1 AND id = $2`,
+        [taskV1.campaignId, taskV1.id],
+      );
+    } else if (mutation === "deleted_after_transport_started") {
+      await requiredDatabasePool().query(
+        "DELETE FROM campaign_os.campaign_tasks WHERE campaign_id = $1 AND id = $2",
+        [taskV1.campaignId, taskV1.id],
+      );
+    }
+
+    await expect(store.taskVerificationAttempts!.finalize(
+      verificationFinalizeInputForTask(acquired.owner, traceId, taskV1, {
+        evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+        evidenceRef: `provider-evidence:${mutation}`,
+        idSuffix: `postgres-${mutation}`,
+        responseDigest: ATTEMPT_RESPONSE_DIGEST,
+      }),
+    )).resolves.toMatchObject({
+      attempt: { dispatchState: "started", status: "running" },
+      kind: "blocked",
+    });
+    const facts = await requiredDatabasePool().query(
+      `SELECT
+        (SELECT COUNT(*)::integer FROM campaign_os.campaign_task_completions WHERE task_id = $1) AS completions,
+        (SELECT COUNT(*)::integer FROM campaign_os.campaign_task_evidence WHERE task_id = $1) AS evidence,
+        (SELECT status FROM campaign_os.verification_attempts WHERE task_id = $1) AS attempt_status`,
+      [taskV1.id],
+    );
+    expect(facts.rows[0]).toEqual({
+      attempt_status: "running",
+      completions: 0,
+      evidence: 0,
+    });
+    await store.close();
+  });
+
+  it.each([
+    {
+      evidenceRule: { minAmount: 1, source: "AELFSCAN" },
+      label: "newer points revision",
+      points: 180,
+      suffix: "points-rollover",
+    },
+    {
+      evidenceRule: { minAmount: 2, source: "AELFSCAN" },
+      label: "newer evidence-rule revision",
+      points: 120,
+      suffix: "rule-rollover",
+    },
+  ])("rolls canonical projection to the $label with stable IDs", async ({
+    evidenceRule,
+    points,
+    suffix,
+  }) => {
+    const traceV1 = `trace-postgres-${suffix}-v1`;
+    const traceV2 = `trace-postgres-${suffix}-v2`;
+    const taskV1 = task({
+      id: `task-postgres-${suffix}`,
+      updatedAt: "2026-07-10T00:00:00.000Z",
+    });
+    await seedVerificationTask(taskV1);
+    let attemptSequence = 0;
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => `attempt-postgres-${suffix}-${++attemptSequence}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-${suffix}-${attemptSequence}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const identityV1 = verificationIdentityForTask(traceV1, taskV1);
+    const first = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(identityV1, traceV1),
+    );
+    expect(first.kind).toBe("acquired");
+    if (first.kind !== "acquired") {
+      throw new Error("Expected revision-one rollover owner.");
+    }
+    await store.taskVerificationAttempts!.markTransportStarted({
+      owner: first.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId: traceV1,
+    });
+    const firstFinalizeInput = verificationFinalizeInputForTask(first.owner, traceV1, taskV1, {
+      evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+      evidenceRef: `provider-evidence:${suffix}:v1`,
+      idSuffix: `${suffix}-v1`,
+      responseDigest: ATTEMPT_RESPONSE_DIGEST,
+    });
+    const firstFinalized = await store.taskVerificationAttempts!.finalize(firstFinalizeInput);
+    expect(firstFinalized.kind).toBe("committed");
+
+    const taskV2 = task({
+      ...taskV1,
+      evidenceRule,
+      points,
+      revision: 2,
+      updatedAt: "2026-07-10T00:01:00.000Z",
+    });
+    await requiredDatabasePool().query(
+      `UPDATE campaign_os.campaign_tasks
+       SET revision = 2, points = $3, evidence_rule = $4::jsonb,
+         updated_at = '2026-07-10T00:01:00.000Z'
+       WHERE campaign_id = $1 AND id = $2`,
+      [taskV2.campaignId, taskV2.id, taskV2.points, JSON.stringify(taskV2.evidenceRule)],
+    );
+    const identityV2 = verificationIdentityForTask(traceV2, taskV2);
+    expect(identityV2.taskRevisionDigest).not.toBe(identityV1.taskRevisionDigest);
+    if (suffix === "rule-rollover") {
+      expect(identityV2.evidenceRuleDigest).not.toBe(identityV1.evidenceRuleDigest);
+    }
+    const second = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(identityV2, traceV2),
+    );
+    expect(second.kind).toBe("acquired");
+    if (second.kind !== "acquired") {
+      throw new Error("Expected revision-two rollover owner.");
+    }
+    await store.taskVerificationAttempts!.markTransportStarted({
+      owner: second.owner,
+      requestDigest: "d".repeat(64),
+      traceId: traceV2,
+    });
+    const secondFinalized = await store.taskVerificationAttempts!.finalize(
+      verificationFinalizeInputForTask(second.owner, traceV2, taskV2, {
+        evidenceHash: "e".repeat(64),
+        evidenceRef: `provider-evidence:${suffix}:v2`,
+        idSuffix: `${suffix}-v2`,
+        responseDigest: "f".repeat(64),
+      }),
+    );
+
+    expect(secondFinalized).toMatchObject({
+      kind: "committed",
+      writeResult: {
+        completion: {
+          id: `completion-${suffix}-v1`,
+          pointsAwarded: points,
+          verificationAttemptId: second.attempt.id,
+        },
+        evidence: {
+          id: `evidence-${suffix}-v1`,
+          pointsAwarded: points,
+          verificationAttemptId: second.attempt.id,
+        },
+        participant: { totalPoints: points },
+      },
+    });
+    await expect(store.taskVerificationAttempts!.get(first.attempt.id, {
+      traceId: `trace-postgres-${suffix}-immutable-v1`,
+    })).resolves.toEqual(firstFinalized.attempt);
+    const lineage = await requiredDatabasePool().query(
+      `SELECT id, task_revision, status, evidence_ref
+       FROM campaign_os.verification_attempts
+       WHERE task_id = $1
+       ORDER BY task_revision`,
+      [taskV1.id],
+    );
+    expect(lineage.rows).toEqual([
+      {
+        evidence_ref: `provider-evidence:${suffix}:v1`,
+        id: first.attempt.id,
+        status: "completed",
+        task_revision: 1,
+      },
+      {
+        evidence_ref: `provider-evidence:${suffix}:v2`,
+        id: second.attempt.id,
+        status: "completed",
+        task_revision: 2,
+      },
+    ]);
+    await expect(store.taskVerificationAttempts!.finalize(firstFinalizeInput)).resolves.toEqual({
+      ...firstFinalized,
+      kind: "terminal_replay",
+    });
+    await store.close();
+  });
+
+  it("replays the immutable Participant projection after another Task changes points", async () => {
+    const firstTask = task({
+      id: "task-postgres-participant-snapshot-first",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const secondTask = task({
+      id: "task-postgres-participant-snapshot-second",
+      points: 75,
+      updatedAt: "2026-07-11T00:01:00.000Z",
+    });
+    await seedVerificationTask(firstTask);
+    await seedVerificationTask(secondTask);
+    let attemptSequence = 0;
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => `attempt-postgres-participant-snapshot-${++attemptSequence}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-participant-snapshot-${attemptSequence}`,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+
+    const finalizeTask = async (
+      taskDraft: CampaignDbTaskDraft,
+      traceId: string,
+      digestSeed: string,
+      suffix: string,
+    ) => {
+      const acquired = await store.taskVerificationAttempts!.begin(
+        verificationBeginInput(verificationIdentityForTask(traceId, taskDraft), traceId),
+      );
+      expect(acquired.kind).toBe("acquired");
+      if (acquired.kind !== "acquired") {
+        throw new Error("Expected Participant snapshot test owner.");
+      }
+      await store.taskVerificationAttempts!.markTransportStarted({
+        owner: acquired.owner,
+        requestDigest: digestSeed.repeat(64),
+        traceId,
+      });
+      const finalizeInput = verificationFinalizeInputForTask(
+        acquired.owner,
+        traceId,
+        taskDraft,
+        {
+          evidenceHash: String(Number(digestSeed) + 2).repeat(64),
+          evidenceRef: `provider-evidence:${suffix}`,
+          idSuffix: suffix,
+          responseDigest: String(Number(digestSeed) + 1).repeat(64),
+        },
+      );
+      const finalized = await store.taskVerificationAttempts!.finalize(finalizeInput);
+      expect(finalized.kind).toBe("committed");
+      return { finalizeInput, finalized };
+    };
+
+    const first = await finalizeTask(
+      firstTask,
+      "trace-postgres-participant-snapshot-first",
+      "1",
+      "participant-snapshot-first",
+    );
+    expect(first.finalized.writeResult?.participant.totalPoints).toBe(120);
+    await expect(requiredDatabasePool().query(
+      `UPDATE campaign_os.verification_attempt_finalization_results
+       SET participant_snapshot = jsonb_set(participant_snapshot, '{total_points}', '999'::jsonb)
+       WHERE attempt_id = $1`,
+      [first.finalized.attempt.id],
+    )).rejects.toMatchObject({ code: "55000" });
+    await expect(requiredDatabasePool().query(
+      `DELETE FROM campaign_os.verification_attempt_finalization_results
+       WHERE attempt_id = $1`,
+      [first.finalized.attempt.id],
+    )).rejects.toMatchObject({ code: "55000" });
+    const second = await finalizeTask(
+      secondTask,
+      "trace-postgres-participant-snapshot-second",
+      "4",
+      "participant-snapshot-second",
+    );
+    expect(second.finalized.writeResult?.participant.totalPoints).toBe(195);
+
+    await expect(store.taskVerificationAttempts!.finalize(first.finalizeInput)).resolves.toEqual({
+      ...first.finalized,
+      kind: "terminal_replay",
+    });
+    await store.close();
+  });
+
+  it("preserves pending canonical IDs and concurrent Participant facts during positive finalize", async () => {
+    const traceId = "trace-postgres-attempt-stable-linkage";
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-stable-linkage",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-stable-linkage",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const acquired = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(verificationIdentity(traceId), traceId),
+    );
+    expect(acquired.kind).toBe("acquired");
+    if (acquired.kind !== "acquired") {
+      throw new Error("Expected stable-linkage PostgreSQL attempt owner.");
+    }
+
+    await store.upsertTaskCompletion(completion({
+      completedAt: undefined,
+      evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+      evidenceId: "evidence-postgres-existing",
+      id: "completion-postgres-existing",
+      pointsAwarded: 0,
+      status: "pending",
+      verificationAttemptId: acquired.attempt.id,
+    }), { traceId });
+    await store.upsertTaskEvidence(evidence({
+      completionId: "completion-postgres-existing",
+      diagnosticCodes: ["PROVIDER_PENDING"],
+      evidenceHash: ATTEMPT_EVIDENCE_DIGEST,
+      id: "evidence-postgres-existing",
+      liveProviderExecuted: false,
+      pointsAwarded: 0,
+      status: "pending",
+      verificationAttemptId: acquired.attempt.id,
+    }), { traceId });
+    await store.upsertParticipant(participant({
+      localePreference: "zh-CN",
+      riskFlags: ["concurrent-risk-review"],
+      totalPoints: 0,
+      updatedAt: "2026-07-16T00:00:05.000Z",
+      walletSignatureStatus: "missing",
+      walletTypeVerified: false,
+    }), { traceId });
+    await store.taskVerificationAttempts!.markTransportStarted({
+      owner: acquired.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    });
+
+    const finalized = await store.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(acquired.owner, traceId),
+    );
+
+    expect(finalized).toMatchObject({
+      kind: "committed",
+      writeResult: {
+        completion: {
+          evidenceId: "evidence-postgres-existing",
+          id: "completion-postgres-existing",
+        },
+        evidence: {
+          completionId: "completion-postgres-existing",
+          id: "evidence-postgres-existing",
+          liveProviderExecuted: true,
+        },
+        participant: {
+          localePreference: "zh-CN",
+          riskFlags: ["concurrent-risk-review"],
+          totalPoints: 120,
+          walletSignatureStatus: "missing",
+          walletTypeVerified: false,
+        },
+      },
+    });
+    expect(finalized.writeResult?.participant.updatedAt).toBe("2026-07-16T00:00:05.000Z");
+
+    await expect(store.upsertTaskEvidence({
+      ...finalized.writeResult!.evidence,
+      diagnosticCodes: ["MUTATED_AFTER_COMPLETION"],
+    }, { traceId: "trace-postgres-attempt-evidence-mutation" })).rejects.toBeDefined();
+    await expect(store.upsertTaskCompletion({
+      ...finalized.writeResult!.completion,
+      pointsAwarded: 1,
+    }, { traceId: "trace-postgres-attempt-completion-mutation" })).rejects.toBeDefined();
+    await store.close();
+  });
+
+  it("replays canonical finalize rows after the COMMIT response is lost", async () => {
+    const traceId = "trace-postgres-attempt-lost-commit";
+    const lossyPool = new LostCommitResponsePostgresPool(requiredDatabasePool());
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-lost-commit",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-lost-commit",
+      ownsPool: false,
+      pool: lossyPool,
+    });
+    const acquired = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(verificationIdentity(traceId), traceId),
+    );
+    expect(acquired.kind).toBe("acquired");
+    if (acquired.kind !== "acquired") {
+      throw new Error("Expected lost-commit PostgreSQL attempt owner.");
+    }
+    await store.taskVerificationAttempts!.markTransportStarted({
+      owner: acquired.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    });
+    lossyPool.arm();
+
+    await expect(store.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(acquired.owner, traceId),
+    )).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "finalizeTaskVerificationAttempt",
+      traceId,
+    });
+    await store.close();
+
+    const replayTraceId = "trace-postgres-attempt-lost-commit-replay";
+    const restarted = createPostgresCampaignDurableStore({
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    await expect(restarted.taskVerificationAttempts!.begin(
+      verificationBeginInput(verificationIdentity(traceId), replayTraceId),
+    )).resolves.toMatchObject({ kind: "existing_terminal" });
+    await expect(restarted.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(acquired.owner, replayTraceId),
+    )).resolves.toMatchObject({
+      kind: "terminal_replay",
+      writeResult: {
+        completion: { id: "completion-postgres-attempt" },
+        evidence: { id: "evidence-postgres-attempt" },
+        participant: { totalPoints: 120 },
+      },
+    });
+    await restarted.close();
+  });
+
+  it("reclaims only expired not-started ownership and converts expired started work to manual review", async () => {
+    let now = "2026-07-16T00:00:00.000Z";
+    const traceId = "trace-postgres-attempt-recovery";
+    const identity = verificationIdentity(traceId);
+    const firstStore = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-recovery",
+      now: () => now,
+      ownerToken: () => "owner-token-postgres-first",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    const first = await firstStore.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    );
+    expect(first.kind).toBe("acquired");
+    if (first.kind !== "acquired") {
+      throw new Error("Expected first PostgreSQL recovery owner.");
+    }
+
+    const secondStore = createPostgresCampaignDurableStore({
+      now: () => now,
+      ownerToken: () => "owner-token-postgres-second",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    await expect(secondStore.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    )).resolves.toMatchObject({ kind: "in_progress" });
+
+    now = "2026-07-16T00:00:01.001Z";
+    const reclaimed = await secondStore.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    );
+    expect(reclaimed).toMatchObject({ attempt: { attemptCount: 2, fence: 2 }, kind: "acquired" });
+    if (reclaimed.kind !== "acquired") {
+      throw new Error("Expected reclaimed PostgreSQL recovery owner.");
+    }
+    await expect(firstStore.taskVerificationAttempts!.markTransportStarted({
+      owner: first.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    })).resolves.toMatchObject({ kind: "stale_owner" });
+    await expect(secondStore.taskVerificationAttempts!.markTransportStarted({
+      owner: reclaimed.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    })).resolves.toMatchObject({ kind: "marked" });
+    await expect(firstStore.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(first.owner, traceId),
+    )).resolves.toMatchObject({ kind: "stale_owner" });
+    await firstStore.close();
+    await secondStore.close();
+
+    now = "2026-07-16T00:00:02.002Z";
+    const recoveryStore = createPostgresCampaignDurableStore({
+      now: () => now,
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+    await expect(recoveryStore.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, "trace-postgres-attempt-recovery-runtime-b"),
+    )).resolves.toMatchObject({
+      attempt: {
+        diagnosticCodes: ["TASK_VERIFICATION_OUTCOME_UNKNOWN"],
+        dispatchState: "started",
+        retryPosture: "manual_review",
+        status: "manual_review",
+      },
+      kind: "recovery_required",
+    });
+    await expect(recoveryStore.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, "trace-postgres-attempt-recovery-terminal"),
+    )).resolves.toMatchObject({ kind: "existing_terminal" });
+    const persisted = await requiredDatabasePool().query(
+      `SELECT status, dispatch_state, attempt_count, lease_token_hash, lease_expires_at,
+        diagnostic_codes
+       FROM campaign_os.verification_attempts`,
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      attempt_count: 2,
+      diagnostic_codes: ["TASK_VERIFICATION_OUTCOME_UNKNOWN"],
+      dispatch_state: "started",
+      lease_expires_at: null,
+      lease_token_hash: null,
+      status: "manual_review",
+    });
+    await recoveryStore.close();
+  });
+
+  it.each([
+    "attempt_update",
+    "completion",
+    "evidence",
+    "points_sum",
+    "participant",
+    "snapshot",
+    "commit",
+  ] as const)("rolls back every %s finalize fault with no partial canonical rows", async (faultPoint) => {
+    const traceId = `trace-postgres-attempt-fault-${faultPoint}`;
+    const identity = verificationIdentity(traceId);
+    const faultPool = new FaultInjectingPostgresPool(requiredDatabasePool());
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => `attempt-postgres-fault-${faultPoint}`,
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => `owner-token-postgres-fault-${faultPoint}`,
+      ownsPool: false,
+      pool: faultPool,
+    });
+    const acquired = await store.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    );
+    expect(acquired.kind).toBe("acquired");
+    if (acquired.kind !== "acquired") {
+      throw new Error("Expected PostgreSQL fault-test owner.");
+    }
+    await store.taskVerificationAttempts!.markTransportStarted({
+      owner: acquired.owner,
+      requestDigest: ATTEMPT_REQUEST_DIGEST,
+      traceId,
+    });
+    faultPool.arm(faultPoint);
+
+    const failure = await store.taskVerificationAttempts!.finalize(
+      verificationFinalizeInput(acquired.owner, traceId),
+    ).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_QUERY_FAILED",
+      operation: "finalizeTaskVerificationAttempt",
+      traceId,
+    });
+    expect(JSON.stringify(failure)).not.toContain("private fault");
+    const persisted = await requiredDatabasePool().query(
+      `SELECT
+        (SELECT status FROM campaign_os.verification_attempts LIMIT 1) AS attempt_status,
+        (SELECT dispatch_state FROM campaign_os.verification_attempts LIMIT 1) AS dispatch_state,
+        (SELECT COUNT(*) FROM campaign_os.campaign_task_completions) AS completions,
+        (SELECT COUNT(*) FROM campaign_os.campaign_task_evidence) AS evidence,
+        (SELECT COUNT(*) FROM campaign_os.campaign_participants) AS participants,
+        (SELECT COUNT(*) FROM campaign_os.verification_attempt_finalization_results) AS snapshots`,
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      attempt_status: "running",
+      completions: "0",
+      dispatch_state: "started",
+      evidence: "0",
+      participants: "0",
+      snapshots: "0",
+    });
+    await store.close();
+  });
+
+  it("rejects new operations while close drains an active attempt transaction", async () => {
+    const traceId = "trace-postgres-attempt-close";
+    const identity = verificationIdentity(traceId);
+    const gatedPool = new GatedPostgresPool(
+      requiredDatabasePool(),
+      (sql) => sql.startsWith("INSERT INTO campaign_os.verification_attempts"),
+    );
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-close",
+      now: () => "2026-07-16T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-close",
+      ownsPool: true,
+      pool: gatedPool,
+    });
+    const begin = store.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    );
+    await gatedPool.entered;
+    const close = store.close();
+
+    await expect(store.taskVerificationAttempts!.begin(
+      verificationBeginInput(identity, traceId),
+    )).rejects.toMatchObject({
+      code: "POSTGRES_CAMPAIGN_STORE_CLOSED",
+      operation: "beginTaskVerificationAttempt",
+    });
+    expect(gatedPool.end).not.toHaveBeenCalled();
+    gatedPool.releaseGate();
+    await expect(begin).resolves.toMatchObject({ kind: "acquired" });
+    await expect(close).resolves.toBeUndefined();
+    expect(gatedPool.end).toHaveBeenCalledOnce();
+    await expect(store.taskVerificationAttempts!.get(
+      "attempt-postgres-close",
+      { traceId: "trace-postgres-attempt-close-get" },
+    )).rejects.toMatchObject({ code: "POSTGRES_CAMPAIGN_STORE_CLOSED" });
+  });
+
 });

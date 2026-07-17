@@ -9,6 +9,10 @@ import type {
 } from "../../../api/participantJourneyApiBridge";
 import type { NormalizedWalletSession } from "../../../domain/types";
 import {
+  PARTICIPANT_JOURNEY_POLL_MAX_ATTEMPTS,
+  PARTICIPANT_JOURNEY_POLL_MAX_DELAY_MS,
+  PARTICIPANT_JOURNEY_POLL_MIN_DELAY_MS,
+  canPollParticipantJourneyTask,
   canReconnectParticipantJourney,
   canSelectParticipantCampaign,
   canVerifyParticipantJourneyTask,
@@ -16,6 +20,11 @@ import {
   createParticipantSessionKey,
   nextParticipantJourneyRequestToken,
   participantJourneyWorkflowReducer,
+  selectParticipantJourneyRefreshTaskId,
+  selectParticipantJourneyTaskAction,
+  selectParticipantJourneyTaskAttempt,
+  selectParticipantJourneyTaskPoll,
+  selectParticipantJourneyTaskRefresh,
   selectParticipantJourneyRetryOperation,
   type ParticipantJourneyRequestToken,
   type ParticipantJourneyWorkflowState,
@@ -24,6 +33,7 @@ import {
 const campaignAId = "campaign-durable-a";
 const campaignBId = "campaign-durable-b";
 const taskAId = "task-durable-a";
+const taskBId = "task-durable-b";
 const walletAddress = "2F4xYZaB9mQParticipant";
 
 const session = (
@@ -80,6 +90,12 @@ const repository = {
   createdViaRepository: true,
   repositoryId: "campaign-db-repository-runtime",
   storeId: "campaign-db",
+} as const;
+
+const verificationRepository = {
+  ...repository,
+  adapterId: "campaign-db-postgresql-adapter",
+  mode: "postgres",
 } as const;
 
 const feedItem = (campaignId: string): ParticipantCampaignFeedItem => ({
@@ -193,36 +209,53 @@ const journeySuccess = (
 });
 
 const verifySuccess = (
-  pointsAwarded = 999,
+  pointsAwarded = 100,
 ): ParticipantVerifySuccess => ({
   httpStatus: 200,
   ok: true,
+  outcome: "completed",
   source: "durable",
-  status: "success",
+  status: "completed",
   traceId: "trace-verify-command",
   verification: {
+    attempt: {
+      authoritative: true,
+      id: "verification-attempt-command",
+      providerFamily: "social-live",
+      retryable: false,
+      status: "completed",
+      transportExecuted: true,
+    },
     completion: {
       accountType: "EOA",
       campaignId: campaignAId,
-      evidenceId: "evidence-from-command",
-      id: "completion-from-command",
+      evidenceId: "evidence-db-1",
+      id: "completion-db-1",
       pointsAwarded,
       status: "completed",
       taskId: taskAId,
+      verificationAttemptId: "verification-attempt-command",
       walletAddress,
       walletSource: "PORTKEY_EOA_EXTENSION",
     },
+    diagnostics: [],
     evidence: {
       accountType: "EOA",
       campaignId: campaignAId,
-      completionId: "completion-from-command",
-      id: "evidence-from-command",
+      completionId: "completion-db-1",
+      evidenceHash: "a".repeat(64),
+      evidenceRef: "provider:evidence:participant",
+      evidenceSource: "DAPP_API",
+      id: "evidence-db-1",
+      liveProviderExecuted: true,
       pointsAwarded,
       status: "completed",
       taskId: taskAId,
+      verificationAttemptId: "verification-attempt-command",
       walletAddress,
       walletSource: "PORTKEY_EOA_EXTENSION",
     },
+    outcome: "completed",
     participant: {
       accountType: "EOA",
       campaignId: campaignAId,
@@ -231,7 +264,7 @@ const verifySuccess = (
       walletAddress,
       walletSource: "PORTKEY_EOA_EXTENSION",
     },
-    repository,
+    repository: verificationRepository,
   },
 });
 
@@ -360,6 +393,149 @@ const degradedAfterRefresh = (): ParticipantJourneyWorkflowState => {
   });
 };
 
+type AttemptOutcome = "completed" | "failed" | "manual_review" | "pending";
+
+const journeyWithTasks = (
+  taskIds: readonly string[],
+): ParticipantJourneyProjection => {
+  const base = journey();
+  const template = base.tasks[0];
+
+  return {
+    ...base,
+    campaign: { ...base.campaign, taskCount: taskIds.length },
+    tasks: taskIds.map((taskId) => ({ ...template, taskId })),
+  };
+};
+
+const journeyForOutcome = (
+  outcome: Exclude<AttemptOutcome, "pending">,
+  taskId = taskAId,
+): ParticipantJourneyProjection => {
+  const base = journeyWithTasks([taskId]);
+  const task = base.tasks[0];
+  const completed = outcome === "completed";
+
+  return {
+    ...base,
+    eligibility: {
+      ...base.eligibility,
+      eligible: completed,
+      missingTasks: completed ? [] : ["follow-x"],
+      score: completed ? 100 : 0,
+      status: completed ? "eligible" : "not_eligible",
+    },
+    participant: {
+      ...base.participant,
+      participantId: "participant-db-1",
+      totalPoints: completed ? 100 : 0,
+    },
+    ranking: {
+      ...base.ranking,
+      participantCount: 1,
+      rank: completed ? 1 : null,
+      totalPoints: completed ? 100 : 0,
+    },
+    tasks: [{
+      ...task,
+      action: completed
+        ? "completed"
+        : outcome === "manual_review"
+          ? "await_review"
+          : "retry",
+      completionId: "completion-db-1",
+      evidenceId: completed ? "evidence-db-1" : null,
+      evidenceSource: completed ? "SOCIAL_API" : null,
+      pointsAwarded: completed ? 100 : 0,
+      status: outcome,
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    }],
+  };
+};
+
+interface AttemptVerifyOptions {
+  attemptId?: string;
+  completionId?: string;
+  outcome: AttemptOutcome;
+  retryAfterMs?: number;
+  retryable?: boolean;
+  taskId?: string;
+}
+
+const attemptVerifySuccess = ({
+  attemptId = "verification-attempt-a",
+  completionId,
+  outcome,
+  retryAfterMs,
+  retryable = outcome === "pending",
+  taskId = taskAId,
+}: AttemptVerifyOptions): ParticipantVerifySuccess => {
+  const base = verifySuccess(outcome === "completed" ? 100 : 0);
+  const completed = outcome === "completed";
+  const baseCompletion = base.verification.completion;
+  const baseEvidence = base.verification.evidence;
+  const baseParticipant = base.verification.participant;
+  if (completed && (!baseCompletion || !baseEvidence || !baseParticipant)) {
+    throw new Error("completed verification fixture requires terminal projections");
+  }
+  const verification: ParticipantVerifySuccess["verification"] = {
+    attempt: {
+      authoritative: true,
+      id: attemptId,
+      providerFamily: "social-live",
+      retryable,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+      status: outcome,
+      transportExecuted: true,
+    },
+    ...(completed ? {
+      completion: {
+        ...baseCompletion!,
+        evidenceId: "evidence-db-1",
+        id: "completion-db-1",
+        pointsAwarded: 100,
+        taskId,
+        verificationAttemptId: attemptId,
+      },
+      evidence: {
+        ...baseEvidence!,
+        completionId: "completion-db-1",
+        id: "evidence-db-1",
+        pointsAwarded: 100,
+        taskId,
+        verificationAttemptId: attemptId,
+      },
+      participant: {
+        ...baseParticipant!,
+        totalPoints: 100,
+      },
+    } : completionId && outcome !== "pending" ? {
+      completion: {
+        accountType: "EOA",
+        campaignId: campaignAId,
+        id: completionId,
+        pointsAwarded: 0,
+        status: outcome,
+        taskId,
+        verificationAttemptId: attemptId,
+        walletAddress,
+        walletSource: "PORTKEY_EOA_EXTENSION",
+      },
+    } : {}),
+    diagnostics: [],
+    outcome,
+    repository: verificationRepository,
+  };
+
+  return {
+    ...base,
+    httpStatus: outcome === "pending" ? 202 : 200,
+    outcome,
+    status: outcome,
+    verification,
+  };
+};
+
 describe("Participant journey workflow", () => {
   it("creates a stable Participant session key from issued identity and readiness", () => {
     const issued = session();
@@ -397,17 +573,7 @@ describe("Participant journey workflow", () => {
     ["loading_journey", () => stateWithSelection()],
     ["ready", () => readyState()],
     ["verifying", () => verifyingState().state],
-    [
-      "degraded",
-      () => {
-        const verifying = verifyingState();
-        return participantJourneyWorkflowReducer(verifying.state, {
-          failure: failure(),
-          token: verifying.token,
-          type: "verify_failed",
-        });
-      },
-    ],
+    ["degraded", () => degradedAfterRefresh()],
     [
       "blocked",
       () => {
@@ -559,13 +725,17 @@ describe("Participant journey workflow", () => {
       token: verifyToken,
       type: "verify_failed",
     });
-    const retryToken = nextParticipantJourneyRequestToken(degraded, "journey");
+    const retryToken = nextParticipantJourneyRequestToken(
+      degraded,
+      "verify",
+      taskAId,
+    );
     const retrying = participantJourneyWorkflowReducer(degraded, {
-      reason: "retry",
+      taskId: taskAId,
       token: retryToken,
-      type: "journey_requested",
+      type: "verify_requested",
     });
-    expect(retrying.sequences).toEqual({ feed: 1, journey: 2, verify: 1 });
+    expect(retrying.sequences).toEqual({ feed: 1, journey: 1, verify: 2 });
   });
 
   it.each([
@@ -761,7 +931,7 @@ describe("Participant journey workflow", () => {
     const verifying = verifyingState();
     const beforeJourney = verifying.state.journey;
     const acknowledged = participantJourneyWorkflowReducer(verifying.state, {
-      result: verifySuccess(999),
+      result: verifySuccess(100),
       token: verifying.token,
       type: "verify_succeeded",
     });
@@ -776,7 +946,7 @@ describe("Participant journey workflow", () => {
     expect(acknowledged.activeRequests.verify).toBeNull();
 
     expect(participantJourneyWorkflowReducer(acknowledged, {
-      result: verifySuccess(1_000),
+      result: verifySuccess(100),
       token: verifying.token,
       type: "verify_succeeded",
     })).toBe(acknowledged);
@@ -830,13 +1000,17 @@ describe("Participant journey workflow", () => {
 
     const verifying = verifyingState();
     const mismatched = verifySuccess();
+    const completion = mismatched.verification.completion;
+    if (!completion) {
+      throw new Error("completed verification fixture requires Completion");
+    }
     const rejectedVerify = participantJourneyWorkflowReducer(verifying.state, {
       result: {
         ...mismatched,
         verification: {
           ...mismatched.verification,
           completion: {
-            ...mismatched.verification.completion,
+            ...completion,
             campaignId: campaignBId,
           },
         },
@@ -1270,5 +1444,787 @@ describe("Participant journey workflow", () => {
       retryOperation: null,
       status: "blocked",
     });
+  });
+
+  it("stores active verification independently by taskId and keeps Campaign navigation available", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const taskAToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const taskAVerifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: taskAToken,
+      type: "verify_requested",
+    });
+
+    expect(taskAToken.taskId).toBe(taskAId);
+    expect(selectParticipantJourneyTaskAttempt(taskAVerifying, taskAId)).toMatchObject({
+      activeRequest: taskAToken,
+      status: "verifying",
+      taskId: taskAId,
+    });
+    expect(canVerifyParticipantJourneyTask(taskAVerifying, taskAId)).toBe(false);
+    expect(canVerifyParticipantJourneyTask(taskAVerifying, taskBId)).toBe(true);
+    expect(canSelectParticipantCampaign(taskAVerifying, campaignBId)).toBe(true);
+
+    const duplicateToken = nextParticipantJourneyRequestToken(
+      taskAVerifying,
+      "verify",
+      taskAId,
+    );
+    expect(participantJourneyWorkflowReducer(taskAVerifying, {
+      taskId: taskAId,
+      token: duplicateToken,
+      type: "verify_requested",
+    })).toBe(taskAVerifying);
+
+    const taskBToken = nextParticipantJourneyRequestToken(
+      taskAVerifying,
+      "verify",
+      taskBId,
+    );
+    const bothVerifying = participantJourneyWorkflowReducer(taskAVerifying, {
+      taskId: taskBId,
+      token: taskBToken,
+      type: "verify_requested",
+    });
+
+    expect(selectParticipantJourneyTaskAttempt(bothVerifying, taskAId)?.activeRequest)
+      .toBe(taskAToken);
+    expect(selectParticipantJourneyTaskAttempt(bothVerifying, taskBId)?.activeRequest)
+      .toBe(taskBToken);
+    expect(bothVerifying.taskAttempts).not.toBe(taskAVerifying.taskAttempts);
+    expect(bothVerifying.taskAttempts[taskAId])
+      .toBe(taskAVerifying.taskAttempts[taskAId]);
+    expect(bothVerifying.journeyTasksById).toBe(taskAVerifying.journeyTasksById);
+  });
+
+  it("rejects a verification token whose task identity differs from the event", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const taskAToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+
+    expect(participantJourneyWorkflowReducer(ready, {
+      taskId: taskBId,
+      token: taskAToken,
+      type: "verify_requested",
+    })).toBe(ready);
+  });
+
+  it.each([
+    ["completed", "completed", "none"],
+    ["failed", "failed", "retry"],
+    ["manual_review", "manual_review", "await_review"],
+  ] as const)(
+    "keeps a terminal %s receipt pending until one authoritative refresh",
+    (outcome, expectedStatus, expectedAction) => {
+      const ready = readyState();
+      const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+      const verifying = participantJourneyWorkflowReducer(ready, {
+        taskId: taskAId,
+        token: verifyToken,
+        type: "verify_requested",
+      });
+      const receipt = attemptVerifySuccess({
+        outcome,
+        retryable: outcome === "failed",
+      });
+      const acknowledged = participantJourneyWorkflowReducer(verifying, {
+        result: receipt,
+        token: verifyToken,
+        type: "verify_succeeded",
+      });
+      const pendingAuthority = selectParticipantJourneyTaskAttempt(
+        acknowledged,
+        taskAId,
+      );
+
+      expect(pendingAuthority).toMatchObject({
+        activeRequest: null,
+        receipt: {
+          attemptId: "verification-attempt-a",
+          outcome,
+        },
+        refresh: { requestCount: 0, status: "required" },
+        status: "verifying",
+      });
+      expect(selectParticipantJourneyRefreshTaskId(acknowledged)).toBe(taskAId);
+      expect(selectParticipantJourneyTaskRefresh(acknowledged, taskAId))
+        .toEqual({ requestCount: 0, status: "required" });
+      expect(selectParticipantJourneyTaskAction(acknowledged, taskAId)).toBe("none");
+
+      const refreshToken = nextParticipantJourneyRequestToken(
+        acknowledged,
+        "journey",
+      );
+      expect(refreshToken.taskId).toBe(taskAId);
+      const refreshing = participantJourneyWorkflowReducer(acknowledged, {
+        reason: "refresh",
+        token: refreshToken,
+        type: "journey_requested",
+      });
+      expect(selectParticipantJourneyTaskAttempt(refreshing, taskAId)?.refresh)
+        .toEqual({ requestCount: 1, status: "in_flight" });
+      expect(participantJourneyWorkflowReducer(refreshing, {
+        reason: "refresh",
+        token: nextParticipantJourneyRequestToken(refreshing, "journey"),
+        type: "journey_requested",
+      })).toBe(refreshing);
+
+      const authoritative = participantJourneyWorkflowReducer(refreshing, {
+        result: journeySuccess(journeyForOutcome(outcome)),
+        token: refreshToken,
+        type: "journey_succeeded",
+      });
+      const terminal = selectParticipantJourneyTaskAttempt(authoritative, taskAId);
+
+      expect(terminal).toMatchObject({
+        activeRequest: null,
+        poll: null,
+        receipt: { outcome },
+        refresh: null,
+        status: expectedStatus,
+      });
+      expect(selectParticipantJourneyTaskAction(authoritative, taskAId))
+        .toBe(expectedAction);
+      expect(selectParticipantJourneyRefreshTaskId(authoritative)).toBeNull();
+      expect(participantJourneyWorkflowReducer(authoritative, {
+        result: receipt,
+        token: verifyToken,
+        type: "verify_succeeded",
+      })).toBe(authoritative);
+    },
+  );
+
+  it("schedules one bounded poll owner for a pending receipt and clamps backoff", () => {
+    const ready = readyState();
+    const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: verifyToken,
+      type: "verify_requested",
+    });
+    const pendingReceipt = attemptVerifySuccess({
+      outcome: "pending",
+      retryAfterMs: 0,
+    });
+    const pending = participantJourneyWorkflowReducer(verifying, {
+      result: pendingReceipt,
+      token: verifyToken,
+      type: "verify_succeeded",
+    });
+    const firstPoll = selectParticipantJourneyTaskPoll(pending, taskAId);
+
+    expect(selectParticipantJourneyTaskAttempt(pending, taskAId)?.status).toBe("pending");
+    expect(firstPoll).toMatchObject({
+      attemptCount: 0,
+      delayMs: PARTICIPANT_JOURNEY_POLL_MIN_DELAY_MS,
+      maxAttempts: PARTICIPANT_JOURNEY_POLL_MAX_ATTEMPTS,
+      phase: "scheduled",
+    });
+    expect(canPollParticipantJourneyTask(pending, taskAId)).toBe(true);
+    expect(participantJourneyWorkflowReducer(pending, {
+      result: pendingReceipt,
+      token: verifyToken,
+      type: "verify_succeeded",
+    })).toBe(pending);
+
+    const pollToken = nextParticipantJourneyRequestToken(pending, "verify", taskAId);
+    const polling = participantJourneyWorkflowReducer(pending, {
+      taskId: taskAId,
+      token: pollToken,
+      type: "verification_poll_requested",
+    });
+    expect(selectParticipantJourneyTaskPoll(polling, taskAId)).toMatchObject({
+      attemptCount: 1,
+      phase: "in_flight",
+    });
+
+    const repeatedReceipt = attemptVerifySuccess({
+      outcome: "pending",
+      retryAfterMs: Number.MAX_SAFE_INTEGER,
+    });
+    const rescheduled = participantJourneyWorkflowReducer(polling, {
+      result: repeatedReceipt,
+      token: pollToken,
+      type: "verify_succeeded",
+    });
+    const nextPoll = selectParticipantJourneyTaskPoll(rescheduled, taskAId);
+
+    expect(nextPoll).toMatchObject({
+      attemptCount: 1,
+      delayMs: PARTICIPANT_JOURNEY_POLL_MAX_DELAY_MS,
+      ownerId: firstPoll?.ownerId,
+      phase: "scheduled",
+    });
+  });
+
+  it("exhausts bounded polling without creating another timer owner", () => {
+    const ready = readyState();
+    const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: verifyToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "pending" }),
+      token: verifyToken,
+      type: "verify_succeeded",
+    });
+
+    for (let attempt = 0; attempt < PARTICIPANT_JOURNEY_POLL_MAX_ATTEMPTS; attempt += 1) {
+      const pollToken = nextParticipantJourneyRequestToken(state, "verify", taskAId);
+      state = participantJourneyWorkflowReducer(state, {
+        taskId: taskAId,
+        token: pollToken,
+        type: "verification_poll_requested",
+      });
+      state = participantJourneyWorkflowReducer(state, {
+        result: attemptVerifySuccess({ outcome: "pending" }),
+        token: pollToken,
+        type: "verify_succeeded",
+      });
+    }
+
+    expect(selectParticipantJourneyTaskAttempt(state, taskAId)?.status)
+      .toBe("unavailable");
+    expect(selectParticipantJourneyTaskPoll(state, taskAId)?.phase).toBe("exhausted");
+    expect(canPollParticipantJourneyTask(state, taskAId)).toBe(false);
+    expect(selectParticipantJourneyTaskAction(state, taskAId)).toBe("retry");
+  });
+
+  it("pauses a pending poll deterministically without creating timers in the reducer", () => {
+    const ready = readyState();
+    const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: verifyToken,
+      type: "verify_requested",
+    });
+    const pending = participantJourneyWorkflowReducer(verifying, {
+      result: attemptVerifySuccess({ outcome: "pending" }),
+      token: verifyToken,
+      type: "verify_succeeded",
+    });
+    const paused = participantJourneyWorkflowReducer(pending, {
+      taskId: taskAId,
+      type: "verification_poll_paused",
+    });
+
+    expect(selectParticipantJourneyTaskPoll(paused, taskAId)?.phase).toBe("paused");
+    expect(canPollParticipantJourneyTask(paused, taskAId)).toBe(false);
+    expect(selectParticipantJourneyTaskAction(paused, taskAId)).toBe("retry");
+  });
+
+  it("counts every dispatched poll before a visibility pause can abort its response", () => {
+    const ready = readyState();
+    const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: verifyToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "pending" }),
+      token: verifyToken,
+      type: "verify_succeeded",
+    });
+
+    for (let attempt = 1; attempt <= PARTICIPANT_JOURNEY_POLL_MAX_ATTEMPTS; attempt += 1) {
+      const pollToken = nextParticipantJourneyRequestToken(state, "verify", taskAId);
+      state = participantJourneyWorkflowReducer(state, {
+        taskId: taskAId,
+        token: pollToken,
+        type: "verification_poll_requested",
+      });
+      expect(selectParticipantJourneyTaskPoll(state, taskAId)?.attemptCount).toBe(attempt);
+
+      state = participantJourneyWorkflowReducer(state, {
+        taskId: taskAId,
+        type: "verification_poll_paused",
+      });
+      if (attempt < PARTICIPANT_JOURNEY_POLL_MAX_ATTEMPTS) {
+        expect(selectParticipantJourneyTaskPoll(state, taskAId)?.phase).toBe("paused");
+        state = participantJourneyWorkflowReducer(state, {
+          taskId: taskAId,
+          type: "verification_poll_resumed",
+        });
+        expect(selectParticipantJourneyTaskPoll(state, taskAId)?.phase).toBe("scheduled");
+      }
+    }
+
+    expect(selectParticipantJourneyTaskAttempt(state, taskAId)?.status).toBe("unavailable");
+    expect(selectParticipantJourneyTaskPoll(state, taskAId)?.phase).toBe("exhausted");
+    expect(canPollParticipantJourneyTask(state, taskAId)).toBe(false);
+    expect(selectParticipantJourneyTaskAction(state, taskAId)).toBe("retry");
+  });
+
+  it("fails closed on command-versus-Journey conflict while retaining last-good authority", () => {
+    const ready = readyState();
+    const lastGood = ready.lastGoodJourney;
+    const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: verifyToken,
+      type: "verify_requested",
+    });
+    const acknowledged = participantJourneyWorkflowReducer(verifying, {
+      result: attemptVerifySuccess({ outcome: "completed" }),
+      token: verifyToken,
+      type: "verify_succeeded",
+    });
+    const refreshToken = nextParticipantJourneyRequestToken(acknowledged, "journey");
+    const refreshing = participantJourneyWorkflowReducer(acknowledged, {
+      reason: "refresh",
+      token: refreshToken,
+      type: "journey_requested",
+    });
+    const conflicted = participantJourneyWorkflowReducer(refreshing, {
+      result: journeySuccess(journey()),
+      token: refreshToken,
+      type: "journey_succeeded",
+    });
+
+    expect(conflicted.status).toBe("degraded");
+    expect(conflicted.journey).toBe(lastGood);
+    expect(conflicted.lastGoodJourney).toBe(lastGood);
+    expect(conflicted.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_AUTHORITY_CONFLICT");
+    expect(selectParticipantJourneyTaskAttempt(conflicted, taskAId)).toMatchObject({
+      activeRequest: null,
+      poll: null,
+      receipt: { outcome: "completed" },
+      refresh: { requestCount: 1, status: "failed" },
+      status: "unavailable",
+    });
+    expect(selectParticipantJourneyTaskAction(conflicted, taskAId)).toBe("none");
+  });
+
+  it("validates every concurrent terminal receipt before a shared Journey refresh reconciles it", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const lastGood = ready.lastGoodJourney;
+    const taskAToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: taskAToken,
+      type: "verify_requested",
+    });
+    const taskBToken = nextParticipantJourneyRequestToken(state, "verify", taskBId);
+    state = participantJourneyWorkflowReducer(state, {
+      taskId: taskBId,
+      token: taskBToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "completed", taskId: taskAId }),
+      token: taskAToken,
+      type: "verify_succeeded",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({
+        attemptId: "verification-attempt-b",
+        outcome: "completed",
+        taskId: taskBId,
+      }),
+      token: taskBToken,
+      type: "verify_succeeded",
+    });
+
+    const refreshToken = nextParticipantJourneyRequestToken(state, "journey", taskAId);
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "refresh",
+      token: refreshToken,
+      type: "journey_requested",
+    });
+    const terminalProjection = journeyWithTasks([taskAId, taskBId]);
+    const mismatchedProjection: ParticipantJourneyProjection = {
+      ...terminalProjection,
+      tasks: terminalProjection.tasks.map((task) => ({
+        ...task,
+        action: "completed",
+        completionId: task.taskId === taskBId
+          ? "completion-db-mismatch"
+          : "completion-db-1",
+        evidenceId: task.taskId === taskBId
+          ? "evidence-db-mismatch"
+          : "evidence-db-1",
+        evidenceSource: "SOCIAL_API",
+        pointsAwarded: 100,
+        status: "completed",
+        updatedAt: "2026-07-16T08:00:00.000Z",
+      })),
+    };
+
+    const conflicted = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(mismatchedProjection),
+      token: refreshToken,
+      type: "journey_succeeded",
+    });
+
+    expect(conflicted.status).toBe("degraded");
+    expect(conflicted.journey).toBe(lastGood);
+    expect(conflicted.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_AUTHORITY_CONFLICT");
+    expect(selectParticipantJourneyTaskAttempt(conflicted, taskBId)).toMatchObject({
+      receipt: { outcome: "completed" },
+      refresh: { status: "failed" },
+      status: "unavailable",
+    });
+    expect(selectParticipantJourneyTaskAttempt(conflicted, taskAId)?.refresh?.status)
+      .toBe("failed");
+  });
+
+  it("keeps a shared retry degraded while any terminal receipt remains non-terminal in Journey authority", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const lastGood = ready.lastGoodJourney;
+    const taskAToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: taskAToken,
+      type: "verify_requested",
+    });
+    const taskBToken = nextParticipantJourneyRequestToken(state, "verify", taskBId);
+    state = participantJourneyWorkflowReducer(state, {
+      taskId: taskBId,
+      token: taskBToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "completed", taskId: taskAId }),
+      token: taskAToken,
+      type: "verify_succeeded",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({
+        attemptId: "verification-attempt-b",
+        outcome: "completed",
+        taskId: taskBId,
+      }),
+      token: taskBToken,
+      type: "verify_succeeded",
+    });
+
+    const initialRefreshToken = nextParticipantJourneyRequestToken(state, "journey", taskAId);
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "refresh",
+      token: initialRefreshToken,
+      type: "journey_requested",
+    });
+    const initialProjection = journeyWithTasks([taskAId, taskBId]);
+    const initialConflictProjection: ParticipantJourneyProjection = {
+      ...initialProjection,
+      tasks: initialProjection.tasks.map((task) => ({
+        ...task,
+        action: "completed",
+        completionId: task.taskId === taskBId ? "completion-db-mismatch" : "completion-db-1",
+        evidenceId: task.taskId === taskBId ? "evidence-db-mismatch" : "evidence-db-1",
+        evidenceSource: "SOCIAL_API",
+        pointsAwarded: 100,
+        status: "completed",
+        updatedAt: "2026-07-16T08:00:00.000Z",
+      })),
+    };
+    state = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(initialConflictProjection),
+      token: initialRefreshToken,
+      type: "journey_succeeded",
+    });
+
+    expect(state.status).toBe("degraded");
+    expect(selectParticipantJourneyTaskAttempt(state, taskAId)?.refresh?.status).toBe("failed");
+    expect(selectParticipantJourneyTaskAttempt(state, taskBId)?.refresh?.status).toBe("failed");
+    const sharedRetryToken = nextParticipantJourneyRequestToken(state, "journey");
+    expect(sharedRetryToken.taskId).toBeNull();
+
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "retry",
+      token: sharedRetryToken,
+      type: "journey_requested",
+    });
+    const terminalTaskA = journeyForOutcome("completed", taskAId);
+    const nonTerminalTaskB = journeyWithTasks([taskBId]).tasks[0];
+    const retryProjection: ParticipantJourneyProjection = {
+      ...terminalTaskA,
+      campaign: { ...terminalTaskA.campaign, taskCount: 2 },
+      tasks: [terminalTaskA.tasks[0], nonTerminalTaskB],
+    };
+    const stillConflicted = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(retryProjection),
+      token: sharedRetryToken,
+      type: "journey_succeeded",
+    });
+
+    expect(stillConflicted.status).toBe("degraded");
+    expect(stillConflicted.journey).toBe(lastGood);
+    expect(stillConflicted.lastGoodJourney).toBe(lastGood);
+    expect(stillConflicted.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_AUTHORITY_CONFLICT");
+    expect(stillConflicted.activeRequests.journey).toBeNull();
+    expect(selectParticipantJourneyRetryOperation(stillConflicted)).toBe("journey");
+    expect(selectParticipantJourneyTaskAttempt(stillConflicted, taskBId)).toMatchObject({
+      receipt: { outcome: "completed" },
+      refresh: { status: "failed" },
+      status: "unavailable",
+    });
+    expect(nextParticipantJourneyRequestToken(stillConflicted, "journey").taskId).toBeNull();
+  });
+
+  it.each(["failed", "manual_review"] as const)(
+    "fails closed when %s optional Completion linkage conflicts with Journey authority",
+    (outcome) => {
+      const ready = readyState();
+      const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+      let state = participantJourneyWorkflowReducer(ready, {
+        taskId: taskAId,
+        token: verifyToken,
+        type: "verify_requested",
+      });
+      state = participantJourneyWorkflowReducer(state, {
+        result: attemptVerifySuccess({
+          completionId: `completion-command-${outcome}`,
+          outcome,
+        }),
+        token: verifyToken,
+        type: "verify_succeeded",
+      });
+      const refreshToken = nextParticipantJourneyRequestToken(state, "journey", taskAId);
+      state = participantJourneyWorkflowReducer(state, {
+        reason: "refresh",
+        token: refreshToken,
+        type: "journey_requested",
+      });
+
+      const conflicted = participantJourneyWorkflowReducer(state, {
+        result: journeySuccess(journeyForOutcome(outcome)),
+        token: refreshToken,
+        type: "journey_succeeded",
+      });
+
+      expect(conflicted.status).toBe("degraded");
+      expect(conflicted.journey).toBe(ready.lastGoodJourney);
+      expect(conflicted.diagnostic?.code).toBe("PARTICIPANT_JOURNEY_AUTHORITY_CONFLICT");
+      expect(selectParticipantJourneyTaskAttempt(conflicted, taskAId)).toMatchObject({
+        receipt: { completionId: `completion-command-${outcome}`, outcome },
+        refresh: { status: "failed" },
+        status: "unavailable",
+      });
+    },
+  );
+
+  it("accepts authoritative removal of the terminal refresh owner Task", () => {
+    const ready = readyState();
+    const verifyToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: verifyToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "completed" }),
+      token: verifyToken,
+      type: "verify_succeeded",
+    });
+    const refreshToken = nextParticipantJourneyRequestToken(state, "journey", taskAId);
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "refresh",
+      token: refreshToken,
+      type: "journey_requested",
+    });
+    const taskRemovedProjection = journeyWithTasks([]);
+
+    const reconciled = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(taskRemovedProjection),
+      token: refreshToken,
+      type: "journey_succeeded",
+    });
+
+    expect(reconciled.status).toBe("ready");
+    expect(reconciled.journey).toBe(taskRemovedProjection);
+    expect(reconciled.lastGoodJourney).toBe(taskRemovedProjection);
+    expect(reconciled.diagnostic).toBeNull();
+    expect(selectParticipantJourneyTaskAttempt(reconciled, taskAId)).toBeNull();
+    expect(reconciled.activeRequests.verify).toBeNull();
+  });
+
+  it("removes Task-owned poll state when authoritative Journey removes that Task", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const taskAToken = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    let state = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token: taskAToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "pending", taskId: taskAId }),
+      token: taskAToken,
+      type: "verify_succeeded",
+    });
+    const taskAPollToken = nextParticipantJourneyRequestToken(state, "verify", taskAId);
+    state = participantJourneyWorkflowReducer(state, {
+      taskId: taskAId,
+      token: taskAPollToken,
+      type: "verification_poll_requested",
+    });
+
+    const taskBToken = nextParticipantJourneyRequestToken(state, "verify", taskBId);
+    state = participantJourneyWorkflowReducer(state, {
+      taskId: taskBId,
+      token: taskBToken,
+      type: "verify_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({
+        attemptId: "verification-attempt-b",
+        outcome: "completed",
+        taskId: taskBId,
+      }),
+      token: taskBToken,
+      type: "verify_succeeded",
+    });
+    const refreshToken = nextParticipantJourneyRequestToken(state, "journey", taskBId);
+    state = participantJourneyWorkflowReducer(state, {
+      reason: "refresh",
+      token: refreshToken,
+      type: "journey_requested",
+    });
+    state = participantJourneyWorkflowReducer(state, {
+      result: journeySuccess(journeyForOutcome("completed", taskBId)),
+      token: refreshToken,
+      type: "journey_succeeded",
+    });
+
+    expect(selectParticipantJourneyTaskAttempt(state, taskAId)).toBeNull();
+    expect(selectParticipantJourneyTaskAttempt(state, taskBId)?.status).toBe("completed");
+    expect(participantJourneyWorkflowReducer(state, {
+      result: attemptVerifySuccess({ outcome: "completed", taskId: taskAId }),
+      token: taskAPollToken,
+      type: "verify_succeeded",
+    })).toBe(state);
+  });
+
+  it.each(["role", "unmount"] as const)(
+    "invalidates active Task effects on %s lifecycle exit",
+    (reason) => {
+      const ready = readyState();
+      const token = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+      const verifying = participantJourneyWorkflowReducer(ready, {
+        taskId: taskAId,
+        token,
+        type: "verify_requested",
+      });
+      const invalidated = participantJourneyWorkflowReducer(verifying, {
+        reason,
+        type: "scope_invalidated",
+      });
+
+      expect(invalidated.epoch).toBe(verifying.epoch + 1);
+      expect(invalidated.taskAttempts).toEqual({});
+      expect(invalidated.activeRequests).toEqual({
+        feed: null,
+        journey: null,
+        verify: null,
+      });
+      expect(participantJourneyWorkflowReducer(invalidated, {
+        result: attemptVerifySuccess({ outcome: "completed" }),
+        token,
+        type: "verify_succeeded",
+      })).toBe(invalidated);
+    },
+  );
+
+  it("silently releases an aborted Task request without a generic diagnostic", () => {
+    const ready = readyState();
+    const token = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token,
+      type: "verify_requested",
+    });
+    const aborted = participantJourneyWorkflowReducer(verifying, {
+      failure: failure({
+        bridgeCode: "BRIDGE_REQUEST_ABORTED",
+        code: "BRIDGE_REQUEST_ABORTED",
+        traceId: "trace-aborted-task-request",
+      }),
+      token,
+      type: "verify_failed",
+    });
+
+    expect(aborted.journey).toBe(ready.journey);
+    expect(aborted.lastGoodJourney).toBe(ready.lastGoodJourney);
+    expect(aborted.diagnostic).toBeNull();
+    expect(selectParticipantJourneyTaskAttempt(aborted, taskAId)).toBeNull();
+    expect(canVerifyParticipantJourneyTask(aborted, taskAId)).toBe(true);
+  });
+
+  it("contains provider outage to one Task while preserving last-good navigation", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const token = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token,
+      type: "verify_requested",
+    });
+    const unavailable = participantJourneyWorkflowReducer(verifying, {
+      failure: failure({ traceId: "trace-task-a-provider-outage" }),
+      token,
+      type: "verify_failed",
+    });
+
+    expect(unavailable.journey).toBe(ready.journey);
+    expect(unavailable.lastGoodJourney).toBe(ready.lastGoodJourney);
+    expect(unavailable.status).toBe("ready");
+    expect(unavailable.diagnostic).toBeNull();
+    expect(selectParticipantJourneyRetryOperation(unavailable)).toBeNull();
+    expect(selectParticipantJourneyTaskAttempt(unavailable, taskAId)?.status)
+      .toBe("unavailable");
+    expect(selectParticipantJourneyTaskAction(unavailable, taskAId)).toBe("retry");
+    expect(canVerifyParticipantJourneyTask(unavailable, taskBId)).toBe(true);
+    expect(canSelectParticipantCampaign(unavailable, campaignBId)).toBe(true);
+  });
+
+  it("revokes active Task ownership for a non-retryable blocked verify failure", () => {
+    const ready = readyState();
+    const token = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token,
+      type: "verify_requested",
+    });
+    const blocked = participantJourneyWorkflowReducer(verifying, {
+      failure: failure({
+        code: "TASK_VERIFICATION_SCOPE_INVALID",
+        httpStatus: 403,
+        phase: "request",
+        retryable: false,
+        status: "blocked",
+      }),
+      token,
+      type: "verify_failed",
+    });
+
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.journey).toBeNull();
+    expect(blocked.lastGoodJourney).toBeNull();
+    expect(blocked.taskAttempts).toEqual({});
+    expect(blocked.activeRequests.verify).toBeNull();
+  });
+
+  it("clears every Task effect on Campaign switch before accepting late results", () => {
+    const ready = readyState(journeyWithTasks([taskAId, taskBId]));
+    const token = nextParticipantJourneyRequestToken(ready, "verify", taskAId);
+    const verifying = participantJourneyWorkflowReducer(ready, {
+      taskId: taskAId,
+      token,
+      type: "verify_requested",
+    });
+    const switched = participantJourneyWorkflowReducer(verifying, {
+      campaignId: campaignBId,
+      type: "campaign_selected",
+    });
+
+    expect(switched.epoch).toBe(verifying.epoch + 1);
+    expect(switched.taskAttempts).toEqual({});
+    expect(switched.activeRequests.verify).toBeNull();
+    expect(participantJourneyWorkflowReducer(switched, {
+      result: attemptVerifySuccess({ outcome: "completed" }),
+      token,
+      type: "verify_succeeded",
+    })).toBe(switched);
   });
 });

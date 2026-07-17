@@ -112,6 +112,7 @@ describe("provider HTTP transport seam", () => {
         timedOut: false,
       },
     });
+    expect(result.ok && result.result).not.toHaveProperty("headers");
     expect(JSON.stringify(planned)).not.toContain("https://");
     expect(JSON.stringify(planned)).not.toContain("Bearer ");
   });
@@ -134,16 +135,63 @@ describe("provider HTTP transport seam", () => {
 
   it("redacts thrown transport errors", async () => {
     const throwingTransport: ProviderHttpTransport = () => {
-      throw new Error("provider token=secret payload={\"walletAddress\":\"ELF_SECRET\"}");
+      throw new Error("provider token=fake-secret-sentinel payload={\"walletAddress\":\"ELF_FAKE_SECRET_SENTINEL\"}");
     };
     const result = await executeProviderHttpTransport(plan(), throwingTransport);
     const serialized = JSON.stringify(result);
 
     expect(result).toMatchObject({
-      diagnostics: [expect.objectContaining({ code: "transport_thrown_error" })],
+      diagnostics: [expect.objectContaining({
+        code: "transport_thrown_error",
+        redactedValue: "[REDACTED:ERROR]",
+      })],
       ok: false,
+      transportExecuted: true,
     });
-    expect(serialized).not.toContain("ELF_SECRET");
-    expect(serialized).not.toContain("token=secret");
+    expect(serialized).not.toContain("ELF_FAKE_SECRET_SENTINEL");
+    expect(serialized).not.toContain("token=fake-secret-sentinel");
+  });
+
+  it("forwards caller/runtime signals and explicit attempt timing", async () => {
+    const caller = new AbortController();
+    const runtimeSignal = new AbortController();
+    let receivedContext: Parameters<ProviderHttpTransport>[1] | undefined;
+    const transport: ProviderHttpTransport = (_request, context) => {
+      receivedContext = context;
+      return { durationMs: 1, statusCode: 202, timedOut: false };
+    };
+
+    const result = await executeProviderHttpTransport(plan(), transport, {
+      attemptStartedAtMs: 42,
+      runtimeSignal: runtimeSignal.signal,
+      signal: caller.signal,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(receivedContext).toMatchObject({
+      attemptStartedAtMs: 42,
+      runtimeSignal: runtimeSignal.signal,
+      signal: caller.signal,
+      traceId: "trace-provider-http-dapp",
+    });
+  });
+
+  it("rejects malformed or unknown injected diagnostics without exposing their values", async () => {
+    const result = await executeProviderHttpTransport(plan(), () => ({
+      diagnostic: {
+        code: "unknown_failure",
+        message: "fake-token-sentinel raw failure",
+        traceId: "trace-provider-http-dapp",
+      },
+      durationMs: 1,
+      timedOut: false,
+    } as never));
+
+    expect(result).toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "transport_result_invalid" })],
+      ok: false,
+      transportExecuted: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("fake-token-sentinel");
   });
 });

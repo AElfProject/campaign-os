@@ -16,6 +16,8 @@ import type {
   CampaignDbTaskDraft,
   CampaignDbTaskEvidenceRecord,
 } from "./campaignDbRepository";
+import { createCanonicalTaskVerificationRevision } from "./taskVerification";
+import type { TaskVerificationAttemptSafeRecord } from "./taskVerificationAttemptStore";
 
 export interface ParticipantJourneyRepositoryMetadata {
   readonly adapterId: string;
@@ -31,6 +33,7 @@ export interface ParticipantJourneySubject {
 }
 
 export type ParticipantJourneyDiagnosticCode =
+  | "COMPLETION_EVIDENCE_HASH_MISMATCH"
   | "COMPLETION_EVIDENCE_ID_MISMATCH"
   | "COMPLETION_EVIDENCE_STATUS_MISMATCH"
   | "COMPLETION_WITHOUT_EVIDENCE"
@@ -38,6 +41,7 @@ export type ParticipantJourneyDiagnosticCode =
   | "DUPLICATE_EVIDENCE"
   | "DUPLICATE_TASK"
   | "EVIDENCE_WITHOUT_COMPLETION"
+  | "LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID"
   | "OUT_OF_SCOPE_RECORD_IGNORED"
   | "PARTICIPANT_MISSING"
   | "PARTICIPANT_POINTS_MISMATCH"
@@ -72,8 +76,11 @@ export interface ParticipantJourneyTaskProgress {
   readonly blockedReason: ParticipantJourneyTaskBlockedReason;
   readonly campaignId: string;
   readonly completionId: string | null;
+  readonly evidenceHash: string | null;
   readonly evidenceId: string | null;
+  readonly evidenceRef: string | null;
   readonly evidenceSource: CampaignDbTaskCompletionEvidenceSource | null;
+  readonly liveProviderExecuted: boolean;
   readonly pointsAvailable: number;
   readonly pointsAwarded: number;
   readonly required: boolean;
@@ -81,6 +88,7 @@ export interface ParticipantJourneyTaskProgress {
   readonly taskId: string;
   readonly templateCode: string;
   readonly updatedAt: string | null;
+  readonly verificationAttemptId: string | null;
   readonly verificationType: VerificationType;
   readonly walletCompatibility: WalletCompatibility;
 }
@@ -131,6 +139,7 @@ export interface ParticipantJourneyProjection {
 }
 
 export interface ParticipantJourneyProjectionInput {
+  readonly attempts: readonly TaskVerificationAttemptSafeRecord[];
   readonly campaign: CampaignDbDraft;
   readonly completions: readonly CampaignDbTaskCompletion[];
   readonly evidence: readonly CampaignDbTaskEvidenceRecord[];
@@ -272,6 +281,89 @@ const safeRiskFlags = (flags: readonly string[]): string[] =>
       .slice(0, 100),
   )).sort(compareExactText);
 
+const safeEvidenceHash = (value: string | undefined): string | null =>
+  typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : null;
+
+const safeEvidenceRef = (value: string | undefined): string | null =>
+  typeof value === "string"
+  && value.length <= 256
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+    ? value
+    : null;
+
+const compareAttemptRecency = (
+  left: TaskVerificationAttemptSafeRecord,
+  right: TaskVerificationAttemptSafeRecord,
+): number => {
+  const updatedAtComparison = compareExactText(right.updatedAt, left.updatedAt);
+
+  if (updatedAtComparison !== 0) {
+    return updatedAtComparison;
+  }
+
+  const createdAtComparison = compareExactText(right.createdAt, left.createdAt);
+
+  return createdAtComparison !== 0
+    ? createdAtComparison
+    : compareExactText(left.id, right.id);
+};
+
+const journeyStatusForAttempt = (
+  status: TaskVerificationAttemptSafeRecord["status"],
+): CampaignDbTaskCompletionStatus | null => {
+  switch (status) {
+    case "requested":
+    case "running":
+    case "pending":
+      return "pending";
+    case "failed":
+      return "failed";
+    case "manual_review":
+      return "manual_review";
+    case "completed":
+    default:
+      return null;
+  }
+};
+
+const matchesCurrentTaskRevision = (
+  attempt: TaskVerificationAttemptSafeRecord,
+  task: CampaignDbTaskDraft,
+): "invalid" | "match" | "stale" => {
+  if (attempt.taskRevision !== (task.revision ?? 1)) {
+    return "stale";
+  }
+
+  if (
+    (task.verificationType !== "ON_CHAIN" && task.verificationType !== "DAPP_API")
+    || attempt.verificationType !== task.verificationType
+  ) {
+    return "invalid";
+  }
+
+  try {
+    const canonicalTask = createCanonicalTaskVerificationRevision({
+      campaignId: task.campaignId,
+      evidenceRule: task.evidenceRule,
+      points: task.points,
+      required: task.required,
+      revision: task.revision ?? 1,
+      taskId: task.id,
+      traceId: "participant-journey-attempt-linkage",
+      updatedAt: task.updatedAt,
+      verificationType: task.verificationType,
+      walletPolicy: task.walletCompatibility,
+    });
+
+    return canonicalTask.taskRevisionDigest === attempt.taskRevisionDigest
+      && canonicalTask.evidenceRuleDigest === attempt.evidenceRuleDigest
+      ? "match"
+      : "invalid";
+  } catch {
+    return "invalid";
+  }
+};
+
 export const projectParticipantJourney = (
   input: ParticipantJourneyProjectionInput,
 ): ParticipantJourneyProjection => {
@@ -298,6 +390,7 @@ export const projectParticipantJourney = (
   };
 
   const canonicalTasks: CampaignDbTaskDraft[] = [];
+  const canonicalTasksById = new Map<string, CampaignDbTaskDraft>();
   const taskIds = new Set<string>();
   const duplicateTaskIds = new Set<string>();
 
@@ -315,6 +408,7 @@ export const projectParticipantJourney = (
 
     taskIds.add(task.id);
     canonicalTasks.push(task);
+    canonicalTasksById.set(task.id, task);
   }
 
   const completionsByTaskId = new Map<string, CampaignDbTaskCompletion>();
@@ -361,6 +455,56 @@ export const projectParticipantJourney = (
     evidenceByTaskId.set(evidence.taskId, evidence);
   }
 
+  const currentAttemptsByTaskId = new Map<string, TaskVerificationAttemptSafeRecord[]>();
+  const currentAttemptsById = new Map<string, TaskVerificationAttemptSafeRecord>();
+  const currentAttemptTaskById = new Map<string, string>();
+  const invalidAttemptTaskIds = new Set<string>();
+
+  for (const attempt of input.attempts) {
+    if (attempt.walletAddress !== input.subject.walletAddress) {
+      continue;
+    }
+
+    const task = canonicalTasksById.get(attempt.taskId);
+    if (attempt.campaignId !== campaignId || !task) {
+      addDiagnostic("OUT_OF_SCOPE_RECORD_IGNORED", "snapshot");
+      continue;
+    }
+
+    const revisionPosture = matchesCurrentTaskRevision(attempt, task);
+    if (revisionPosture === "stale") {
+      continue;
+    }
+
+    const previousTaskId = currentAttemptTaskById.get(attempt.id);
+    const invalidLinkage = revisionPosture === "invalid"
+      || attempt.accountType !== input.subject.accountType
+      || attempt.walletSource !== input.subject.walletSource
+      || previousTaskId !== undefined;
+
+    if (invalidLinkage) {
+      invalidAttemptTaskIds.add(task.id);
+      if (previousTaskId) {
+        invalidAttemptTaskIds.add(previousTaskId);
+      }
+      addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
+      if (previousTaskId && previousTaskId !== task.id) {
+        addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", previousTaskId);
+      }
+      continue;
+    }
+
+    currentAttemptTaskById.set(attempt.id, task.id);
+    currentAttemptsById.set(attempt.id, attempt);
+    const taskAttempts = currentAttemptsByTaskId.get(task.id) ?? [];
+    taskAttempts.push(attempt);
+    currentAttemptsByTaskId.set(task.id, taskAttempts);
+  }
+
+  for (const attempts of currentAttemptsByTaskId.values()) {
+    attempts.sort(compareAttemptRecency);
+  }
+
   const scopedParticipant = input.participant?.campaignId === campaignId
     && input.participant.walletAddress === input.subject.walletAddress
     ? input.participant
@@ -390,6 +534,8 @@ export const projectParticipantJourney = (
   const progress = canonicalTasks.map((task): ParticipantJourneyTaskProgress => {
     const completion = completionsByTaskId.get(task.id);
     const evidence = evidenceByTaskId.get(task.id);
+    const currentAttempts = currentAttemptsByTaskId.get(task.id) ?? [];
+    const latestAttempt = currentAttempts[0];
     const compatible = isParticipantAccountTypeCompatible(
       input.campaign.walletPolicy,
       input.subject.accountType,
@@ -399,7 +545,7 @@ export const projectParticipantJourney = (
       || duplicateEvidenceTaskIds.has(task.id);
 
     if (!compatible) {
-      if (completion || evidence) {
+      if (completion || evidence || currentAttempts.length > 0) {
         hasIncompatiblePersistedProgress = true;
         addDiagnostic("WALLET_INCOMPATIBLE_PROGRESS_IGNORED", "task", task.id);
       }
@@ -409,8 +555,11 @@ export const projectParticipantJourney = (
         blockedReason: "wallet_incompatible",
         campaignId,
         completionId: null,
+        evidenceHash: null,
         evidenceId: null,
+        evidenceRef: null,
         evidenceSource: null,
+        liveProviderExecuted: false,
         pointsAvailable: task.points,
         pointsAwarded: 0,
         required: task.required,
@@ -418,17 +567,31 @@ export const projectParticipantJourney = (
         taskId: task.id,
         templateCode: task.templateCode,
         updatedAt: null,
+        verificationAttemptId: null,
         verificationType: task.verificationType,
         walletCompatibility: task.walletCompatibility,
       };
     }
 
     let inconsistent = inconsistentDuplicate
+      || invalidAttemptTaskIds.has(task.id)
       || (participantMissingWithProgress && Boolean(completion || evidence));
 
     if (completion && !evidence) {
-      addDiagnostic("COMPLETION_WITHOUT_EVIDENCE", "task", task.id);
-      inconsistent = true;
+      if (completion.status === "completed") {
+        addDiagnostic("COMPLETION_WITHOUT_EVIDENCE", "task", task.id);
+        inconsistent = true;
+      }
+
+      if (!isSubjectMetadataConsistent(completion, input.subject)) {
+        addDiagnostic("SUBJECT_METADATA_MISMATCH", "task", task.id);
+        inconsistent = true;
+      }
+
+      if (completion.pointsAwarded !== 0) {
+        addDiagnostic("POINTS_AWARD_MISMATCH", "task", task.id);
+        inconsistent = true;
+      }
     } else if (!completion && evidence) {
       addDiagnostic("EVIDENCE_WITHOUT_COMPLETION", "task", task.id);
       inconsistent = true;
@@ -440,6 +603,14 @@ export const projectParticipantJourney = (
 
       if (completion.status !== evidence.status) {
         addDiagnostic("COMPLETION_EVIDENCE_STATUS_MISMATCH", "task", task.id);
+        inconsistent = true;
+      }
+
+      if (
+        completion.status === "completed"
+        && completion.evidenceHash !== evidence.evidenceHash
+      ) {
+        addDiagnostic("COMPLETION_EVIDENCE_HASH_MISMATCH", "task", task.id);
         inconsistent = true;
       }
 
@@ -457,6 +628,41 @@ export const projectParticipantJourney = (
         addDiagnostic("POINTS_AWARD_MISMATCH", "task", task.id);
         inconsistent = true;
       }
+
+      const completionAttemptId = completion.verificationAttemptId;
+      const evidenceAttemptId = evidence.verificationAttemptId;
+      const hasAttemptLinkage = completionAttemptId !== undefined
+        || evidenceAttemptId !== undefined;
+
+      if (evidence.liveProviderExecuted || hasAttemptLinkage) {
+        const linkedAttempt = completionAttemptId
+          ? currentAttemptsById.get(completionAttemptId)
+          : undefined;
+        if (
+          completion.status !== "completed"
+          || !evidence.liveProviderExecuted
+          || !completionAttemptId
+          || completionAttemptId !== evidenceAttemptId
+          || !linkedAttempt
+          || linkedAttempt.status !== "completed"
+          || linkedAttempt.evidenceHash !== evidence.evidenceHash
+          || linkedAttempt.evidenceRef !== evidence.evidenceRef
+          || linkedAttempt.evidenceSource !== evidence.evidenceSource
+          || !["AEFINDER", "AELFSCAN", "DAPP_API"].includes(evidence.evidenceSource)
+        ) {
+          addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
+          inconsistent = true;
+        }
+      }
+    }
+
+    if (
+      !completion
+      && !evidence
+      && currentAttempts.some((attempt) => attempt.status === "completed")
+    ) {
+      addDiagnostic("LIVE_PROVIDER_ATTEMPT_LINKAGE_INVALID", "task", task.id);
+      inconsistent = true;
     }
 
     if (inconsistent) {
@@ -465,8 +671,11 @@ export const projectParticipantJourney = (
         blockedReason: "inconsistent_records",
         campaignId,
         completionId: null,
+        evidenceHash: null,
         evidenceId: null,
+        evidenceRef: null,
         evidenceSource: null,
+        liveProviderExecuted: false,
         pointsAvailable: task.points,
         pointsAwarded: 0,
         required: task.required,
@@ -474,29 +683,42 @@ export const projectParticipantJourney = (
         taskId: task.id,
         templateCode: task.templateCode,
         updatedAt: null,
+        verificationAttemptId: null,
         verificationType: task.verificationType,
         walletCompatibility: task.walletCompatibility,
       };
     }
 
-    const status = completion?.status ?? "not_started";
+    const attemptStatus = !completion && !evidence && latestAttempt
+      ? journeyStatusForAttempt(latestAttempt.status)
+      : null;
+    const status = completion?.status ?? attemptStatus ?? "not_started";
+    const exposesEvidence = status === "completed" && Boolean(evidence);
 
     return {
       action: actionForStatus(status),
       blockedReason: null,
       campaignId,
       completionId: completion?.id ?? null,
-      evidenceId: evidence?.id ?? null,
-      evidenceSource: evidence?.evidenceSource ?? completion?.evidenceSource ?? null,
+      evidenceHash: exposesEvidence ? safeEvidenceHash(evidence?.evidenceHash) : null,
+      evidenceId: exposesEvidence ? evidence?.id ?? null : null,
+      evidenceRef: exposesEvidence ? safeEvidenceRef(evidence?.evidenceRef) : null,
+      evidenceSource: exposesEvidence ? evidence?.evidenceSource ?? null : null,
+      liveProviderExecuted: exposesEvidence && evidence?.liveProviderExecuted === true,
       pointsAvailable: task.points,
       pointsAwarded: status === "completed" ? completion?.pointsAwarded ?? 0 : 0,
       required: task.required,
       status,
       taskId: task.id,
       templateCode: task.templateCode,
-      updatedAt: completion && evidence
-        ? maxTimestamp(completion.updatedAt, evidence.updatedAt)
-        : null,
+      updatedAt: completion
+        ? evidence
+          ? maxTimestamp(completion.updatedAt, evidence.updatedAt)
+          : completion.updatedAt
+        : latestAttempt?.updatedAt ?? null,
+      verificationAttemptId: exposesEvidence
+        ? evidence?.verificationAttemptId ?? completion?.verificationAttemptId ?? null
+        : completion?.verificationAttemptId ?? latestAttempt?.id ?? null,
       verificationType: task.verificationType,
       walletCompatibility: task.walletCompatibility,
     };
@@ -506,7 +728,7 @@ export const projectParticipantJourney = (
     (total, task) => total + (task.status === "completed" ? task.pointsAwarded : 0),
     0,
   );
-  const totalPoints = scopedParticipant?.totalPoints ?? completedPoints;
+  const totalPoints = completedPoints;
   const participantPointsMismatch = Boolean(
     scopedParticipant && scopedParticipant.totalPoints !== completedPoints,
   );
@@ -530,7 +752,6 @@ export const projectParticipantJourney = (
     task.blockedReason === "inconsistent_records");
   const hasUnsafeEligibilityState = participantMissingWithProgress
     || participantSubjectMismatch
-    || participantPointsMismatch
     || hasIncompatiblePersistedProgress
     || hasUnsafeInconsistentProgress;
   const eligibilityStatus: ParticipantJourneyEligibility["status"] = riskFlags.length > 0
@@ -597,7 +818,10 @@ export const projectParticipantJourney = (
       input.subject.walletAddress,
       totalPoints,
       scopedParticipant
-        ? input.rankingParticipants
+        ? input.rankingParticipants.map((participant) =>
+          participant.walletAddress === input.subject.walletAddress
+            ? { ...participant, totalPoints }
+            : participant)
         : input.rankingParticipants.filter(
           (participant) => participant.walletAddress !== input.subject.walletAddress,
         ),

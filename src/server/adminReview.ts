@@ -312,10 +312,12 @@ type CanonicalEvidence = Readonly<{
   evidenceRef: string | null;
   evidenceSource: AdminReviewEvidenceRow["evidenceSource"];
   id: string;
+  liveProviderExecuted?: true;
   pointsAwarded: number;
   status: AdminReviewEvidenceRow["status"];
   taskId: string;
   updatedAt: string;
+  verificationAttemptId?: string;
   walletAddress: string;
 }>;
 type CanonicalParticipant = Readonly<{
@@ -401,7 +403,8 @@ const COMPLETION_KEYS = [
 ] as const;
 const EVIDENCE_KEYS = [
   "campaignId", "capturedAt", "completionId", "diagnosticCodes", "evidenceHash", "evidenceRef",
-  "evidenceSource", "id", "pointsAwarded", "status", "taskId", "updatedAt", "walletAddress",
+  "evidenceSource", "id", "liveProviderExecuted", "pointsAwarded", "status", "taskId", "updatedAt",
+  "verificationAttemptId", "walletAddress",
 ] as const;
 const RANKING_KEYS = [
   "campaignId", "createdAt", "participantId", "rank", "totalPoints", "walletAddress",
@@ -515,6 +518,26 @@ const validateEvidence = (
   if (row.campaignId !== campaignId) {
     return fail("ADMIN_REVIEW_DOMAIN_INVALID_FACTS", { field: "campaignId", traceId });
   }
+  const liveProviderExecuted = row.liveProviderExecuted === undefined
+    ? false
+    : assertBoolean(row.liveProviderExecuted, "liveProviderExecuted", traceId);
+  const verificationAttemptId = row.verificationAttemptId === undefined
+    ? undefined
+    : assertBoundedString(row.verificationAttemptId, "verificationAttemptId", traceId);
+  if (
+    (liveProviderExecuted && (
+      !verificationAttemptId
+      || row.status !== "completed"
+      || row.evidenceSource === "MANUAL"
+      || row.evidenceSource === "SOCIAL_API"
+    ))
+    || (!liveProviderExecuted && verificationAttemptId !== undefined)
+  ) {
+    return fail("ADMIN_REVIEW_DOMAIN_INVALID_FACTS", {
+      field: liveProviderExecuted ? "verificationAttemptId" : "liveProviderExecuted",
+      traceId,
+    });
+  }
   return {
     campaignId: assertBoundedString(row.campaignId, "campaignId", traceId),
     capturedAt: assertBoundedString(row.capturedAt, "capturedAt", traceId),
@@ -528,6 +551,9 @@ const validateEvidence = (
       : assertSafePersistedString(row.evidenceRef, "evidenceRef", traceId),
     evidenceSource: assertEnum(row.evidenceSource, ["AEFINDER", "AELFSCAN", "DAPP_API", "MANUAL", "SOCIAL_API"], "evidenceSource", traceId),
     id: assertBoundedString(row.id, "evidenceId", traceId),
+    ...(liveProviderExecuted
+      ? { liveProviderExecuted: true as const, verificationAttemptId: verificationAttemptId! }
+      : {}),
     pointsAwarded: assertFiniteNumber(row.pointsAwarded, "pointsAwarded", traceId, { integer: true, min: 0 }),
     status: assertEnum(row.status, ["completed", "failed", "manual_review", "pending"], "status", traceId),
     taskId: assertBoundedString(row.taskId, "taskId", traceId),
