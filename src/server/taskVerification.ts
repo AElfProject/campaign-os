@@ -26,7 +26,7 @@ const MAX_DIAGNOSTIC_CODES = 16;
 const MAX_SAFE_RULE_NUMBER = 1_000_000_000_000_000;
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
-const SAFE_WALLET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const SAFE_WALLET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SAFE_RULE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
 const SAFE_DIAGNOSTIC_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/;

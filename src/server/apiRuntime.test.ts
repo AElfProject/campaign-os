@@ -19,6 +19,7 @@ import {
   type ApiRuntimeResponse,
   type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
+  type TaskVerificationRuleResolver,
 } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import {
@@ -195,6 +196,7 @@ interface CampaignDraftPayload {
 
 interface TaskDraftPayload {
   campaignId: string;
+  evidenceRule?: Record<string, boolean | number | string>;
   id: string;
   points?: number;
   required?: boolean;
@@ -6475,6 +6477,7 @@ describe("Campaign OS API runtime", () => {
       },
       payload: {
         campaignId: "campaign-db-draft-0001",
+        evidenceRule: { minAmount: 1, source: "AELFSCAN" },
         id: "campaign-db-task-draft-0001",
         points: 120,
         required: true,
@@ -6533,6 +6536,90 @@ describe("Campaign OS API runtime", () => {
       ],
     });
     expectNoForbiddenResponseKeys(taskDraft.body);
+  });
+
+  it("applies an explicitly injected server-side Task rule resolver before persistence", async () => {
+    const campaignDbRepository = createCampaignDbRepository();
+    const campaign = await campaignDbRepository.createDraft({
+      duration: "2026-08-01/2026-08-14",
+      endTime: "2026-08-14T23:59:59Z",
+      goal: "Canonicalize a configured provider task rule",
+      ownerAddress: "repo-owner-rule-resolver",
+      projectId: "repo-project-rule-resolver",
+      rewardDescription: "Provider rule resolver acceptance.",
+      startTime: "2026-08-01T00:00:00Z",
+    });
+    const taskVerificationRuleResolver: TaskVerificationRuleResolver = vi.fn((input) => ({
+      chainId: "AELF",
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: "stage-on-chain-v1",
+      source: "AELFSCAN",
+      ...(input.templateCode === "bridge_ebridge" ? {} : { methodName: "completed" }),
+    }));
+    const runtimeWithResolver = createCampaignOsApiRuntime({
+      campaignDbRepository,
+      taskVerificationRuleResolver,
+    });
+    const response = await runtimeWithResolver.handle({
+      body: JSON.stringify({
+        evidenceRule: {
+          category: "bridge",
+          expectedField: "forged",
+          expectedType: "string",
+          expectedValue: "forged",
+          providerBindingId: "forged-binding",
+          source: "AELFSCAN",
+          templateId: "tpl-bridge-ebridge",
+        },
+        points: 120,
+        required: true,
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+        walletCompatibility: "ANY",
+      }),
+      headers: projectOwnerAuthHeaders("repo-owner-rule-resolver", {
+        "x-campaign-os-trace-id": "trace-task-rule-resolver",
+      }),
+      method: "POST",
+      path: `/api/campaigns/${campaign.id}/tasks`,
+    });
+    const persisted = await campaignDbRepository.getById(campaign.id, {
+      traceId: "trace-read-task-rule-resolver",
+    });
+
+    expect(taskVerificationRuleResolver).toHaveBeenCalledWith({
+      evidenceRule: {
+        category: "bridge",
+        expectedField: "forged",
+        expectedType: "string",
+        expectedValue: "forged",
+        providerBindingId: "forged-binding",
+        source: "AELFSCAN",
+        templateId: "tpl-bridge-ebridge",
+      },
+      templateCode: "bridge_ebridge",
+      verificationType: "ON_CHAIN",
+    });
+    expect(expectSuccessData<LocalServiceEnvelope<TaskDraftPayload>>(response).payload.evidenceRule)
+      .toEqual({
+        chainId: "AELF",
+        expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
+        providerBindingId: "stage-on-chain-v1",
+        source: "AELFSCAN",
+      });
+    expect(persisted?.tasks[0]?.evidenceRule).toEqual({
+      chainId: "AELF",
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: "stage-on-chain-v1",
+      source: "AELFSCAN",
+    });
+    await runtimeWithResolver.close();
   });
 
   it("generates repository campaign task previews without task, audit, provider, or queue writes", async () => {

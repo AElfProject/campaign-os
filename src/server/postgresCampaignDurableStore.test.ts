@@ -2989,6 +2989,83 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
     await store.close();
   });
 
+  it("begins a Stage attempt for an issued dotted local-review wallet", async () => {
+    const traceId = "trace-postgres-stage-dotted-wallet";
+    const stageTask = task({
+      evidenceRule: {
+        chainId: "AELF",
+        expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
+        providerBindingId: "stage-on-chain-v1",
+        source: "AELFSCAN",
+      },
+      id: "task-postgres-stage-dotted-wallet",
+      updatedAt: "2026-07-17T19:47:45.354Z",
+    });
+    await seedVerificationTask(stageTask);
+    const identity = deriveTaskVerificationIdentity(issueTrustedTaskVerificationIdentityInput({
+      binding: {
+        bindingId: "stage-on-chain-v1",
+        bindingRevision: 1,
+      },
+      issuedSubject: {
+        accountType: "EOA",
+        sessionRef: "session-postgres-stage-dotted-wallet",
+        walletAddress: "8A2...1eF",
+        walletSource: "PORTKEY_EOA_APP",
+      },
+      task: createCanonicalTaskVerificationRevision({
+        campaignId: stageTask.campaignId,
+        evidenceRule: stageTask.evidenceRule,
+        points: stageTask.points,
+        required: stageTask.required,
+        revision: stageTask.revision ?? 1,
+        taskId: stageTask.id,
+        traceId,
+        updatedAt: stageTask.updatedAt,
+        verificationType: stageTask.verificationType,
+        walletPolicy: stageTask.walletCompatibility,
+      }),
+      traceId,
+    }));
+    const store = createPostgresCampaignDurableStore({
+      attemptId: () => "attempt-postgres-stage-dotted-wallet",
+      now: () => "2026-07-18T00:00:00.000Z",
+      ownerToken: () => "owner-token-postgres-stage-dotted-wallet",
+      ownsPool: false,
+      pool: requiredDatabasePool(),
+    });
+
+    await expect(store.taskVerificationAttempts!.begin({
+      identity,
+      leaseDurationMs: 15_000,
+      maxAttempts: 3,
+      providerRef: "stage-on-chain-v1",
+      traceId,
+      verificationType: "ON_CHAIN",
+    })).resolves.toMatchObject({
+      attempt: {
+        bindingId: "stage-on-chain-v1",
+        taskId: stageTask.id,
+        walletAddress: "8A2...1eF",
+      },
+      kind: "acquired",
+    });
+    await expect(requiredDatabasePool().query(
+      `SELECT wallet_address, binding_id
+       FROM campaign_os.verification_attempts
+       WHERE task_id = $1`,
+      [stageTask.id],
+    )).resolves.toMatchObject({
+      rows: [{
+        binding_id: "stage-on-chain-v1",
+        wallet_address: "8A2...1eF",
+      }],
+    });
+    await store.close();
+  });
+
   it("serializes twenty concurrent dispatch markers and finalizers to one terminal write", async () => {
     const traceId = "trace-postgres-attempt-concurrent-finalize";
     const store = createPostgresCampaignDurableStore({

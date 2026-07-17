@@ -4,6 +4,7 @@ import {
   createCampaignOsApiRuntime,
   type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
+  type TaskVerificationRuleResolver,
 } from "./apiRuntime";
 import {
   resolveCampaignOsCampaignDbConfig,
@@ -135,6 +136,7 @@ interface ResolvedStageRuntimeConfig {
   readonly materialResolver: ProviderHttpExecutionMaterialResolver;
   readonly providerRuntime: ProviderHttpRuntimeSummary;
   readonly taskVerificationConfig: TaskVerificationConfig;
+  readonly taskVerificationRuleResolver: TaskVerificationRuleResolver;
 }
 
 const LOOPBACK_API_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -147,6 +149,17 @@ const STAGE_TRANSPORT_DRAIN_TIMEOUT_MS = 2_000;
 const SAFE_TRACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const UNSAFE_TRACE_ID_PATTERN =
   /(?:authorization|bearer|credential|password|private|raw[_-]?signature|secret|token)/i;
+const STAGE_PROVIDER_SCENARIO_BY_TEMPLATE = new Map<string, string>([
+  ["bridge-ebridge", "completed"],
+  ["swap-awaken", "completed"],
+  ["liquidity-awaken", "pending"],
+  ["nft-hold", "negative"],
+  ["schrodinger-hold", "timeout"],
+  ["dao-vote", "429"],
+  ["daipp-submit", "5xx"],
+  ["pay-complete", "malformed"],
+  ["forecast-participate", "oversized"],
+]);
 
 export const startProviderVerificationStageRuntime = async (
   options: StartProviderVerificationStageRuntimeOptions = {},
@@ -170,6 +183,7 @@ export const startProviderVerificationStageRuntime = async (
         ...runtimeOptions,
         taskVerificationConfig: resolved.taskVerificationConfig,
         taskVerificationProviderRuntime: resolved.providerRuntime,
+        taskVerificationRuleResolver: resolved.taskVerificationRuleResolver,
         taskVerificationTransport: transport,
       }),
       taskVerificationTransport: transport,
@@ -306,6 +320,7 @@ function resolveStageRuntimeConfig(
   if (!verificationTypes.has("ON_CHAIN") || !verificationTypes.has("DAPP_API")) {
     throw new ProviderVerificationStageRuntimeError("PROVIDER_STAGE_BINDINGS_REQUIRED");
   }
+  assertUnambiguousStageBindingDefaults(bindings);
 
   for (const binding of bindings) {
     if (binding.endpointEnvKey !== STAGE_PROVIDER_URL_ENV) {
@@ -331,7 +346,76 @@ function resolveStageRuntimeConfig(
     materialResolver,
     providerRuntime,
     taskVerificationConfig,
+    taskVerificationRuleResolver: createStageTaskVerificationRuleResolver(bindings),
   });
+}
+
+function assertUnambiguousStageBindingDefaults(
+  bindings: readonly TaskVerificationBinding[],
+): void {
+  const defaults = new Set<string>();
+
+  for (const binding of bindings) {
+    const key = `${binding.verificationType}\u0000${binding.evidenceSource}`;
+    if (defaults.has(key)) {
+      throw new ProviderVerificationStageRuntimeError(
+        "PROVIDER_STAGE_VERIFICATION_CONFIG_INVALID",
+      );
+    }
+    defaults.add(key);
+  }
+}
+
+function createStageTaskVerificationRuleResolver(
+  bindings: readonly TaskVerificationBinding[],
+): TaskVerificationRuleResolver {
+  const bindingByDefault = new Map<string, TaskVerificationBinding>(
+    bindings.map((binding) => [
+      `${binding.verificationType}\u0000${binding.evidenceSource}`,
+      binding,
+    ] as const),
+  );
+
+  return (input) => {
+    const source = input.evidenceRule.source;
+    if (
+      typeof source !== "string"
+      || (input.verificationType !== "ON_CHAIN" && input.verificationType !== "DAPP_API")
+    ) {
+      return { ...input.evidenceRule };
+    }
+
+    const binding = bindingByDefault.get(`${input.verificationType}\u0000${source}`);
+    if (!binding) {
+      return { ...input.evidenceRule };
+    }
+
+    const templateCode = input.templateCode
+      .trim()
+      .toLowerCase()
+      .replace(/^tpl[-_]/, "")
+      .replace(/_/g, "-");
+    const scenario = STAGE_PROVIDER_SCENARIO_BY_TEMPLATE.get(templateCode) ?? "completed";
+    const expectation = {
+      expectedType: "boolean" as const,
+      expectedValue: true,
+      providerBindingId: binding.id,
+      source: binding.evidenceSource,
+    };
+
+    return input.verificationType === "ON_CHAIN"
+      ? {
+          chainId: "AELF",
+          expectedField: "verified",
+          ...expectation,
+          ...(scenario === "completed" ? {} : { methodName: scenario }),
+        }
+      : {
+          action: scenario,
+          expectedField: "eligible",
+          ...expectation,
+        };
+  };
 }
 
 function assertDisposableStageDatabase(

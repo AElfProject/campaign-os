@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
-import { createCampaignOsLocalService, type CampaignOsLocalService } from "../domain/campaignService";
+import {
+  createCampaignOsLocalService,
+  type AddTaskRequest,
+  type CampaignOsLocalService,
+} from "../domain/campaignService";
 import {
   CampaignOsCampaignDbConfigError,
   CampaignOsAdminReviewConfigError,
@@ -182,6 +186,7 @@ export interface ApiRuntimeHandlerContext {
   route: ApiRuntimeRouteContract;
   service: CampaignOsLocalService;
   taskVerificationRuntime: ProtectedTaskVerificationRuntimePort;
+  taskVerificationRuleResolver?: TaskVerificationRuleResolver;
   traceId: string;
   version: string;
   walletSessionRepository: WalletSessionRepository;
@@ -193,6 +198,9 @@ export interface ApiRuntimeHandlerContext {
 export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown | Promise<unknown>;
 export type BackendServiceReadinessFactory = () => BackendServiceReadinessReport;
 export type ParticipantPreviewConfigFactory = () => CampaignOsParticipantPreviewConfig;
+export type TaskVerificationRuleResolver = (
+  input: Readonly<Pick<AddTaskRequest, "evidenceRule" | "templateCode" | "verificationType">>,
+) => Record<string, boolean | number | string>;
 
 export interface CampaignOsApiRuntime {
   close(): Promise<void>;
@@ -695,6 +703,7 @@ export interface CreateCampaignOsApiRuntimeOptions {
   taskVerificationConfig?: TaskVerificationConfig;
   taskVerificationConfigOptions?: TaskVerificationConfigInput;
   taskVerificationProviderRuntime?: ProviderHttpRuntimeSummary;
+  taskVerificationRuleResolver?: TaskVerificationRuleResolver;
   taskVerificationRuntime?: TaskVerificationRuntimePort;
   taskVerificationRuntimeFactory?: TaskVerificationRuntimeFactory;
   taskVerificationTransport?: ProviderHttpTransport;
@@ -1862,6 +1871,7 @@ export const createCampaignOsApiRuntime = ({
   taskVerificationConfig,
   taskVerificationConfigOptions,
   taskVerificationProviderRuntime,
+  taskVerificationRuleResolver,
   taskVerificationRuntime,
   taskVerificationRuntimeFactory,
   taskVerificationTransport,
@@ -2408,6 +2418,7 @@ export const createCampaignOsApiRuntime = ({
           traceId,
           version: runtimeVersion,
           walletSessionRepository: safeWalletSessionRepository,
+          ...(taskVerificationRuleResolver ? { taskVerificationRuleResolver } : {}),
           ...(authDecision?.adminOperator
             ? { adminOperator: authDecision.adminOperator }
             : {}),

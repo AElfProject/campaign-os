@@ -332,6 +332,18 @@ describe("task verification server-derived identity", () => {
       issueTrustedTaskVerificationIdentityInput(rotated),
     ).idempotencyKey).toBe(first.idempotencyKey);
   });
+
+  it("accepts the bounded local-review wallet token issued by the wallet session boundary", () => {
+    const input = trustedInputValues();
+    input.issuedSubject.walletAddress = "8A2...1eF";
+
+    const identity = deriveTaskVerificationIdentity(
+      issueTrustedTaskVerificationIdentityInput(input),
+    );
+
+    expect(identity.issuedSubject.walletAddress).toBe("8A2...1eF");
+    expect(identity.idempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+  });
 });
 
 describe("task verification attempt state machine", () => {

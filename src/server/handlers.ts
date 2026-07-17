@@ -381,6 +381,26 @@ const addTaskRequest = (context: ApiRuntimeHandlerContext): AddTaskRequest => {
   };
 };
 
+const resolvedAddTaskRequest = (context: ApiRuntimeHandlerContext): AddTaskRequest => {
+  const request = addTaskRequest(context);
+  const resolver = context.taskVerificationRuleResolver;
+
+  if (!resolver) {
+    return request;
+  }
+
+  const evidenceRule = resolver(Object.freeze({
+    evidenceRule: Object.freeze({ ...request.evidenceRule }),
+    templateCode: request.templateCode,
+    verificationType: request.verificationType,
+  }));
+
+  return {
+    ...request,
+    evidenceRule: requiredRecord({ evidenceRule }, "evidenceRule"),
+  };
+};
+
 const campaignDbTaskDraftInput = (request: AddTaskRequest): CampaignDbAddTaskDraftInput => ({
   campaignId: request.campaignId,
   evidenceRule: request.evidenceRule,
@@ -3324,7 +3344,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       ),
     ),
   "campaigns.tasks.add": async (context) => {
-    const request = addTaskRequest(context);
+    const request = resolvedAddTaskRequest(context);
     const campaignDbDraft = await context.campaignDbRepository.getById(request.campaignId, {
       traceId: context.traceId,
     });

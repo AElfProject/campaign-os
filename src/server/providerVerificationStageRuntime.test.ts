@@ -15,6 +15,13 @@ import {
 import type {
   TaskVerificationBinding,
 } from "./taskVerificationConfig";
+import {
+  createCanonicalTaskVerificationRevision,
+  deriveTaskVerificationIdentity,
+  issueTrustedTaskVerificationIdentityInput,
+} from "./taskVerification";
+import type { TaskVerificationAttemptStore } from "./taskVerificationAttemptStore";
+import { TaskVerificationRuntime } from "./taskVerificationRuntime";
 import type { ProviderHttpFetchTransport } from "./providerHttpFetchTransport";
 import {
   runProviderVerificationStageRuntimeCli,
@@ -192,6 +199,73 @@ describe("provider verification stage runtime", () => {
       transportProvided: true,
       valid: true,
     });
+    const resolveRule = runtimeOptions?.taskVerificationRuleResolver;
+    expect(resolveRule).toBeTypeOf("function");
+    expect(resolveRule?.({
+      evidenceRule: {
+        category: "bridge",
+        expectedField: "forged",
+        expectedType: "string",
+        expectedValue: "forged",
+        providerBindingId: "forged-binding",
+        source: "AELFSCAN",
+        templateId: "tpl-bridge-ebridge",
+      },
+      templateCode: "bridge_ebridge",
+      verificationType: "ON_CHAIN",
+    })).toEqual({
+      chainId: "AELF",
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: "stage-on-chain-v1",
+      source: "AELFSCAN",
+    });
+    expect(resolveRule?.({
+      evidenceRule: {
+        category: "swap",
+        expectedField: "forged",
+        expectedType: "string",
+        expectedValue: "forged",
+        providerBindingId: "forged-binding",
+        source: "DAPP_API",
+        templateId: "tpl-swap-awaken",
+      },
+      templateCode: "swap_awaken",
+      verificationType: "DAPP_API",
+    })).toEqual({
+      action: "completed",
+      expectedField: "eligible",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: "stage-dapp-api-v1",
+      source: "DAPP_API",
+    });
+    expect(resolveRule?.({
+      evidenceRule: { source: "AELFSCAN" },
+      templateCode: "liquidity_awaken",
+      verificationType: "ON_CHAIN",
+    })).toEqual({
+      chainId: "AELF",
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      methodName: "pending",
+      providerBindingId: "stage-on-chain-v1",
+      source: "AELFSCAN",
+    });
+    expect(resolveRule?.({
+      evidenceRule: { source: "DAPP_API" },
+      templateCode: "pay-complete",
+      verificationType: "DAPP_API",
+    })).toEqual({
+      action: "malformed",
+      expectedField: "eligible",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: "stage-dapp-api-v1",
+      source: "DAPP_API",
+    });
     expect(runtime.getState()).toEqual({
       bindingCount: 2,
       bindingIds: ["stage-dapp-api-v1", "stage-on-chain-v1"],
@@ -212,6 +286,85 @@ describe("provider verification stage runtime", () => {
         }),
       }),
     );
+  });
+
+  it("composes a Stage rule, authority, strategy, and provider plan that reach durable begin", async () => {
+    const harness = createHarness();
+    const stage = await startProviderVerificationStageRuntime({
+      apiRuntimeFactory: harness.apiRuntimeFactory,
+      env: stageEnv(),
+      healthFetch: harness.healthFetch,
+      serverStarter: harness.serverStarter,
+    });
+    openRuntimes.add(stage);
+    const options = harness.capturedRuntimeOptions();
+    const resolveRule = options?.taskVerificationRuleResolver;
+    expect(resolveRule).toBeTypeOf("function");
+
+    const task = createCanonicalTaskVerificationRevision({
+      campaignId: "campaign-stage-preflight",
+      evidenceRule: resolveRule!({
+        evidenceRule: { source: "AELFSCAN" },
+        templateCode: "bridge_ebridge",
+        verificationType: "ON_CHAIN",
+      }),
+      points: 120,
+      required: true,
+      revision: 1,
+      taskId: "task-stage-preflight",
+      traceId: "trace-stage-preflight-task",
+      updatedAt: "2026-07-18T00:00:00.000Z",
+      verificationType: "ON_CHAIN",
+      walletPolicy: "ANY",
+    });
+    const identity = deriveTaskVerificationIdentity(
+      issueTrustedTaskVerificationIdentityInput({
+        binding: { bindingId: "stage-on-chain-v1", bindingRevision: 1 },
+        issuedSubject: {
+          accountType: "EOA",
+          sessionRef: "session-stage-preflight",
+          walletAddress: "8A2...1eF",
+          walletSource: "PORTKEY_EOA_APP",
+        },
+        task,
+        traceId: "trace-stage-preflight-identity",
+      }),
+    );
+    const begin = vi.fn<TaskVerificationAttemptStore["begin"]>(async () => {
+      throw new Error("expected preflight sentinel");
+    });
+    const attemptStore: TaskVerificationAttemptStore = {
+      begin,
+      close: vi.fn(async () => undefined),
+      finalize: vi.fn(async () => {
+        throw new Error("finalize must not run");
+      }),
+      get: vi.fn(async () => undefined),
+      markTransportStarted: vi.fn(async () => {
+        throw new Error("mark must not run");
+      }),
+    };
+    const verificationRuntime = new TaskVerificationRuntime({
+      attemptStore,
+      config: options!.taskVerificationConfig!,
+      finalizationWriteFactory: vi.fn(() => {
+        throw new Error("write factory must not run");
+      }),
+      providerHttpRuntime: options!.taskVerificationProviderRuntime!,
+      transport: options!.taskVerificationTransport!,
+    });
+
+    await expect(verificationRuntime.execute({
+      identity,
+      task,
+      traceId: "trace-stage-preflight-execute",
+    })).resolves.toMatchObject({
+      diagnosticCodes: ["TASK_VERIFICATION_ATTEMPT_BEGIN_FAILED"],
+      outcome: "blocked",
+      transportExecuted: false,
+    });
+    expect(begin).toHaveBeenCalledTimes(1);
+    await expect(verificationRuntime.close()).resolves.toMatchObject({ status: "drained" });
   });
 
   it.each([
@@ -257,6 +410,20 @@ describe("provider verification stage runtime", () => {
       code: "PROVIDER_STAGE_BINDINGS_REQUIRED",
       env: stageEnv([dappApiBinding()]),
       label: "missing ON_CHAIN binding",
+    },
+    {
+      code: "PROVIDER_STAGE_VERIFICATION_CONFIG_INVALID",
+      env: stageEnv([
+        onChainBinding(),
+        onChainBinding({
+          endpointId: "aelfscan-indexer-query",
+          id: "stage-on-chain-v2",
+          providerFamily: "aelfscan",
+          providerGroupId: "aelfscan-indexers",
+        }),
+        dappApiBinding(),
+      ]),
+      label: "ambiguous ON_CHAIN source default",
     },
     {
       code: "PROVIDER_STAGE_ENDPOINT_INVALID",

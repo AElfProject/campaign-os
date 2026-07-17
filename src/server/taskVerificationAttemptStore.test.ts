@@ -444,8 +444,14 @@ describe("task verification attempt store", () => {
     });
     await acquire(store);
     const encoded = encodeTaskVerificationAttemptRecords(store.exportPersistenceRecords());
+    const dottedWalletRecord = {
+      ...store.exportPersistenceRecords()[0],
+      walletAddress: "8A2...1eF",
+    };
 
     expect(decodeTaskVerificationAttemptRecords(encoded)).toEqual(store.exportPersistenceRecords());
+    expect(decodeTaskVerificationAttemptRecords(JSON.stringify([dottedWalletRecord])))
+      .toEqual([dottedWalletRecord]);
     expect(encoded).not.toContain("owner-token-codec");
     expect(() => decodeTaskVerificationAttemptRecords(JSON.stringify([{
       ...store.exportPersistenceRecords()[0],

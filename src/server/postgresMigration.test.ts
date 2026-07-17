@@ -246,6 +246,9 @@ describe("PostgreSQL migration runtime", () => {
     expect(liveProviderTaskVerification?.upSql).toContain(
       "CREATE TABLE campaign_os.verification_attempts",
     );
+    expect(liveProviderTaskVerification?.upSql).toContain(
+      "wallet_address ~ '^[A-Za-z0-9][A-Za-z0-9._-]*$'",
+    );
     for (const contractFragment of [
       "CREATE TABLE campaign_os.campaign_task_revisions",
       "campaign_task_revisions_append_only",
@@ -339,7 +342,7 @@ describe("PostgreSQL migration runtime", () => {
       /ADD CONSTRAINT campaign_task_evidence_live_provider_executed_check\s+CHECK \(live_provider_executed = false\)/,
     );
     expect(liveProviderTaskVerification?.checksum).toBe(
-      "75578042d64ce87a17d511149bb9055a85be2693befaaa8904aa58391a0e5f81",
+      "8e772b6427b4e41f9fe0f13c0c355c2cfd94eb302ab4fd6bb036188f78130d63",
     );
 
     const factTables = [
@@ -851,7 +854,7 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
   const FINALIZATION_DIGEST = "0".repeat(64);
   const campaignId = "campaign-migration-0004";
   const taskId = "task-migration-0004";
-  const walletAddress = "wallet-migration-0004";
+  const walletAddress = "8A2...1eF";
   const databaseName = `campaign_os_m243_${process.pid}_${randomUUID()
     .replace(/-/g, "")
     .slice(0, 8)}`;

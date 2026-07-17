@@ -270,7 +270,7 @@ CREATE TABLE campaign_os.verification_attempts (
   CONSTRAINT campaign_os_verification_attempts_task_revision_check CHECK (task_revision > 0),
   CONSTRAINT campaign_os_verification_attempts_wallet_check CHECK (
     char_length(wallet_address) BETWEEN 1 AND 192
-    AND wallet_address ~ '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+    AND wallet_address ~ '^[A-Za-z0-9][A-Za-z0-9._-]*$'
     AND wallet_address !~ '[[:cntrl:]]'
   ),
   CONSTRAINT campaign_os_verification_attempts_account_type_check CHECK (
