@@ -298,6 +298,45 @@ describe("WalletConnectModal locale coverage", () => {
     expect(onPreviewConnect).toHaveBeenCalledWith("participant-a");
   });
 
+  it("moves focus into the dialog, traps keyboard focus, and restores the trigger", () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open wallet modal";
+    document.body.append(trigger);
+    trigger.focus();
+
+    const { unmount } = render(
+      <WalletConnectModal
+        locale="en-US"
+        onClose={vi.fn()}
+        onPreviewConnect={vi.fn()}
+        onReviewIdentityChange={vi.fn()}
+        options={walletOptions}
+        selectedReviewIdentity="participant-a"
+        stageReviewMode
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    const closeButton = within(dialog).getByRole("button", {
+      name: "Close wallet connect modal",
+    });
+    const connectButton = within(dialog).getByRole("button", {
+      name: "Connect as Participant A",
+    });
+
+    expect(closeButton).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(connectButton).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeButton).toHaveFocus();
+
+    unmount();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
+  });
+
   it("defaults unknown stage identities to Owner without exposing arbitrary values", () => {
     const onReviewIdentityChange = vi.fn();
 
