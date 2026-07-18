@@ -32,7 +32,7 @@ const challengeProjection = () => ({
 const sessionProjection = () => ({
   absoluteExpiresAt: "2026-07-18T09:00:00.000Z",
   accountType: "EOA" as const,
-  capabilities: ["PARTICIPATE_CAMPAIGN"],
+  capabilities: ["campaign:read", "task:verify"],
   chainId: "AELF" as const,
   idleExpiresAt: "2026-07-18T01:30:00.000Z",
   issuedAt: "2026-07-18T01:00:00.000Z",
@@ -230,7 +230,7 @@ describe("walletAuthenticationHttp", () => {
           session: {
             absoluteExpiresAt: "2026-07-18T09:00:00.000Z",
             accountType: "EOA",
-            capabilities: ["PARTICIPATE_CAMPAIGN"],
+            capabilities: ["campaign:read", "task:verify"],
             chainId: "AELF",
             idleExpiresAt: "2026-07-18T01:30:00.000Z",
             issuedAt: "2026-07-18T01:00:00.000Z",
