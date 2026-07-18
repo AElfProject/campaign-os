@@ -155,8 +155,8 @@ describe("WalletClient port", () => {
     const exactLimit = createHarness({
       generateProof: async () => ({
         adapterProof: {
-          left: new Uint8Array(131_071),
-          right: new Uint8Array(131_072),
+          left: new Uint8Array(131_067),
+          right: new Uint8Array(131_067),
         },
         signature: new Uint8Array([1]),
       }),
@@ -172,8 +172,8 @@ describe("WalletClient port", () => {
     const overLimit = createHarness({
       generateProof: async () => ({
         adapterProof: {
-          left: new Uint8Array(131_071),
-          right: new Uint8Array(131_073),
+          left: new Uint8Array(131_067),
+          right: new Uint8Array(131_068),
         },
         signature: new Uint8Array([1]),
       }),
@@ -181,6 +181,62 @@ describe("WalletClient port", () => {
     await overLimit.client.connect("ephemeral-eoa");
 
     await expect(overLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).rejects.toMatchObject({
+      code: "WALLET_CLIENT_SIGN_FAILED",
+      name: "WalletClientError",
+    });
+  });
+
+  it("charges nested key, string and binary bytes to one exact aggregate proof limit", async () => {
+    const signature = new Uint8Array([1]);
+    const publicKey = new Uint8Array([2, 3]);
+    const nestedKey = "nested";
+    const stringKey = "text";
+    const binaryKey = "bytes";
+    const stringValue = "界";
+    const fixedBytes = [nestedKey, stringKey, binaryKey, stringValue]
+      .reduce((total, value) => total + new TextEncoder().encode(value).byteLength, 0)
+      + signature.byteLength
+      + publicKey.byteLength;
+    const createCombinedHarness = (binaryByteLength: number) => createHarness({
+      generateProof: async () => ({
+        adapterProof: {
+          [nestedKey]: {
+            [binaryKey]: new Uint8Array(binaryByteLength),
+            [stringKey]: stringValue,
+          },
+        },
+        publicKey,
+        signature,
+      }),
+    });
+    const exactLimit = createCombinedHarness(262_144 - fixedBytes);
+    await exactLimit.client.connect("ephemeral-eoa");
+    await expect(exactLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).resolves.toBeDefined();
+
+    const overLimit = createCombinedHarness(262_145 - fixedBytes);
+    await overLimit.client.connect("ephemeral-eoa");
+    await expect(overLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).rejects.toMatchObject({
+      code: "WALLET_CLIENT_SIGN_FAILED",
+      name: "WalletClientError",
+    });
+  });
+
+  it("rejects bigint adapter-proof values instead of accepting unbounded magnitude", async () => {
+    const { client } = createHarness({
+      generateProof: async () => ({
+        adapterProof: { scalar: 1n },
+        signature: new Uint8Array([1]),
+      }),
+    });
+    await client.connect("ephemeral-eoa");
+
+    await expect(client.signMessage({
       exactMessageBytes: new Uint8Array([9]),
     })).rejects.toMatchObject({
       code: "WALLET_CLIENT_SIGN_FAILED",

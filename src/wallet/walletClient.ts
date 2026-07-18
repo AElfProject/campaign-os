@@ -106,6 +106,7 @@ const WALLET_CLIENT_ADAPTER_PROOF_MAX_NODES = WALLET_CLIENT_ADAPTER_PROOF_MAX_EN
 const WALLET_CLIENT_ADAPTER_PROOF_STRING_MAX_LENGTH = 65_536;
 const WALLET_CLIENT_PROOF_BYTES_MAX = 262_144;
 const WALLET_CLIENT_PUBLIC_KEY_BYTES_MAX = 4_096;
+const walletClientTextEncoder = new TextEncoder();
 
 const safeIdentifier = (value: unknown, maximum = 128): value is string =>
   typeof value === "string"
@@ -268,9 +269,12 @@ const cloneAdapterProofValue = (
     value === null
     || value === undefined
     || typeof value === "boolean"
-    || typeof value === "bigint"
   ) {
     return value;
+  }
+
+  if (typeof value === "bigint") {
+    throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
   }
 
   if (typeof value === "number") {
@@ -286,7 +290,7 @@ const cloneAdapterProofValue = (
       throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
     }
 
-    consumeProofBytes(budget, new TextEncoder().encode(value).byteLength, adapterId);
+    consumeProofBytes(budget, walletClientTextEncoder.encode(value).byteLength, adapterId);
     return value;
   }
 
@@ -323,6 +327,7 @@ const cloneAdapterProofValue = (
 
     const cloned: Record<string, unknown> = {};
     for (const key of keys as string[]) {
+      consumeProofBytes(budget, walletClientTextEncoder.encode(key).byteLength, adapterId);
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor?.enumerable || !("value" in descriptor)) {
         throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
