@@ -305,23 +305,16 @@ const parseEntry = (
     return fail("WALLET_ADAPTER_FIELD_INVALID", "adapters[]", adapterId);
   }
 
-  if (enabled && !serverBindingIds.has(adapterId)) {
-    return fail("WALLET_ADAPTER_SERVER_BINDING_REQUIRED", "adapters[].adapterId", adapterId);
-  }
-
   const packageGate = packageGateByAdapterId.get(adapterId);
-  if (!packageGate || (enabled && packageGate.status === "unavailable")) {
+  if (!packageGate) {
     return fail("WALLET_ADAPTER_PACKAGE_UNAVAILABLE", "adapters[].adapterId", adapterId);
   }
 
   const runtimeStatus = runtimeAvailability[adapterId];
-  if (enabled && runtimeStatus !== "available") {
-    return fail(
-      "WALLET_ADAPTER_RUNTIME_AVAILABILITY_REQUIRED",
-      "adapters[].adapterId",
-      adapterId,
-    );
-  }
+  const effectivelyAvailable = enabled
+    && packageGate.status === "candidate"
+    && runtimeStatus === "available"
+    && serverBindingIds.has(adapterId);
 
   return Object.freeze({
     adapterId,
@@ -330,7 +323,9 @@ const parseEntry = (
     packageName: packageGate.packageName,
     recommended,
     status: enabled
-      ? "available"
+      ? effectivelyAvailable
+        ? "available"
+        : "unavailable"
       : packageGate.status === "unavailable" || runtimeStatus === "unavailable"
         ? "unavailable"
         : "disabled",

@@ -147,6 +147,49 @@ describe("browser wallet adapter config", () => {
     expect(Object.isFrozen(config.adapters)).toBe(true);
   });
 
+  it("keeps unavailable Portkey AA visible without invalidating available Portkey EOA", () => {
+    const config = resolveWalletAdapterConfig({
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([
+          {
+            adapterId: "portkey-aa",
+            enabled: true,
+            label: "Portkey AA",
+            recommended: false,
+          },
+          browserEntries[0],
+        ]),
+      },
+      runtimeAvailability: {
+        "portkey-aa": "unavailable",
+        "portkey-discover-eoa": "available",
+      },
+      serverBindingIds: ["portkey-discover-eoa"],
+    });
+
+    expect(config).toMatchObject({ enabled: true, status: "ready", valid: true });
+    expect(config.diagnostics).toEqual([]);
+    expect(config.adapters).toEqual([
+      {
+        adapterId: "portkey-aa",
+        enabled: true,
+        label: "Portkey AA",
+        packageName: "@aelf-web-login/wallet-adapter-portkey-aa",
+        recommended: false,
+        status: "unavailable",
+      },
+      {
+        adapterId: "portkey-discover-eoa",
+        enabled: true,
+        label: "Portkey EOA",
+        packageName: "@aelf-web-login/wallet-adapter-portkey-discover",
+        recommended: true,
+        status: "available",
+      },
+    ]);
+  });
+
   it.each(["accountType", "proofMethod", "walletSource", "hashStrategyId", "productionApproved"])(
     "rejects server authority field %s from Vite config",
     (field) => {
@@ -166,7 +209,7 @@ describe("browser wallet adapter config", () => {
     },
   );
 
-  it("rejects enabled entries absent from the server-known binding set", () => {
+  it("projects a known enabled adapter without a concrete binding as unavailable", () => {
     const config = resolveWalletAdapterConfig({
       env: {
         VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
@@ -176,13 +219,23 @@ describe("browser wallet adapter config", () => {
       serverBindingIds: ["portkey-discover-eoa"],
     });
 
-    expect(config.status).toBe("invalid");
-    expect(config.diagnostics.map(({ code }) => code)).toContain(
-      "WALLET_ADAPTER_SERVER_BINDING_REQUIRED",
-    );
+    expect(config).toMatchObject({ enabled: true, status: "ready", valid: true });
+    expect(config.diagnostics).toEqual([]);
+    expect(config.adapters).toEqual([
+      expect.objectContaining({
+        adapterId: "nightelf",
+        enabled: true,
+        status: "unavailable",
+      }),
+      expect.objectContaining({
+        adapterId: "portkey-discover-eoa",
+        enabled: true,
+        status: "available",
+      }),
+    ]);
   });
 
-  it("does not pre-approve a candidate before injected Vite/provider detection", () => {
+  it("projects a candidate as unavailable before injected provider detection", () => {
     const config = resolveWalletAdapterConfig({
       env: {
         VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
@@ -191,11 +244,13 @@ describe("browser wallet adapter config", () => {
       serverBindingIds: ["portkey-discover-eoa"],
     });
 
-    expect(config.status).toBe("invalid");
-    expect(config.diagnostics).toEqual([
+    expect(config).toMatchObject({ enabled: true, status: "ready", valid: true });
+    expect(config.diagnostics).toEqual([]);
+    expect(config.adapters).toEqual([
       expect.objectContaining({
         adapterId: "portkey-discover-eoa",
-        code: "WALLET_ADAPTER_RUNTIME_AVAILABILITY_REQUIRED",
+        enabled: true,
+        status: "unavailable",
       }),
     ]);
   });
@@ -207,7 +262,7 @@ describe("browser wallet adapter config", () => {
       "@aelf-web-login/wallet-adapter-portkey-extension",
       "WALLET_ADAPTER_PACKAGE_MISSING",
     ],
-  ])("keeps %s explicitly unavailable and disabled", (adapterId, packageName, gateCode) => {
+  ])("keeps %s explicitly unavailable without invalidating the registry", (adapterId, packageName, gateCode) => {
     const config = resolveWalletAdapterConfig({
       env: {
         VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
@@ -224,15 +279,18 @@ describe("browser wallet adapter config", () => {
       serverBindingIds: [adapterId],
     });
 
-    expect(config.status).toBe("invalid");
-    expect(config.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: "WALLET_ADAPTER_PACKAGE_UNAVAILABLE",
-        field: "adapters[].adapterId",
+    expect(config).toMatchObject({ enabled: true, status: "ready", valid: true });
+    expect(config.diagnostics).toEqual([]);
+    expect(config.adapters).toEqual([
+      {
         adapterId,
-      }),
-    ]));
-    expect(config.adapters).toEqual([]);
+        enabled: true,
+        label: "Unavailable wallet",
+        packageName,
+        recommended: false,
+        status: "unavailable",
+      },
+    ]);
     expect(walletAdapterPackageGates.find((gate) => gate.adapterId === adapterId)).toMatchObject({
       adapterId,
       code: gateCode,
@@ -240,6 +298,30 @@ describe("browser wallet adapter config", () => {
       status: "unavailable",
       version: candidateVersion,
     });
+  });
+
+  it("keeps an unknown enabled adapter as a whole-config failure", () => {
+    const config = resolveWalletAdapterConfig({
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([{
+          adapterId: "unknown-wallet",
+          enabled: true,
+          label: "Unknown wallet",
+          recommended: false,
+        }]),
+      },
+      runtimeAvailability: { "unknown-wallet": "available" },
+      serverBindingIds: ["unknown-wallet"],
+    });
+
+    expect(config).toMatchObject({ adapters: [], enabled: false, status: "invalid", valid: false });
+    expect(config.diagnostics).toEqual([
+      expect.objectContaining({
+        adapterId: "unknown-wallet",
+        code: "WALLET_ADAPTER_PACKAGE_UNAVAILABLE",
+      }),
+    ]);
   });
 
   it("maps dynamic import/provider failure to unavailable without a seeded fallback", async () => {
