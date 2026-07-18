@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createAelfWebLoginWalletClient,
   createDefaultAelfWebLoginAdapterBindings,
+  createDefaultAelfWebLoginBrowserWalletClient,
   type AelfWebLoginAdapterBinding,
   type AelfWebLoginAdapterDriver,
   type AelfWebLoginRuntimeConfig,
@@ -793,17 +794,122 @@ describe("AElf Web Login WalletClient adapter", () => {
     });
   });
 
+  it.each([
+    ["missing globals", undefined],
+    ["empty globals", Object.freeze({})],
+    [
+      "malformed globals",
+      Object.freeze({
+        NightElf: Object.freeze({ AElf: "not-a-constructor" }),
+        Portkey: Object.freeze({ isPortkey: true, request: vi.fn() }),
+      }),
+    ],
+    [
+      "throwing globals",
+      Object.defineProperties({}, {
+        NightElf: { get: () => { throw new Error("unsafe NightElf getter"); } },
+        Portkey: { get: () => { throw new Error("unsafe Portkey getter"); } },
+      }),
+    ],
+  ])("composes deny-by-default browser availability for %s", async (_label, browserGlobal) => {
+    const client = createDefaultAelfWebLoginBrowserWalletClient({
+      adapterConfig: config([
+        entry(),
+        entry({
+          adapterId: "nightelf",
+          label: "NightElf",
+          packageName: packages.nightElf,
+          recommended: false,
+        }),
+      ]),
+      browserGlobal,
+      runtime,
+      traceIdFactory: () => "trace-default-browser",
+    });
+
+    await expect(client.listAvailableWallets()).resolves.toEqual([
+      {
+        adapterId: "portkey-discover-eoa",
+        enabled: false,
+        label: "Portkey EOA",
+        recommended: false,
+        status: "unavailable",
+      },
+      {
+        adapterId: "nightelf",
+        enabled: false,
+        label: "NightElf",
+        recommended: false,
+        status: "unavailable",
+      },
+    ]);
+  });
+
+  it("composes available default browser providers behind the internal WalletClient API", async () => {
+    const browserGlobal = Object.freeze({
+      NightElf: Object.freeze({ AElf: class FakeAElf {} }),
+      Portkey: Object.freeze({
+        isPortkey: true,
+        on: vi.fn(),
+        removeListener: vi.fn(),
+        request: vi.fn(),
+      }),
+    });
+    const client = createDefaultAelfWebLoginBrowserWalletClient({
+      adapterConfig: config([
+        entry(),
+        entry({
+          adapterId: "nightelf",
+          label: "NightElf",
+          packageName: packages.nightElf,
+          recommended: false,
+        }),
+      ]),
+      browserGlobal,
+      runtime,
+    });
+
+    await expect(client.listAvailableWallets()).resolves.toEqual([
+      {
+        adapterId: "portkey-discover-eoa",
+        enabled: true,
+        label: "Portkey EOA",
+        recommended: true,
+        status: "available",
+      },
+      {
+        adapterId: "nightelf",
+        enabled: true,
+        label: "NightElf",
+        recommended: false,
+        status: "available",
+      },
+    ]);
+    expect(Object.keys(client).sort()).toEqual([
+      "close",
+      "connect",
+      "disconnect",
+      "listAvailableWallets",
+      "signMessage",
+      "subscribeAccountAndChain",
+    ]);
+  });
+
   it("keeps alpha imports inside the adapter and preserves exact package pins", () => {
     const sourceRoot = resolve(process.cwd(), "src");
     const adapterPath = resolve(sourceRoot, "wallet/aelfWebLoginWalletClient.ts");
     const alphaImport = /(?:from\s+|import\s*\()\s*["']@aelf-web-login\//;
     const importingFiles = collectSourceFiles(sourceRoot).filter((path) =>
       alphaImport.test(readFileSync(path, "utf8")));
+    const providerGlobalAccess = /(?:globalThis|window)\s*(?:\.\s*(?:NightElf|Portkey)|\[\s*["'](?:NightElf|Portkey)["']\s*\])/;
+    const providerAwareFiles = collectSourceFiles(sourceRoot).filter((path) =>
+      providerGlobalAccess.test(readFileSync(path, "utf8")));
     const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
     };
 
     expect(importingFiles).toEqual([adapterPath]);
+    expect(providerAwareFiles).toEqual([]);
     expect(packageJson.dependencies).toMatchObject({
       "@aelf-web-login/wallet-adapter-base": "0.4.0-alpha.21",
       "@aelf-web-login/wallet-adapter-night-elf": "0.4.0-alpha.21",

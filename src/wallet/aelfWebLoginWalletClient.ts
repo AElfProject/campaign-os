@@ -137,6 +137,13 @@ export interface CreateAelfWebLoginWalletClientOptions {
   readonly traceIdFactory?: () => string;
 }
 
+export interface CreateDefaultAelfWebLoginBrowserWalletClientOptions {
+  readonly adapterConfig: WalletAdapterConfig;
+  readonly browserGlobal?: unknown;
+  readonly runtime: AelfWebLoginRuntimeConfig;
+  readonly traceIdFactory?: () => string;
+}
+
 export interface CreateRegisteredAelfWebLoginWalletClientOptions {
   readonly config: WalletAdapterConfig;
   readonly onDiagnostic?: (diagnostic: AelfWebLoginWalletClientDiagnostic) => void;
@@ -2071,3 +2078,57 @@ export const createDefaultAelfWebLoginAdapterBindings = (
     providerAvailable: providerAvailability.nightElf,
   }),
 ]);
+
+const browserGlobalValue = (browserGlobal: unknown, name: string): unknown => {
+  if (
+    (typeof browserGlobal !== "object" && typeof browserGlobal !== "function")
+    || browserGlobal === null
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(browserGlobal, name);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const safePropertyValue = (value: object, name: string): unknown => {
+  try {
+    return Reflect.get(value, name) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
+const isDiscoverProviderAvailable = (value: unknown): boolean => {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return false;
+  }
+  return safePropertyValue(value, "isPortkey") === true
+    && method(value, "request") !== undefined
+    && method(value, "on") !== undefined
+    && (method(value, "removeListener") !== undefined || method(value, "off") !== undefined);
+};
+
+const isNightElfProviderAvailable = (value: unknown): boolean =>
+  (typeof value === "object" || typeof value === "function")
+  && value !== null
+  && method(value, "AElf") !== undefined;
+
+export const createDefaultAelfWebLoginBrowserWalletClient = ({
+  adapterConfig,
+  browserGlobal = globalThis,
+  runtime,
+  traceIdFactory,
+}: CreateDefaultAelfWebLoginBrowserWalletClientOptions): WalletClient =>
+  createAelfWebLoginWalletClient({
+    adapterConfig,
+    bindings: createDefaultAelfWebLoginAdapterBindings(Object.freeze({
+      discover: isDiscoverProviderAvailable(browserGlobalValue(browserGlobal, "Portkey")),
+      nightElf: isNightElfProviderAvailable(browserGlobalValue(browserGlobal, "NightElf")),
+    })),
+    runtime,
+    traceIdFactory,
+  });
