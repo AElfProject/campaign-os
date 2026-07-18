@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pg, { type PoolClient } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1990,7 +1989,7 @@ describe("PostgreSQL migration CLI", () => {
   });
 
   it("imports without side effects when the host process also has --run", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "campaign-os-migration-import-"));
+    const directory = await mkdtemp(join(process.cwd(), ".campaign-os-migration-import-"));
     const probePath = join(directory, "probe.ts");
     const cliModulePath = resolve(process.cwd(), "src/server/postgresMigrationCli.ts");
 

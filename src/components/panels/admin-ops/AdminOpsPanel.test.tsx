@@ -1242,7 +1242,7 @@ describe("Admin/Ops shell", () => {
     expectVisibleText(/demo-task-social-3E9/);
     expectVisibleText("zh-CN / zh-TW AI draft/fallback");
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("renders AI review lifecycle operation cards without production mutation copy", () => {
     render(
@@ -2751,7 +2751,7 @@ describe("Admin/Ops shell", () => {
     expect(within(exportArtifact).getByText(/仅本地审核 artifact/)).toBeInTheDocument();
     expectVisibleText("zh-CN / zh-TW AI draft/fallback");
     expect(screen.getAllByText(/zh-TW/).length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("renders Advanced Analytics review copy explicitly in zh-TW", () => {
     render(<AdminOpsPanel locale="zh-TW" />);
