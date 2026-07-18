@@ -1999,12 +1999,19 @@ const createLazyAlphaDriver = (
       if (closed || signal.aborted || !walletAddressHint) {
         throw new Error("Alpha signing unavailable.");
       }
+      const message = exactUtf8(new Uint8Array(exactMessageBytes));
+      if (message === undefined) {
+        throw new Error("Alpha signing input invalid.");
+      }
       const adapter = await ensureAdapter();
+      if (closed || signal.aborted) {
+        throw new Error("Alpha signing unavailable.");
+      }
       const result = await adapter.getSignature(Object.freeze({
         address: walletAddressHint,
         appName: runtime.appName,
         hexToBeSign: "",
-        signInfo: bytesToHex(new Uint8Array(exactMessageBytes)),
+        signInfo: message,
       }));
       if (closed || signal.aborted) {
         throw new Error("Alpha signing unavailable.");

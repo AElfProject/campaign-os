@@ -688,7 +688,7 @@ describe("AElf Web Login WalletClient adapter", () => {
   it("binds default Discover encoding, proof projection and provider subscriptions safely", async () => {
     const adapterListeners = new Map<string, Set<(...args: unknown[]) => void>>();
     const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
-    const getSignature = vi.fn(async () => ({
+    const getSignature = vi.fn(async (_input: unknown) => ({
       error: 0,
       errorMessage: "",
       extensionResult: { opaque: true },
@@ -739,18 +739,23 @@ describe("AElf Web Login WalletClient adapter", () => {
     });
     const listener = vi.fn();
     client.subscribeAccountAndChain(listener);
+    const canonicalChallenge = "campaign-os:wallet-challenge\nnonce=test-discover";
+    const exactMessageBytes = new Uint8Array(new TextEncoder().encode(canonicalChallenge));
 
     await client.connect("portkey-discover-eoa");
     const proof = await client.signMessage({
-      exactMessageBytes: new Uint8Array([0, 10, 20, 255]),
+      exactMessageBytes,
     });
 
     expect(getSignature).toHaveBeenCalledWith({
       address: requestedAddress,
       appName: "Campaign OS",
       hexToBeSign: "",
-      signInfo: "000a14ff",
+      signInfo: canonicalChallenge,
     });
+    const discoverSignatureInput = getSignature.mock.calls[0][0] as { signInfo: string };
+    expect(new Uint8Array(new TextEncoder().encode(discoverSignatureInput.signInfo)))
+      .toEqual(exactMessageBytes);
     expect(proof).toEqual({
       signature: Uint8Array.from(
         packageSignature(11).match(/.{2}/g)!.map((value) => Number.parseInt(value, 16)),
@@ -772,6 +777,131 @@ describe("AElf Web Login WalletClient adapter", () => {
     expect(removeListener).toHaveBeenCalled();
     vi.doUnmock(packages.discover);
   });
+
+  it("passes exact canonical UTF-8 challenge text to the default NightElf adapter", async () => {
+    const getSignature = vi.fn(async (_input: unknown) => ({
+      error: 0,
+      errorMessage: "",
+      from: "nightelf",
+      signature: packageSignature(17),
+    }));
+    class FakeNightElfWallet {
+      getSignature = getSignature;
+
+      async login() {
+        return { address: requestedAddress, extraInfo: {} };
+      }
+
+      async logout() {}
+
+      off() {}
+
+      on() {}
+    }
+    vi.doMock(packages.nightElf, () => ({ NightElfWallet: FakeNightElfWallet }));
+    const client = createAelfWebLoginWalletClient({
+      adapterConfig: config([
+        entry({
+          adapterId: "nightelf",
+          label: "NightElf",
+          packageName: packages.nightElf,
+          recommended: false,
+        }),
+      ]),
+      bindings: createDefaultAelfWebLoginAdapterBindings({ discover: false, nightElf: true }),
+      runtime,
+      traceIdFactory: () => "trace-default-nightelf",
+    });
+    const canonicalChallenge = "campaign-os:wallet-challenge\nnonce=test-nightelf";
+    const exactMessageBytes = new Uint8Array(new TextEncoder().encode(canonicalChallenge));
+
+    await client.connect("nightelf");
+    await expect(client.signMessage({ exactMessageBytes })).resolves.toEqual({
+      signature: Uint8Array.from(
+        packageSignature(17).match(/.{2}/g)!.map((value) => Number.parseInt(value, 16)),
+      ),
+    });
+
+    expect(getSignature).toHaveBeenCalledWith({
+      address: requestedAddress,
+      appName: "Campaign OS",
+      hexToBeSign: "",
+      signInfo: canonicalChallenge,
+    });
+    const nightElfSignatureInput = getSignature.mock.calls[0][0] as { signInfo: string };
+    expect(new Uint8Array(new TextEncoder().encode(nightElfSignatureInput.signInfo)))
+      .toEqual(exactMessageBytes);
+
+    await client.close();
+    vi.doUnmock(packages.nightElf);
+  });
+
+  it.each([
+    [
+      "Discover",
+      packages.discover,
+      "PortkeyDiscoverWallet",
+      "portkey-discover-eoa",
+      { discover: true, nightElf: false },
+    ],
+    [
+      "NightElf",
+      packages.nightElf,
+      "NightElfWallet",
+      "nightelf",
+      { discover: false, nightElf: true },
+    ],
+  ] as const)(
+    "rejects malformed UTF-8 before invoking the default %s signing method",
+    async (_label, packageName, exportName, adapterId, availability) => {
+      const getSignature = vi.fn(async (_input: unknown) => ({
+        error: 0,
+        errorMessage: "",
+        from: adapterId,
+        signature: packageSignature(23),
+      }));
+      class FakeAlphaWallet {
+        getSignature = getSignature;
+
+        async login() {
+          return { address: requestedAddress, extraInfo: {} };
+        }
+
+        async logout() {}
+
+        off() {}
+
+        on() {}
+      }
+      vi.doMock(packageName, () => ({ [exportName]: FakeAlphaWallet }));
+      const client = createAelfWebLoginWalletClient({
+        adapterConfig: config([
+          entry({
+            adapterId,
+            label: adapterId,
+            packageName,
+            recommended: false,
+          }),
+        ]),
+        bindings: createDefaultAelfWebLoginAdapterBindings(availability),
+        runtime,
+        traceIdFactory: () => `trace-malformed-${adapterId}`,
+      });
+
+      await client.connect(adapterId);
+      await expect(client.signMessage({
+        exactMessageBytes: Uint8Array.from([0xc3, 0x28]),
+      })).rejects.toMatchObject({
+        adapterId,
+        code: "WALLET_CLIENT_SIGN_FAILED",
+        traceId: `trace-malformed-${adapterId}`,
+      });
+      expect(getSignature).not.toHaveBeenCalled();
+
+      await client.close();
+      vi.doUnmock(packageName);
+    },
+  );
 
   it("keeps default alpha packages lazy and unavailable until provider detection passes", async () => {
     const client = createAelfWebLoginWalletClient({
