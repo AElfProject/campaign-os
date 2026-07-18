@@ -627,6 +627,14 @@ const mergeLiveWalletAvailability = (
   });
 };
 
+const unavailableLiveWalletOptions = (
+  options: readonly LiveWalletOption[],
+): readonly LiveWalletOption[] => options.map((option) => ({
+  ...option,
+  recommended: false,
+  status: "unavailable",
+}));
+
 const allLiveWalletOptionsUnavailable = (
   options: readonly LiveWalletOption[],
 ): boolean => options.length > 0
@@ -1024,10 +1032,7 @@ const useLiveWalletAuthentication = (
       const unavailable = createUnavailableLiveWalletAuthenticationState();
       stateRef.current = unavailable;
       setState(unavailable);
-      setOptions(readyComposition.options.map((option) => ({
-        ...option,
-        status: "unavailable",
-      })));
+      setOptions(unavailableLiveWalletOptions(readyComposition.options));
     }
     if (walletSubscriptionReadyRef.current) {
       void readyComposition.client.listAvailableWallets().then((availability) => {
@@ -1036,10 +1041,7 @@ const useLiveWalletAuthentication = (
         }
       }).catch(() => {
         if (effectActive && mountedRef.current) {
-          setOptions(readyComposition.options.map((option) => ({
-            ...option,
-            status: "unavailable",
-          })));
+          setOptions(unavailableLiveWalletOptions(readyComposition.options));
         }
       });
       commit({ type: "restore_requested" });

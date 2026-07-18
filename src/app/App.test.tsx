@@ -2905,8 +2905,32 @@ describe("App live Participant wallet authentication", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
     expect(within(dialog).getByRole("status")).toHaveTextContent("Wallet service unavailable");
+    expect(within(dialog).queryByText("Recommended")).not.toBeInTheDocument();
     expect(bridge.getCurrentSession).not.toHaveBeenCalled();
     expect(client.listAvailableWallets).not.toHaveBeenCalled();
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("clears the recommended posture when wallet availability detection fails", async () => {
+    const bridge = createLiveBridge();
+    const client = createLiveClient({
+      listAvailableWallets: vi.fn(async () => {
+        throw new Error("availability unavailable");
+      }),
+    });
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+    await waitFor(() => expect(client.listAvailableWallets).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Wallet service unavailable");
+    expect(within(dialog).queryByText("Recommended")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", {
+      name: "Portkey EOA Unavailable",
+    })).toBeDisabled();
     expect(client.connect).not.toHaveBeenCalled();
   });
 
