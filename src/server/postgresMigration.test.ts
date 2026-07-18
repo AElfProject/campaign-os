@@ -357,6 +357,8 @@ describe("PostgreSQL migration runtime", () => {
       "campaign_os_wallet_sessions_challenge_key",
       "FOREIGN KEY (challenge_id) REFERENCES campaign_os.wallet_auth_challenges (id) ON DELETE RESTRICT",
       "campaign_os_wallet_auth_challenges_state_expiry_idx",
+      "campaign_os_wallet_auth_challenges_subject_state_idx",
+      "campaign_os_wallet_auth_challenges_fingerprint_rate_idx",
       "campaign_os_wallet_sessions_subject_inventory_idx",
       "campaign_os_wallet_sessions_expiry_idx",
     ]) {
@@ -370,6 +372,9 @@ describe("PostgreSQL migration runtime", () => {
       "signature",
       "public_key",
       "provider_payload",
+      "domain",
+      "audience",
+      "uri",
     ]) {
       expect(participantWalletAuthentication?.upSql).not.toContain(forbiddenColumn);
     }
@@ -381,7 +386,7 @@ describe("PostgreSQL migration runtime", () => {
     );
     expect(participantWalletAuthentication?.downSql).not.toMatch(/\bCASCADE\b/i);
     expect(participantWalletAuthentication?.checksum).toBe(
-      "724b928cbfb8dc8162663589db1bb0d136498f414223f64fdafa1d0da7470324",
+      "919c912bfd715b016d012f3926bd4cd9f28c106e4a762e9bf2f7e9d3f7efa151",
     );
 
     const factTables = [
@@ -1529,19 +1534,90 @@ postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", (
       row.data_type,
       row.is_nullable,
     ].join(":"));
+    expect(columns.rows
+      .filter((row) => row.table_name === "wallet_auth_challenges")
+      .map((row) => row.column_name)).toEqual([
+      "id",
+      "version",
+      "wallet_address",
+      "subject_key",
+      "adapter_id",
+      "chain_id",
+      "network",
+      "ca_hash",
+      "nonce_digest",
+      "message_digest",
+      "client_fingerprint_digest",
+      "status",
+      "state_version",
+      "verification_attempts",
+      "rate_window_started_at",
+      "rate_attempt_count",
+      "issued_at",
+      "expires_at",
+      "consumed_at",
+      "terminal_at",
+      "terminal_code",
+      "trace_id",
+      "created_at",
+      "updated_at",
+    ]);
+    expect(columns.rows
+      .filter((row) => row.table_name === "wallet_sessions")
+      .map((row) => row.column_name)).toEqual([
+      "id",
+      "credential_digest",
+      "csrf_token_digest",
+      "challenge_id",
+      "subject_key",
+      "wallet_address",
+      "account_type",
+      "wallet_source",
+      "chain_id",
+      "network",
+      "adapter_id",
+      "proof_method",
+      "signer_address",
+      "ca_hash",
+      "proof_digest",
+      "verified_at",
+      "credential_boundary",
+      "role_ids",
+      "capabilities",
+      "status",
+      "version",
+      "membership_revision",
+      "issued_at",
+      "last_seen_at",
+      "idle_expires_at",
+      "absolute_expires_at",
+      "revoked_at",
+      "revocation_code",
+      "last_trace_id",
+      "created_at",
+      "updated_at",
+    ]);
     expect(columnKeys).toEqual(expect.arrayContaining([
       "wallet_auth_challenges:id:text:NO",
       "wallet_auth_challenges:message_digest:text:NO",
       "wallet_auth_challenges:nonce_digest:text:NO",
+      "wallet_auth_challenges:state_version:integer:NO",
+      "wallet_auth_challenges:subject_key:text:NO",
+      "wallet_auth_challenges:client_fingerprint_digest:text:YES",
+      "wallet_auth_challenges:rate_attempt_count:integer:NO",
+      "wallet_auth_challenges:consumed_at:timestamp with time zone:YES",
       "wallet_auth_challenges:expires_at:timestamp with time zone:NO",
       "wallet_sessions:id:text:NO",
       "wallet_sessions:challenge_id:text:NO",
       "wallet_sessions:credential_digest:text:NO",
       "wallet_sessions:csrf_token_digest:text:NO",
+      "wallet_sessions:subject_key:text:NO",
       "wallet_sessions:role_ids:jsonb:NO",
       "wallet_sessions:capabilities:jsonb:NO",
       "wallet_sessions:idle_expires_at:timestamp with time zone:NO",
       "wallet_sessions:absolute_expires_at:timestamp with time zone:NO",
+      "wallet_sessions:revoked_at:timestamp with time zone:YES",
+      "wallet_sessions:last_trace_id:text:NO",
     ]));
 
     const constraints = await sqlClient.query(
@@ -1584,6 +1660,8 @@ postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", (
     ).join("\n");
     for (const requiredIndex of [
       "campaign_os_wallet_auth_challenges_state_expiry_idx",
+      "campaign_os_wallet_auth_challenges_subject_state_idx",
+      "campaign_os_wallet_auth_challenges_fingerprint_rate_idx",
       "campaign_os_wallet_sessions_credential_digest_key",
       "campaign_os_wallet_sessions_pkey",
       "campaign_os_wallet_sessions_subject_inventory_idx",
@@ -1597,19 +1675,20 @@ postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", (
     const sqlClient = requiredClient();
     await sqlClient.query(
       `INSERT INTO campaign_os.wallet_auth_challenges (
-         id, protocol_version, adapter_id, requested_wallet_address, ca_hash,
-         chain_id, network, message_digest, nonce_digest, rate_key_digest,
-         status, verification_attempts, max_verification_attempts, rate_attempts,
-         rate_limit, rate_window_started_at, rate_window_expires_at, trace_id,
-         issued_at, expires_at, terminal_at, terminal_reason, updated_at
+         id, version, wallet_address, subject_key, adapter_id, chain_id, network,
+         ca_hash, nonce_digest, message_digest, client_fingerprint_digest, status,
+         state_version, verification_attempts, rate_window_started_at,
+         rate_attempt_count, issued_at, expires_at, consumed_at, terminal_at,
+         terminal_code, trace_id, created_at, updated_at
        ) VALUES (
-         'challenge-valid', 'campaign-os-wallet-auth/v1', 'portkey-eoa', 'wallet-safe', NULL,
-         'AELF', 'mainnet', $1, $2, $3, 'issued', 0, 5, 0, 10,
-         '2026-07-18T00:00:00.000Z', '2026-07-18T00:05:00.000Z', 'trace-auth-migration',
-         '2026-07-18T00:00:00.000Z', '2026-07-18T00:10:00.000Z', NULL, NULL,
+         'challenge-valid', 'campaign-os-wallet-auth/v1', 'wallet-safe', $3,
+         'portkey-eoa', 'AELF', 'mainnet', NULL, $1, $2, $4, 'issued', 1, 0,
+         '2026-07-18T00:00:00.000Z', 0, '2026-07-18T00:00:00.000Z',
+         '2026-07-18T00:10:00.000Z', NULL, NULL, NULL, 'trace-auth-migration',
+         '2026-07-18T00:00:00.000Z',
          '2026-07-18T00:00:00.000Z'
        )`,
-      ["1".repeat(64), "2".repeat(64), "3".repeat(64)],
+      ["1".repeat(64), "2".repeat(64), "a".repeat(64), "b".repeat(64)],
     );
 
     await expectSqlError(
@@ -1627,24 +1706,33 @@ postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", (
       [],
       "23514",
     );
+    await expectSqlError(
+      "UPDATE campaign_os.wallet_auth_challenges SET state_version = 0 WHERE id = 'challenge-valid'",
+      [],
+      "23514",
+    );
 
     await sqlClient.query(
       `INSERT INTO campaign_os.wallet_sessions (
-         id, challenge_id, credential_digest, csrf_token_digest, credential_boundary,
-         account_type, adapter_id, ca_hash, chain_id, network, proof_digest, proof_method,
-         signer_address, verified_at, wallet_address, wallet_source, role_ids, capabilities,
-         membership_revision, status, version, issued_at, last_seen_at, idle_expires_at,
-         absolute_expires_at, terminal_at, terminal_reason, updated_at
+         id, credential_digest, csrf_token_digest, challenge_id, subject_key,
+         wallet_address, account_type, wallet_source, chain_id, network, adapter_id,
+         proof_method, signer_address, ca_hash, proof_digest, verified_at,
+         credential_boundary, role_ids, capabilities, status, version,
+         membership_revision, issued_at, last_seen_at, idle_expires_at,
+         absolute_expires_at, revoked_at, revocation_code, last_trace_id,
+         created_at, updated_at
        ) VALUES (
-         'session-valid', 'challenge-valid', $1, $2, 'credential/v1', 'EOA', 'portkey-eoa',
-         NULL, 'AELF', 'mainnet', $3, 'AELF_EOA_RECOVERABLE', 'signer-safe',
-         '2026-07-18T00:00:01.000Z', 'wallet-safe', 'PORTKEY_EOA_EXTENSION',
-         '["participant"]'::jsonb, '["campaign:read"]'::jsonb, 'membership-1',
-         'active', 1, '2026-07-18T00:00:02.000Z', '2026-07-18T00:00:02.000Z',
+         'session-valid', $1, $2, 'challenge-valid', $4, 'wallet-safe', 'EOA',
+         'PORTKEY_EOA_EXTENSION', 'AELF', 'mainnet', 'portkey-eoa',
+         'AELF_EOA_RECOVERABLE', 'signer-safe', NULL, $3,
+         '2026-07-18T00:00:01.000Z', 'credential/v1', '["participant"]'::jsonb,
+         '["campaign:read"]'::jsonb, 'active', 1, 'membership-1',
+         '2026-07-18T00:00:02.000Z', '2026-07-18T00:00:02.000Z',
          '2026-07-18T00:30:00.000Z', '2026-07-18T08:00:00.000Z', NULL, NULL,
+         'trace-session-valid', '2026-07-18T00:00:02.000Z',
          '2026-07-18T00:00:02.000Z'
        )`,
-      ["4".repeat(64), "5".repeat(64), "6".repeat(64)],
+      ["4".repeat(64), "5".repeat(64), "6".repeat(64), "c".repeat(64)],
     );
 
     for (const statement of [
@@ -1688,18 +1776,19 @@ postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", (
     await seedCampaignTask();
     await sqlClient.query(
       `INSERT INTO campaign_os.wallet_auth_challenges (
-         id, protocol_version, adapter_id, requested_wallet_address, chain_id, network,
-         message_digest, nonce_digest, rate_key_digest, status, verification_attempts,
-         max_verification_attempts, rate_attempts, rate_limit, rate_window_started_at,
-         rate_window_expires_at, trace_id, issued_at, expires_at, updated_at
+         id, version, wallet_address, subject_key, adapter_id, chain_id, network,
+         nonce_digest, message_digest, client_fingerprint_digest, status,
+         state_version, verification_attempts, rate_window_started_at,
+         rate_attempt_count, issued_at, expires_at, trace_id, created_at, updated_at
        ) VALUES (
-         'challenge-down-guard', 'campaign-os-wallet-auth/v1', 'nightelf', 'wallet-down-guard',
-         'AELF', 'testnet', $1, $2, $3, 'issued', 0, 5, 0, 10,
-         '2026-07-18T00:00:00.000Z', '2026-07-18T00:05:00.000Z', 'trace-down-guard',
+         'challenge-down-guard', 'campaign-os-wallet-auth/v1', 'wallet-down-guard',
+         $3, 'nightelf', 'AELF', 'testnet', $1, $2, NULL, 'issued', 1, 0,
+         '2026-07-18T00:00:00.000Z', 0,
          '2026-07-18T00:00:00.000Z', '2026-07-18T00:10:00.000Z',
+         'trace-down-guard', '2026-07-18T00:00:00.000Z',
          '2026-07-18T00:00:00.000Z'
        )`,
-      ["7".repeat(64), "8".repeat(64), "9".repeat(64)],
+      ["7".repeat(64), "8".repeat(64), "d".repeat(64)],
     );
 
     await expectSqlError(migration0005.downSql, [], "55000");

@@ -115,7 +115,7 @@ export const postgresMigrationFileManifest = Object.freeze([
     upPath: "db/migrations/0004_live_provider_task_verification.up.sql",
   }),
   postgresMigrationEntry({
-    checksum: "724b928cbfb8dc8162663589db1bb0d136498f414223f64fdafa1d0da7470324",
+    checksum: "919c912bfd715b016d012f3926bd4cd9f28c106e4a762e9bf2f7e9d3f7efa151",
     downPath: "db/migrations/0005_participant_wallet_authentication.down.sql",
     id: "0005_participant_wallet_authentication",
     upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
