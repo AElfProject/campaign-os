@@ -8,6 +8,7 @@ import type {
   WalletPolicy,
   WalletSource,
 } from "../domain/types";
+import { isCallerControlledWalletAuthorityHeaderName } from "./walletSessionAuthHeaders";
 
 export type RepositoryCampaignWorkflowApiSource =
   | "api_runtime"
@@ -33,6 +34,8 @@ export interface RepositoryCampaignWorkflowApiDiagnostic {
     | "API_EXPORT_FAILED"
     | "API_HEALTH_FAILED"
     | "API_LIST_FAILED"
+    | "API_PREVIEW_AUTHORITY_CONFLICT"
+    | "API_PREVIEW_AUTHORITY_REQUIRED"
     | "API_READINESS_FAILED"
     | "API_REQUEST_FAILED"
     | "API_REQUEST_TIMEOUT"
@@ -45,6 +48,8 @@ export interface RepositoryCampaignWorkflowApiDiagnostic {
 }
 
 export interface RepositoryCampaignWorkflowApiConfig {
+  /** @deprecated Explicit opt-in for disposable loopback preview runtimes only. */
+  authorityMode?: "deprecated_non_live_preview";
   baseUrl?: string;
   headers?: Record<string, string>;
   timeoutMs?: number;
@@ -243,6 +248,7 @@ interface NormalizedConfig {
   diagnostic?: RepositoryCampaignWorkflowApiDiagnostic;
   headers: Record<string, string>;
   normalizedTracePrefix: string;
+  previewAuthorityEnabled: boolean;
   timeoutMs: number;
 }
 
@@ -263,6 +269,10 @@ interface FetchJsonResult {
   ok: boolean;
   status?: number;
   traceId?: string;
+}
+
+interface TaskVerificationRequestBody {
+  campaignId: string;
 }
 
 type EndpointFailureCode =
@@ -298,6 +308,10 @@ const defaultReviewInput = {
   walletPolicy: "ANY" as const,
   walletSource: "PORTKEY_EOA_EXTENSION" as const,
 };
+
+const taskVerificationRequestBody = (campaignId: string): TaskVerificationRequestBody => ({
+  campaignId,
+});
 
 export const repositoryCampaignWorkflowApiBoundary: LocalizedText = {
   "en-US":
@@ -348,6 +362,16 @@ const diagnosticMessages: Record<RepositoryCampaignWorkflowApiDiagnostic["code"]
     "en-US": "The local campaign list refresh did not confirm the created repository draft.",
     "zh-CN": "本地活动列表刷新未确认已创建的 repository draft。",
     "zh-TW": "本地活動列表刷新未確認已建立的 repository draft。",
+  },
+  API_PREVIEW_AUTHORITY_CONFLICT: {
+    "en-US": "Caller-controlled authority headers are not accepted by the repository workflow preview bridge.",
+    "zh-CN": "Repository workflow preview bridge 不接受调用方直接配置 authority headers。",
+    "zh-TW": "Repository workflow preview bridge 不接受呼叫方直接設定 authority headers。",
+  },
+  API_PREVIEW_AUTHORITY_REQUIRED: {
+    "en-US": "Repository workflow authority headers require explicit deprecated non-live preview mode on a loopback runtime.",
+    "zh-CN": "Repository workflow authority headers 仅允许在显式 deprecated non-live preview 模式的 loopback runtime 中使用。",
+    "zh-TW": "Repository workflow authority headers 僅允許在明確 deprecated non-live preview 模式的 loopback runtime 中使用。",
   },
   API_READINESS_FAILED: {
     "en-US": "The local export readiness route did not return usable review evidence.",
@@ -502,21 +526,61 @@ const normalizeTracePrefix = (tracePrefix: string | undefined) => {
   return sanitized || "repository-workflow-review";
 };
 
-const normalizeHeaders = (headers: Record<string, string> | undefined) =>
-  Object.fromEntries(
-    Object.entries(headers ?? {})
-      .filter(([key, value]) => key.trim() && value.trim())
-      .map(([key, value]) => [
-        sanitizeRepositoryCampaignWorkflowApiText(key).toLowerCase(),
-        sanitizeRepositoryCampaignWorkflowApiText(value),
-      ]),
-  );
+interface NormalizedHeaderResult {
+  conflictField?: string;
+  headers: Record<string, string>;
+  invalidField?: string;
+}
+
+const normalizeHeaders = (
+  headers: Record<string, string> | undefined,
+): NormalizedHeaderResult => {
+  try {
+    const normalized = new Headers(headers);
+    const result: Record<string, string> = {};
+    let conflictField: string | undefined;
+
+    normalized.forEach((rawValue, rawName) => {
+      const name = rawName.trim().toLowerCase();
+      if (!conflictField && isCallerControlledWalletAuthorityHeaderName(name)) {
+        conflictField = name;
+        return;
+      }
+      if (name && rawValue.trim()) {
+        result[sanitizeRepositoryCampaignWorkflowApiText(name).toLowerCase()] =
+          sanitizeRepositoryCampaignWorkflowApiText(rawValue);
+      }
+    });
+
+    return {
+      ...(conflictField ? { conflictField } : {}),
+      headers: result,
+    };
+  } catch {
+    return { headers: {}, invalidField: "headers" };
+  }
+};
 
 const normalizeConfig = (config: RepositoryCampaignWorkflowApiConfig | undefined): NormalizedConfig => {
   const timeoutMs = clampTimeout(config?.timeoutMs);
   const normalizedTracePrefix = normalizeTracePrefix(config?.tracePrefix);
-  const headers = normalizeHeaders(config?.headers);
+  const normalizedHeaders = normalizeHeaders(config?.headers);
+  const headers = normalizedHeaders.headers;
   const rawBaseUrl = config?.baseUrl?.trim();
+  const explicitPreview = config?.authorityMode === "deprecated_non_live_preview";
+
+  if (normalizedHeaders.conflictField || normalizedHeaders.invalidField) {
+    return {
+      configured: Boolean(rawBaseUrl),
+      diagnostic: diagnostic("API_PREVIEW_AUTHORITY_CONFLICT", "error", {
+        field: normalizedHeaders.conflictField ?? normalizedHeaders.invalidField ?? "headers",
+      }),
+      headers,
+      normalizedTracePrefix,
+      previewAuthorityEnabled: false,
+      timeoutMs,
+    };
+  }
 
   if (!rawBaseUrl) {
     return {
@@ -524,6 +588,7 @@ const normalizeConfig = (config: RepositoryCampaignWorkflowApiConfig | undefined
       diagnostic: diagnostic("API_BASE_URL_MISSING", "info"),
       headers,
       normalizedTracePrefix,
+      previewAuthorityEnabled: false,
       timeoutMs,
     };
   }
@@ -540,15 +605,42 @@ const normalizeConfig = (config: RepositoryCampaignWorkflowApiConfig | undefined
         }),
         headers,
         normalizedTracePrefix,
+        previewAuthorityEnabled: false,
         timeoutMs,
       };
     }
 
+    if (baseUrl.username !== "" || baseUrl.password !== "") {
+      return {
+        configured: true,
+        diagnostic: diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error", {
+          reason: "credentialed_url_rejected",
+        }),
+        headers,
+        normalizedTracePrefix,
+        previewAuthorityEnabled: false,
+        timeoutMs,
+      };
+    }
+
+    const loopbackHost = baseUrl.hostname === "localhost"
+      || baseUrl.hostname === "127.0.0.1"
+      || baseUrl.hostname === "[::1]"
+      || baseUrl.hostname === "::1";
+    const previewAuthorityEnabled = explicitPreview && loopbackHost;
     return {
       baseUrl,
       configured: true,
+      ...(previewAuthorityEnabled
+        ? {}
+        : {
+          diagnostic: diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error", {
+            reason: explicitPreview ? "loopback_runtime_required" : "explicit_preview_opt_in_required",
+          }),
+        }),
       headers,
       normalizedTracePrefix,
+      previewAuthorityEnabled,
       timeoutMs,
     };
   } catch {
@@ -560,6 +652,7 @@ const normalizeConfig = (config: RepositoryCampaignWorkflowApiConfig | undefined
       }),
       headers,
       normalizedTracePrefix,
+      previewAuthorityEnabled: false,
       timeoutMs,
     };
   }
@@ -1308,12 +1401,22 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
   const normalizedConfig = normalizeConfig(config);
 
   if (!normalizedConfig.baseUrl) {
+    if (normalizedConfig.diagnostic?.severity === "error") {
+      return createRepositoryCampaignWorkflowErrorFallbackState({
+        diagnostics: [normalizedConfig.diagnostic],
+      });
+    }
     return {
       ...createRepositoryCampaignWorkflowSeededFallbackState({
         diagnostics: normalizedConfig.diagnostic ? [normalizedConfig.diagnostic] : [],
       }),
       configured: normalizedConfig.configured,
     };
+  }
+  if (!normalizedConfig.previewAuthorityEnabled) {
+    return createRepositoryCampaignWorkflowErrorFallbackState({
+      diagnostics: [normalizedConfig.diagnostic ?? diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error")],
+    });
   }
 
   const review = {
@@ -1547,12 +1650,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
 
   const optionalVerificationEndpoint = `/api/tasks/${encodeURIComponent(optionalTask.taskId)}/verify`;
   const optionalVerificationResponse = await request({
-    body: {
-      accountType: review.accountType,
-      campaignId: campaign.createdDraftId,
-      walletAddress: review.walletAddress,
-      walletSource: review.walletSource,
-    },
+    body: taskVerificationRequestBody(campaign.createdDraftId),
     endpoint: optionalVerificationEndpoint,
     failureCode: "API_VERIFICATION_FAILED",
     method: "POST",
@@ -1621,12 +1719,7 @@ export const loadRepositoryCampaignWorkflowBridgeState = async ({
 
   const requiredVerificationEndpoint = `/api/tasks/${encodeURIComponent(requiredTask.taskId)}/verify`;
   const requiredVerificationResponse = await request({
-    body: {
-      accountType: review.accountType,
-      campaignId: campaign.createdDraftId,
-      walletAddress: review.walletAddress,
-      walletSource: review.walletSource,
-    },
+    body: taskVerificationRequestBody(campaign.createdDraftId),
     endpoint: requiredVerificationEndpoint,
     failureCode: "API_VERIFICATION_FAILED",
     method: "POST",

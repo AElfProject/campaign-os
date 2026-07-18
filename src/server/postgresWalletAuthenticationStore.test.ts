@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -14,6 +14,7 @@ import {
   createRequiredPostgresWalletAuthenticationStore,
   type PostgresWalletAuthenticationClient,
   type PostgresWalletAuthenticationPool,
+  type PostgresWalletAuthenticationQueryResult,
 } from "./postgresWalletAuthenticationStore";
 import { loadPostgresMigrations, runPostgresMigrations } from "./postgresMigration";
 import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
@@ -31,6 +32,9 @@ if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
 const postgresSuite = TEST_DATABASE_URL ? describe : describe.skip;
 const START = new Date("2026-07-18T06:00:00.000Z");
 const digest = (value: string) => value.repeat(64);
+const capabilityDigest = (values: readonly string[]): string => createHash("sha256")
+  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+  .digest("hex");
 
 const challenge = (
   sequence = 1,
@@ -89,6 +93,38 @@ const session = (
   ...overrides,
 });
 
+const authorizationFence = (
+  overrides: Partial<Readonly<{
+    capabilityDigest: string;
+    membershipRevision: string;
+    sessionId: string;
+    subjectKey: string;
+    version: number;
+  }>> = {},
+) => ({
+  capabilityDigest: capabilityDigest(session().capabilities),
+  membershipRevision: session().membershipRevision,
+  sessionId: session().id,
+  subjectKey: walletAuthenticationSubjectKey(session().subject),
+  version: session().version,
+  ...overrides,
+});
+
+const atomicFinalWriteRow = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  absolute_expires_at: session().absoluteExpiresAt,
+  capabilities: session().capabilities,
+  credential_digest: session().credentialDigest,
+  id: session().id,
+  idle_expires_at: session().idleExpiresAt,
+  membership_revision: session().membershipRevision,
+  status: session().status,
+  subject_key: walletAuthenticationSubjectKey(session().subject),
+  version: session().version,
+  ...overrides,
+});
+
 const createPool = (databaseUrl: string, max = 24): pg.Pool => {
   const parsed = new URL(databaseUrl);
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -138,6 +174,515 @@ describe("required PostgreSQL wallet authentication configuration", () => {
       field: "CAMPAIGN_OS_DATABASE_URL",
     }));
     expect(poolFactory).not.toHaveBeenCalled();
+  });
+
+  it("exposes a transaction-bound atomic final-write port and commits after the callback", async () => {
+    const events: string[] = [];
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => {
+        if (text.includes("FROM campaign_os.wallet_sessions")) {
+          events.push("SELECT_FOR_UPDATE");
+          return { rows: [atomicFinalWriteRow()] };
+        }
+        events.push(text);
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool: PostgresWalletAuthenticationPool = {
+      connect: vi.fn(async () => client),
+      end: vi.fn(async () => undefined),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool,
+    });
+    const write = vi.fn(async () => {
+      events.push("WRITE");
+      return "protected-write-result";
+    });
+
+    expect(authStore.atomicFinalWritePort.kind).toBe("wallet_auth_atomic_final_write");
+    await expect(authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-commit",
+      write,
+    })).resolves.toEqual({
+      status: "committed",
+      value: "protected-write-result",
+    });
+
+    expect(events).toEqual(["BEGIN", "SELECT_FOR_UPDATE", "WRITE", "COMMIT"]);
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT[\s\S]+credential_digest[\s\S]+subject_key[\s\S]+FOR UPDATE/),
+      [session().credentialDigest],
+    );
+    expect(write).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledOnce();
+    await authStore.close();
+  });
+
+  it.each([
+    ["missing row", undefined],
+    ["credential mismatch", atomicFinalWriteRow({ credential_digest: digest("9") })],
+    ["session mismatch", atomicFinalWriteRow({ id: "postgres-wallet-session-other" })],
+    ["version mismatch", atomicFinalWriteRow({ version: 2 })],
+    ["membership mismatch", atomicFinalWriteRow({ membership_revision: "membership-revision-2" })],
+    ["subject mismatch", atomicFinalWriteRow({ subject_key: digest("8") })],
+    ["capability mismatch", atomicFinalWriteRow({ capabilities: ["campaign:read"] })],
+    ["inactive session", atomicFinalWriteRow({ status: "revoked" })],
+    ["idle expiry", atomicFinalWriteRow({ idle_expires_at: START.toISOString() })],
+    ["absolute expiry", atomicFinalWriteRow({ absolute_expires_at: START.toISOString() })],
+  ])("returns stale without invoking the callback for %s", async (_label, row) => {
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => ({
+        rows: text.includes("FROM campaign_os.wallet_sessions") && row ? [row] : [],
+      })),
+      release: vi.fn(),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool: {
+        connect: vi.fn(async () => client),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+    const write = vi.fn();
+
+    await expect(authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-stale",
+      write,
+    })).resolves.toEqual({ status: "stale" });
+    expect(write).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenLastCalledWith("COMMIT", []);
+    await authStore.close();
+  });
+
+  it("does not acquire a connection or invoke the callback for a pre-aborted commit", async () => {
+    const pool: PostgresWalletAuthenticationPool = {
+      connect: vi.fn(),
+      end: vi.fn(async () => undefined),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool,
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const write = vi.fn();
+
+    await expect(authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: controller.signal,
+      traceId: "trace-postgres-atomic-pre-abort",
+      write,
+    })).resolves.toEqual({ status: "stale" });
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    await authStore.close();
+  });
+
+  it("rechecks abort after the row lock is granted and invokes the callback zero times", async () => {
+    let releaseRowLock: (row: PostgresWalletAuthenticationQueryResult) => void = () => undefined;
+    const rowLock = new Promise<PostgresWalletAuthenticationQueryResult>((resolve) => {
+      releaseRowLock = resolve;
+    });
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => text.includes("FROM campaign_os.wallet_sessions")
+        ? rowLock
+        : { rows: [] }),
+      release: vi.fn(),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool: {
+        connect: vi.fn(async () => client),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+    const controller = new AbortController();
+    const write = vi.fn();
+    const committing = authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: controller.signal,
+      traceId: "trace-postgres-atomic-wait-abort",
+      write,
+    });
+    await vi.waitFor(() => expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("FOR UPDATE"),
+      [session().credentialDigest],
+    ));
+
+    controller.abort();
+    releaseRowLock({ rows: [atomicFinalWriteRow()] });
+
+    await expect(committing).resolves.toEqual({ status: "stale" });
+    expect(write).not.toHaveBeenCalled();
+    await authStore.close();
+  });
+
+  it("uses a fresh post-lock clock when the lock wait crosses session expiry", async () => {
+    let storeNow = new Date(START);
+    let releaseRowLock: (row: PostgresWalletAuthenticationQueryResult) => void = () => undefined;
+    const rowLock = new Promise<PostgresWalletAuthenticationQueryResult>((resolve) => {
+      releaseRowLock = resolve;
+    });
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => text.includes("FROM campaign_os.wallet_sessions")
+        ? rowLock
+        : { rows: [] }),
+      release: vi.fn(),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(storeNow) },
+      ownsPool: false,
+      pool: {
+        connect: vi.fn(async () => client),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+    const write = vi.fn();
+    const committing = authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START.getTime() - 60_000),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-lock-crosses-expiry",
+      write,
+    });
+    await vi.waitFor(() => expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("FOR UPDATE"),
+      [session().credentialDigest],
+    ));
+
+    storeNow = new Date(START.getTime() + 1_001);
+    releaseRowLock({
+      rows: [atomicFinalWriteRow({
+        idle_expires_at: new Date(START.getTime() + 1_000).toISOString(),
+      })],
+    });
+
+    await expect(committing).resolves.toEqual({ status: "stale" });
+    expect(write).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'expired'"),
+      [
+        session().id,
+        storeNow.toISOString(),
+        "trace-postgres-atomic-lock-crosses-expiry",
+        session().version,
+      ],
+    );
+    await authStore.close();
+  });
+
+  it.each([
+    ["target", session(2).id],
+    ["self", session().id],
+  ])("atomically executes a nested %s revoke on the existing transaction", async (_case, targetId) => {
+    const events: string[] = [];
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text, values = []) => {
+        if (text === "BEGIN" || text === "COMMIT" || text === "ROLLBACK") {
+          events.push(text);
+          return { rows: [] };
+        }
+        if (text.includes("WHERE credential_digest = $1")) {
+          events.push("ACTOR_LOCK");
+          return { rows: [atomicFinalWriteRow()] };
+        }
+        if (text.includes("WHERE id = $1 FOR UPDATE")) {
+          events.push("TARGET_LOCK");
+          return {
+            rows: [{
+              absolute_expires_at: session().absoluteExpiresAt,
+              id: values[0],
+              idle_expires_at: session().idleExpiresAt,
+              status: "active",
+            }],
+          };
+        }
+        if (text.includes("status = 'revoked'")) {
+          events.push("TARGET_UPDATE");
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool: PostgresWalletAuthenticationPool = {
+      connect: vi.fn(async () => client),
+      end: vi.fn(async () => undefined),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool,
+    });
+
+    await expect(authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: `trace-postgres-atomic-nested-${_case}-revoke`,
+      write: () => authStore.revokeSession({
+        reasonCode: "ADMIN_REVOKE",
+        sessionId: targetId,
+        traceId: `trace-postgres-atomic-nested-${_case}-revoke-target`,
+      }),
+    })).resolves.toEqual({
+      status: "committed",
+      value: { status: "revoked" },
+    });
+    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      "BEGIN",
+      "ACTOR_LOCK",
+      "TARGET_LOCK",
+      "TARGET_UPDATE",
+      "COMMIT",
+    ]);
+    await authStore.close();
+  });
+
+  it("rolls back when callback code swallows a nested revoke failure", async () => {
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => {
+        if (text.includes("WHERE credential_digest = $1")) {
+          return { rows: [atomicFinalWriteRow()] };
+        }
+        if (text.includes("WHERE id = $1 FOR UPDATE")) {
+          throw Object.assign(new Error("driver detail must remain private"), { code: "40P01" });
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool: PostgresWalletAuthenticationPool = {
+      connect: vi.fn(async () => client),
+      end: vi.fn(async () => undefined),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool,
+    });
+
+    const committing = authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-nested-failure",
+      write: async () => {
+        try {
+          await authStore.revokeSession({
+            reasonCode: "ADMIN_REVOKE",
+            sessionId: session(2).id,
+            traceId: "trace-postgres-atomic-nested-failure-target",
+          });
+        } catch {
+          // The transaction scope retains the safe failure even when callback code swallows it.
+        }
+        return "must-not-commit";
+      },
+    });
+
+    await expect(committing).rejects.toMatchObject({
+      code: "WALLET_AUTH_STORE_UNAVAILABLE",
+      operation: "revokeSession",
+      retryable: true,
+    });
+    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
+    expect(client.query).not.toHaveBeenCalledWith("COMMIT", []);
+    await authStore.close();
+  });
+
+  it("fails closed when a callback swallows a non-revoke auth-store reentry", async () => {
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => ({
+        rows: text.includes("WHERE credential_digest = $1")
+          ? [atomicFinalWriteRow()]
+          : [],
+      })),
+      release: vi.fn(),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool: {
+        connect: vi.fn(async () => client),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+
+    const committing = authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-non-revoke-reentry",
+      write: async () => {
+        try {
+          await authStore.rotateSession({
+            credentialDigest: session().credentialDigest,
+            nextCredentialDigest: digest("7"),
+            nextCsrfTokenDigest: digest("8"),
+            traceId: "trace-postgres-atomic-non-revoke-reentry-rotate",
+            version: session().version,
+          });
+        } catch {
+          // The outer transaction must retain the re-entry violation.
+        }
+        return "must-not-commit";
+      },
+    });
+
+    await expect(committing).rejects.toMatchObject({
+      code: "WALLET_AUTH_STORE_CONFLICT",
+      field: "finalWriteCallback",
+      operation: "assertFence",
+    });
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
+    expect(client.query).not.toHaveBeenCalledWith("COMMIT", []);
+    await authStore.close();
+  });
+
+  it("fails closed when a callback calls revokeSession on a different store", async () => {
+    const actorClient: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => ({
+        rows: text.includes("WHERE credential_digest = $1")
+          ? [atomicFinalWriteRow()]
+          : [],
+      })),
+      release: vi.fn(),
+    };
+    const actorStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool: {
+        connect: vi.fn(async () => actorClient),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+    const otherConnect = vi.fn();
+    const otherStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool: {
+        connect: otherConnect,
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+
+    const committing = actorStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-other-store-revoke",
+      write: async () => {
+        try {
+          await otherStore.revokeSession({
+            reasonCode: "ADMIN_REVOKE",
+            sessionId: session(2).id,
+            traceId: "trace-postgres-atomic-other-store-revoke-target",
+          });
+        } catch {
+          // Only the store that owns the actor transaction may service nested revoke.
+        }
+        return "must-not-commit";
+      },
+    });
+
+    await expect(committing).rejects.toMatchObject({
+      code: "WALLET_AUTH_STORE_CONFLICT",
+      field: "finalWriteCallback",
+    });
+    expect(otherConnect).not.toHaveBeenCalled();
+    expect(actorClient.query).toHaveBeenCalledWith("ROLLBACK");
+    await actorStore.close();
+    await otherStore.close();
+  });
+
+  it("rolls back a successful nested revoke when the callback subsequently fails", async () => {
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text, values = []) => {
+        if (text.includes("WHERE credential_digest = $1")) {
+          return { rows: [atomicFinalWriteRow()] };
+        }
+        if (text.includes("WHERE id = $1 FOR UPDATE")) {
+          return {
+            rows: [{
+              absolute_expires_at: session().absoluteExpiresAt,
+              id: values[0],
+              idle_expires_at: session().idleExpiresAt,
+              status: "active",
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      ownsPool: false,
+      pool: {
+        connect: vi.fn(async () => client),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [] })),
+      },
+    });
+
+    await expect(authStore.atomicFinalWritePort.commitIfCurrent({
+      credentialDigest: session().credentialDigest,
+      fence: authorizationFence(),
+      now: new Date(START),
+      signal: new AbortController().signal,
+      traceId: "trace-postgres-atomic-callback-failure",
+      write: async () => {
+        await authStore.revokeSession({
+          reasonCode: "ADMIN_REVOKE",
+          sessionId: session(2).id,
+          traceId: "trace-postgres-atomic-callback-failure-target",
+        });
+        throw new Error("post-revoke callback failure");
+      },
+    })).rejects.toThrow("post-revoke callback failure");
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'revoked'"),
+      expect.any(Array),
+    );
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
+    expect(client.query).not.toHaveBeenCalledWith("COMMIT", []);
+    await authStore.close();
   });
 
   it("closes an owned pool idempotently and rejects call-after-close", async () => {
@@ -689,6 +1234,259 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
       blocker.release();
       await consumeStore.close();
       await revokeStore.close();
+    }
+  }, 30_000);
+
+  it.each(["revoke", "rotate"] as const)(
+    "holds the session row lock through the final write before %s can proceed",
+    async (mutation) => {
+      const atomicStore = store({ ownsPool: false });
+      await atomicStore.issueChallenge(challenge());
+      await atomicStore.consumeChallengeAndCreateSession({
+        challengeId: "postgres-wallet-challenge-1",
+        expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+        session: session(),
+        traceId: `trace-postgres-atomic-${mutation}-create`,
+      });
+
+      let notifyMutationLock: () => void = () => undefined;
+      const mutationReachedLock = new Promise<void>((resolve) => {
+        notifyMutationLock = resolve;
+      });
+      const mutationPool: PostgresWalletAuthenticationPool = {
+        connect: async () => {
+          const client = await requiredPool().connect();
+          return {
+            query: async (text: string, values: unknown[] = []) => {
+              const resultPromise = client.query(text, values);
+              if (
+                text.includes("FROM campaign_os.wallet_sessions")
+                && text.includes("FOR UPDATE")
+              ) {
+                notifyMutationLock();
+              }
+              const result = await resultPromise;
+              return { rows: result.rows };
+            },
+            release: (destroy?: boolean) => client.release(destroy),
+          };
+        },
+        end: async () => undefined,
+        query: async (text, values = []) => {
+          const result = await requiredPool().query(text, values);
+          return { rows: result.rows };
+        },
+      };
+      const mutationStore = createPostgresWalletAuthenticationStore({
+        clock: { now: () => new Date(now) },
+        ownsPool: false,
+        pool: mutationPool,
+      });
+      let notifyWriteEntered: () => void = () => undefined;
+      const writeEntered = new Promise<void>((resolve) => {
+        notifyWriteEntered = resolve;
+      });
+      let releaseWrite: () => void = () => undefined;
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+
+      try {
+        const committing = atomicStore.atomicFinalWritePort.commitIfCurrent({
+          credentialDigest: session().credentialDigest,
+          fence: authorizationFence(),
+          now: new Date(now),
+          signal: new AbortController().signal,
+          traceId: `trace-postgres-atomic-${mutation}-commit`,
+          write: async () => {
+            notifyWriteEntered();
+            await writeGate;
+            return "write-committed-before-session-mutation";
+          },
+        });
+        await writeEntered;
+
+        const mutating = mutation === "revoke"
+          ? mutationStore.revokeSession({
+            reasonCode: "ADMIN_REVOKE",
+            sessionId: session().id,
+            traceId: "trace-postgres-atomic-concurrent-revoke",
+          })
+          : mutationStore.rotateSession({
+            credentialDigest: session().credentialDigest,
+            nextCredentialDigest: digest("7"),
+            nextCsrfTokenDigest: digest("8"),
+            traceId: "trace-postgres-atomic-concurrent-rotate",
+            version: session().version,
+          });
+        let mutationSettled = false;
+        void mutating.then(
+          () => { mutationSettled = true; },
+          () => { mutationSettled = true; },
+        );
+        await mutationReachedLock;
+        await Promise.resolve();
+        expect(mutationSettled).toBe(false);
+
+        releaseWrite();
+        await expect(committing).resolves.toEqual({
+          status: "committed",
+          value: "write-committed-before-session-mutation",
+        });
+        await expect(mutating).resolves.toMatchObject({
+          status: mutation === "revoke" ? "revoked" : "rotated",
+        });
+      } finally {
+        releaseWrite();
+        await atomicStore.close();
+        await mutationStore.close();
+      }
+    },
+    30_000,
+  );
+
+  it.each(["revoke", "rotate"] as const)(
+    "returns stale with zero writes when %s commits first",
+    async (mutation) => {
+      const authStore = store({ ownsPool: false });
+      try {
+        await authStore.issueChallenge(challenge());
+        await authStore.consumeChallengeAndCreateSession({
+          challengeId: "postgres-wallet-challenge-1",
+          expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+          session: session(),
+          traceId: `trace-postgres-atomic-${mutation}-first-create`,
+        });
+        if (mutation === "revoke") {
+          await expect(authStore.revokeSession({
+            reasonCode: "ADMIN_REVOKE",
+            sessionId: session().id,
+            traceId: "trace-postgres-atomic-revoke-first",
+          })).resolves.toEqual({ status: "revoked" });
+        } else {
+          await expect(authStore.rotateSession({
+            credentialDigest: session().credentialDigest,
+            nextCredentialDigest: digest("7"),
+            nextCsrfTokenDigest: digest("8"),
+            traceId: "trace-postgres-atomic-rotate-first",
+            version: session().version,
+          })).resolves.toEqual({ status: "rotated" });
+        }
+        const write = vi.fn();
+
+        await expect(authStore.atomicFinalWritePort.commitIfCurrent({
+          credentialDigest: session().credentialDigest,
+          fence: authorizationFence(),
+          now: new Date(now),
+          signal: new AbortController().signal,
+          traceId: `trace-postgres-atomic-${mutation}-first-fence`,
+          write,
+        })).resolves.toEqual({ status: "stale" });
+        expect(write).not.toHaveBeenCalled();
+      } finally {
+        await authStore.close();
+      }
+    },
+    30_000,
+  );
+
+  it("rolls back one transaction safely when two admins cross-revoke", async () => {
+    const setupStore = store({ ownsPool: false });
+    const adminAStore = store({ ownsPool: false });
+    const adminBStore = store({ ownsPool: false });
+    try {
+      await setupStore.issueChallenge(challenge(1));
+      await setupStore.issueChallenge(challenge(2));
+      await setupStore.consumeChallengeAndCreateSession({
+        challengeId: session(1).challengeId,
+        expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+        session: session(1),
+        traceId: "trace-postgres-cross-revoke-create-a",
+      });
+      await setupStore.consumeChallengeAndCreateSession({
+        challengeId: session(2).challengeId,
+        expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+        session: session(2),
+        traceId: "trace-postgres-cross-revoke-create-b",
+      });
+
+      let enteredCount = 0;
+      let notifyBothEntered: () => void = () => undefined;
+      const bothCallbacksEntered = new Promise<void>((resolve) => {
+        notifyBothEntered = resolve;
+      });
+      let releaseNestedRevokes: () => void = () => undefined;
+      const nestedRevokeGate = new Promise<void>((resolve) => {
+        releaseNestedRevokes = resolve;
+      });
+      const crossRevoke = (
+        actorStore: ReturnType<typeof store>,
+        actorSession: DurableWalletSessionRecord,
+        targetSessionId: string,
+        actorLabel: "a" | "b",
+      ) => actorStore.atomicFinalWritePort.commitIfCurrent({
+        credentialDigest: actorSession.credentialDigest,
+        fence: authorizationFence({ sessionId: actorSession.id }),
+        now: new Date(now),
+        signal: new AbortController().signal,
+        traceId: `trace-postgres-cross-revoke-${actorLabel}`,
+        write: async () => {
+          enteredCount += 1;
+          if (enteredCount === 2) {
+            notifyBothEntered();
+          }
+          await nestedRevokeGate;
+          return actorStore.revokeSession({
+            reasonCode: "ADMIN_REVOKE",
+            sessionId: targetSessionId,
+            traceId: `trace-postgres-cross-revoke-${actorLabel}-target`,
+          });
+        },
+      });
+
+      const revokingAFromB = crossRevoke(
+        adminBStore,
+        session(2),
+        session(1).id,
+        "b",
+      );
+      const revokingBFromA = crossRevoke(
+        adminAStore,
+        session(1),
+        session(2).id,
+        "a",
+      );
+      await bothCallbacksEntered;
+      releaseNestedRevokes();
+      const outcomes = await Promise.allSettled([revokingAFromB, revokingBFromA]);
+      const committed = outcomes.filter((outcome) => outcome.status === "fulfilled");
+      const rolledBack = outcomes.filter((outcome) => outcome.status === "rejected");
+
+      expect(committed).toHaveLength(1);
+      expect(committed[0]).toMatchObject({
+        value: {
+          status: "committed",
+          value: { status: "revoked" },
+        },
+      });
+      expect(rolledBack).toHaveLength(1);
+      expect(rolledBack[0]).toMatchObject({
+        reason: {
+          code: "WALLET_AUTH_STORE_UNAVAILABLE",
+          operation: "revokeSession",
+          retryable: true,
+        },
+      });
+      const persisted = await requiredPool().query(
+        `SELECT id, status FROM campaign_os.wallet_sessions
+         WHERE id = ANY($1::text[]) ORDER BY id`,
+        [[session(1).id, session(2).id]],
+      );
+      expect(persisted.rows.map((row) => row.status).sort()).toEqual(["active", "revoked"]);
+    } finally {
+      await setupStore.close();
+      await adminAStore.close();
+      await adminBStore.close();
     }
   }, 30_000);
 

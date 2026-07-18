@@ -1,16 +1,22 @@
 import { createHash } from "node:crypto";
+import { createServer as createHttpServer } from "node:http";
 import { connect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
-import type {
-  ApiRuntimeResponse,
-  CampaignOsApiRuntime,
-  CreateCampaignOsApiRuntimeOptions,
+import {
+  createDeprecatedNonLivePreviewAuthorityOption,
+  type ApiRuntimeResponse,
+  type CampaignOsApiRuntime,
+  type CreateCampaignOsApiRuntimeOptions,
 } from "./apiRuntime";
 import { createFailureEnvelope, createSuccessEnvelope } from "./envelope";
 import { internalRuntimeError } from "./errors";
 import { apiRuntimeContractRoutes } from "./routes";
-import { startCampaignOsApiServer } from "./server";
+import {
+  startCampaignOsApiServer,
+  type WalletAuthenticationLiveAuthorityRuntime,
+  type WalletAuthenticationServerCompositionFactory,
+} from "./server";
 
 const unsafeLogFragments = [
   "apikey",
@@ -104,6 +110,32 @@ const walletAuthHeaders = (
 
 const sha256 = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
+
+const stageWalletAuthenticationEnv = (
+  origin: string,
+  overrides: Readonly<Record<string, string | undefined>> = {},
+) => ({
+  CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+  CAMPAIGN_OS_DATABASE_URL: "postgresql://127.0.0.1:5432/campaign_os",
+  CAMPAIGN_OS_WALLET_AUTH_ALLOWED_ORIGINS: origin,
+  CAMPAIGN_OS_WALLET_AUTH_ALLOW_INSECURE_LOOPBACK_COOKIE: "1",
+  CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: JSON.stringify([{
+    accountType: "EOA",
+    adapterId: "portkey-discover-eoa",
+    chainIds: ["AELF"],
+    enabled: true,
+    hashStrategyId: "aelf-web-login-discover-v1",
+    network: "testnet",
+    productionApproved: false,
+    proofMethod: "AELF_EOA_RECOVERABLE",
+    signatureEncoding: "AELF_RECOVERABLE_HEX",
+    walletSource: "PORTKEY_EOA_APP",
+  }]),
+  CAMPAIGN_OS_WALLET_AUTH_CSRF_SECRET: "s".repeat(32),
+  CAMPAIGN_OS_WALLET_AUTH_ENABLED: "1",
+  CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT: "stage",
+  ...overrides,
+});
 
 const startServerWithRuntimeResponse = async (
   runtimeResponse: ApiRuntimeResponse,
@@ -300,12 +332,33 @@ describe("Campaign OS API server entrypoint", () => {
     });
   });
 
-  it("passes the explicit server env and staging profile to task verification composition", async () => {
+  it("passes explicit verification and wallet-auth transport dependencies to runtime composition", async () => {
     const env = {
       CAMPAIGN_OS_PROVIDER_HTTP_TRANSPORT_SEAM: "config-ref:metadata-only-seam",
       CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "disabled",
     };
-    let runtimeOptions: CreateCampaignOsApiRuntimeOptions | undefined;
+    const walletAuthenticationHttpController = {
+      handle: vi.fn(async () => undefined),
+    };
+    const stopWalletAuthenticationRuntime = vi.fn(async () => ({
+      diagnosticCodes: [],
+      diagnostics: [],
+      status: "drained" as const,
+    }));
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: stopWalletAuthenticationRuntime,
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const deprecatedNonLivePreviewAuthority = createDeprecatedNonLivePreviewAuthorityOption();
+    let runtimeOptions: (CreateCampaignOsApiRuntimeOptions & {
+      walletAuthenticationRuntime?: typeof walletAuthenticationRuntime;
+    }) | undefined;
     const runtime: CampaignOsApiRuntime = {
       close: vi.fn(async () => undefined),
       handle: vi.fn(async () => ({
@@ -321,9 +374,13 @@ describe("Campaign OS API server entrypoint", () => {
     };
     const server = await startCampaignOsApiServer({
       env,
+      deprecatedNonLivePreviewAuthority,
       logger: false,
       port: 0,
       profileId: "staging-scaffold",
+      walletAuthenticationAllowedOrigins: ["https://wallet.campaign-os.test"],
+      walletAuthenticationHttpController,
+      walletAuthenticationRuntime,
       runtimeFactory: (options) => {
         runtimeOptions = options;
         return runtime;
@@ -338,6 +395,687 @@ describe("Campaign OS API server entrypoint", () => {
       });
       expect(runtimeOptions?.backendServiceReadiness?.().providerClientReadiness.providerHttpRuntime)
         .toMatchObject({ transportProvided: false });
+      expect(runtimeOptions?.walletAuthenticationHttpController)
+        .toBe(walletAuthenticationHttpController);
+      expect(runtimeOptions?.walletAuthenticationRuntime)
+        .toBe(walletAuthenticationRuntime);
+      expect(runtimeOptions?.deprecatedNonLivePreviewAuthority).toBeUndefined();
+    } finally {
+      await server.stop();
+    }
+
+    expect(stopWalletAuthenticationRuntime).not.toHaveBeenCalled();
+  });
+
+  it("keeps disabled wallet auth in preview mode without exposing live auth preflight", async () => {
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>();
+    const deprecatedNonLivePreviewAuthority = createDeprecatedNonLivePreviewAuthorityOption();
+    let runtimeOptions: CreateCampaignOsApiRuntimeOptions | undefined;
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => ({
+        body: createSuccessEnvelope({
+          data: { status: "ok" },
+          routeCount: apiRuntimeContractRoutes.length,
+          traceId: "trace-preview-runtime",
+          version: "test",
+        }),
+        headers: { "content-type": "application/json" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      deprecatedNonLivePreviewAuthority,
+      env: {},
+      logger: false,
+      port: 0,
+      runtimeFactory: (options) => {
+        runtimeOptions = options;
+        return runtime;
+      },
+      walletAuthenticationCompositionFactory: compositionFactory,
+    });
+
+    try {
+      const preflight = await fetch(`${server.url}/api/wallet/auth/challenges`, {
+        headers: {
+          "access-control-request-headers": "content-type,x-campaign-os-trace-id",
+          "access-control-request-method": "POST",
+          origin: "http://127.0.0.1:5173",
+        },
+        method: "OPTIONS",
+      });
+      const health = await fetch(`${server.url}/api/health`);
+
+      expect(preflight.status).toBe(404);
+      expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+      expect(health.status).toBe(200);
+      expect(runtime.handle).toHaveBeenCalledTimes(1);
+      expect(compositionFactory).not.toHaveBeenCalled();
+      expect(runtimeOptions?.walletAuthenticationHttpController).toBeUndefined();
+      expect(runtimeOptions?.walletAuthenticationRuntime).toBeUndefined();
+      expect(runtimeOptions?.deprecatedNonLivePreviewAuthority)
+        .toBe(deprecatedNonLivePreviewAuthority);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("uses the default wallet-auth composition when no full factory is provided", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const client = {
+      query: vi.fn(async () => ({ rows: [] })),
+      release: vi.fn(),
+    };
+    const pool = {
+      connect: vi.fn(async () => client),
+      end: vi.fn(async () => undefined),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const poolFactory = vi.fn(() => pool);
+    let runtimeOptions: CreateCampaignOsApiRuntimeOptions | undefined;
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => ({
+        body: createSuccessEnvelope({
+          data: { status: "ok" },
+          routeCount: apiRuntimeContractRoutes.length,
+          traceId: "trace-default-composition-runtime",
+          version: "test",
+        }),
+        headers: { "content-type": "application/json" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin),
+      logger: false,
+      port: 0,
+      runtimeFactory: (options) => {
+        runtimeOptions = options;
+        return runtime;
+      },
+      walletAuthenticationCompositionDependencies: { poolFactory },
+    });
+
+    expect(poolFactory).toHaveBeenCalledWith(
+      "postgresql://127.0.0.1:5432/campaign_os",
+    );
+    expect(runtimeOptions?.walletAuthenticationHttpController).toEqual(expect.objectContaining({
+      handle: expect.any(Function),
+    }));
+    expect(runtimeOptions?.walletAuthenticationRuntime).toEqual(expect.objectContaining({
+      resolveAuthorization: expect.any(Function),
+      revalidateFenceBeforeWrite: expect.any(Function),
+      stop: expect.any(Function),
+    }));
+    expect(runtimeOptions?.walletAuthenticationRuntimeOwnership).toBe("external");
+
+    await server.stop();
+
+    expect(pool.end).toHaveBeenCalledTimes(1);
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps public reads available while ready live auth without composition dependencies denies all", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(async () => {
+      throw new Error("memory composition must not start");
+    });
+    const server = await startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin, {
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "local",
+        CAMPAIGN_OS_DATABASE_URL: undefined,
+      }),
+      logger: false,
+      port: 0,
+      walletAuthenticationCompositionFactory: compositionFactory,
+    });
+
+    try {
+      const challenge = await fetch(`${server.url}/api/wallet/auth/challenges`, {
+        body: JSON.stringify({
+          adapterId: "portkey-discover-eoa",
+          chainId: "AELF",
+          network: "testnet",
+          walletAddress: "wallet-stage-participant",
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin,
+          "x-campaign-os-trace-id": "trace-missing-composition-challenge",
+        },
+        method: "POST",
+      });
+      const challengeBody = await challenge.json() as {
+        error?: { code?: string };
+        ok?: boolean;
+      };
+      const verify = await fetch(`${server.url}/api/tasks/task-missing-composition/verify`, {
+        body: JSON.stringify({ campaignId: "campaign-missing-composition" }),
+        headers: {
+          "content-type": "application/json",
+          cookie: `campaign_os_session=${"a".repeat(43)}`,
+          origin,
+          "x-campaign-os-csrf": "c".repeat(43),
+          "x-campaign-os-trace-id": "trace-missing-composition-verify",
+        },
+        method: "POST",
+      });
+      const verifyBody = await verify.json() as {
+        error?: { code?: string };
+        ok?: boolean;
+      };
+      const health = await fetch(`${server.url}/api/health`);
+
+      expect(challenge.status).toBe(503);
+      expect(challengeBody).toMatchObject({
+        error: { code: "AUTH_DEPENDENCY_UNAVAILABLE" },
+        ok: false,
+      });
+      expect(verify.status).toBe(503);
+      expect(verifyBody).toMatchObject({
+        error: { code: "PERSISTENCE_UNAVAILABLE" },
+        ok: false,
+      });
+      expect(health.status).toBe(200);
+      expect(compositionFactory).not.toHaveBeenCalled();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("owns a factory-composed live runtime exactly once and stops auth before API resources", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const closeOrder: string[] = [];
+    const stopWalletAuthenticationRuntime = vi.fn(async () => {
+      closeOrder.push("wallet.stop");
+      return {
+        diagnosticCodes: [],
+        diagnostics: [],
+        status: "drained" as const,
+      };
+    });
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: stopWalletAuthenticationRuntime,
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const walletAuthenticationHttpController = {
+      handle: vi.fn(async () => undefined),
+    };
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(async () => ({
+      httpController: walletAuthenticationHttpController,
+      runtime: walletAuthenticationRuntime,
+    }));
+    let runtimeOptions: CreateCampaignOsApiRuntimeOptions | undefined;
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => {
+        closeOrder.push("api.close");
+      }),
+      handle: vi.fn(async () => ({
+        body: createSuccessEnvelope({
+          data: { status: "ok" },
+          routeCount: apiRuntimeContractRoutes.length,
+          traceId: "trace-owned-composition",
+          version: "test",
+        }),
+        headers: { "content-type": "application/json" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin),
+      logger: false,
+      port: 0,
+      runtimeFactory: (options) => {
+        runtimeOptions = options;
+        return runtime;
+      },
+      walletAuthenticationCompositionFactory: compositionFactory,
+    });
+
+    expect(compositionFactory).toHaveBeenCalledWith(expect.objectContaining({
+      config: expect.objectContaining({
+        allowedOrigins: [origin],
+        environment: "stage",
+        status: "ready",
+      }),
+      env: expect.objectContaining({
+        CAMPAIGN_OS_WALLET_AUTH_ENABLED: "1",
+      }),
+      traceId: expect.any(String),
+    }));
+    const factoryConfig = compositionFactory.mock.calls[0]?.[0].config;
+    expect(factoryConfig?.bindings[0]?.productionApproved).toBe(false);
+    expect(runtimeOptions?.walletAuthenticationHttpController)
+      .toBe(walletAuthenticationHttpController);
+    expect(runtimeOptions?.walletAuthenticationRuntime).toBe(walletAuthenticationRuntime);
+    expect(runtimeOptions?.walletAuthenticationRuntimeOwnership).toBe("external");
+
+    await server.stop();
+
+    expect(stopWalletAuthenticationRuntime).toHaveBeenCalledTimes(1);
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+    expect(closeOrder).toEqual(["wallet.stop", "api.close"]);
+  });
+
+  it("does not start API runtime close while the owned auth drain is pending", async () => {
+    const origin = "http://127.0.0.1:5193";
+    let releaseAuthStop!: () => void;
+    const authStopPending = new Promise<void>((resolve) => {
+      releaseAuthStop = resolve;
+    });
+    const stopWalletAuthenticationRuntime = vi.fn(async () => {
+      await authStopPending;
+      return {
+        diagnosticCodes: [],
+        diagnostics: [],
+        status: "drained" as const,
+      };
+    });
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: stopWalletAuthenticationRuntime,
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(async () => ({
+      httpController: { handle: vi.fn(async () => undefined) },
+      runtime: walletAuthenticationRuntime,
+    }));
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(),
+    };
+    const server = await startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin),
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      shutdownTimeoutMs: 2_000,
+      walletAuthenticationCompositionFactory: compositionFactory,
+    });
+
+    const stopPromise = server.stop();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stopWalletAuthenticationRuntime).toHaveBeenCalledTimes(1);
+    expect(runtime.close).not.toHaveBeenCalled();
+
+    releaseAuthStop();
+    await stopPromise;
+
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("still closes API resources after an owned auth drain failure", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: vi.fn(async () => ({
+        diagnosticCodes: ["WALLET_AUTH_RUNTIME_CLEANUP_FAILED"],
+        diagnostics: [],
+        status: "cleanup_failed" as const,
+      })),
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(async () => ({
+      httpController: { handle: vi.fn(async () => undefined) },
+      runtime: walletAuthenticationRuntime,
+    }));
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(),
+    };
+    const server = await startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin),
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      walletAuthenticationCompositionFactory: compositionFactory,
+    });
+
+    await expect(server.stop()).rejects.toMatchObject({
+      code: "API_SERVER_RUNTIME_CLOSE_FAILED",
+    });
+
+    expect(walletAuthenticationRuntime.stop).toHaveBeenCalledTimes(1);
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls a factory runtime back when the returned composition cannot expose its controller", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const stopWalletAuthenticationRuntime = vi.fn(async () => ({
+      diagnosticCodes: [],
+      diagnostics: [],
+      status: "drained" as const,
+    }));
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: stopWalletAuthenticationRuntime,
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const invalidComposition = {
+      get httpController(): never {
+        throw new Error("synthetic controller getter failure");
+      },
+      runtime: walletAuthenticationRuntime,
+    };
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(
+      async () => invalidComposition,
+    );
+    const server = await startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin),
+      logger: false,
+      port: 0,
+      walletAuthenticationCompositionFactory: compositionFactory,
+    });
+
+    try {
+      const challenge = await fetch(`${server.url}/api/wallet/auth/challenges`, {
+        body: JSON.stringify({
+          adapterId: "portkey-discover-eoa",
+          chainId: "AELF",
+          network: "testnet",
+          walletAddress: "wallet-invalid-composition",
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin,
+          "x-campaign-os-trace-id": "trace-invalid-composition",
+        },
+        method: "POST",
+      });
+
+      expect(challenge.status).toBe(503);
+      expect(stopWalletAuthenticationRuntime).toHaveBeenCalledTimes(1);
+    } finally {
+      await server.stop();
+    }
+
+    expect(stopWalletAuthenticationRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls a server-owned live composition back when API runtime construction fails", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const stopWalletAuthenticationRuntime = vi.fn(async () => ({
+      diagnosticCodes: [],
+      diagnostics: [],
+      status: "drained" as const,
+    }));
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: stopWalletAuthenticationRuntime,
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(async () => ({
+      httpController: { handle: vi.fn(async () => undefined) },
+      runtime: walletAuthenticationRuntime,
+    }));
+
+    await expect(startCampaignOsApiServer({
+      env: stageWalletAuthenticationEnv(origin),
+      logger: false,
+      port: 0,
+      runtimeFactory: () => {
+        throw new Error("synthetic API runtime construction failure");
+      },
+      walletAuthenticationCompositionFactory: compositionFactory,
+    })).rejects.toThrow("synthetic API runtime construction failure");
+
+    expect(stopWalletAuthenticationRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls the owned runtime graph back when HTTP listen fails", async () => {
+    const origin = "http://127.0.0.1:5193";
+    const closeOrder: string[] = [];
+    const occupiedServer = createHttpServer();
+    await new Promise<void>((resolve, reject) => {
+      occupiedServer.once("error", reject);
+      occupiedServer.listen(0, "127.0.0.1", () => {
+        occupiedServer.off("error", reject);
+        resolve();
+      });
+    });
+    const occupiedAddress = occupiedServer.address();
+    if (!occupiedAddress || typeof occupiedAddress === "string") {
+      occupiedServer.close();
+      throw new Error("Expected an occupied TCP port for the listen rollback test.");
+    }
+    const stopWalletAuthenticationRuntime = vi.fn(async () => {
+      closeOrder.push("wallet.stop");
+      return {
+        diagnosticCodes: [],
+        diagnostics: [],
+        status: "drained" as const,
+      };
+    });
+    const walletAuthenticationRuntime = {
+      resolveAuthorization: vi.fn(),
+      revalidateFenceBeforeWrite: vi.fn(),
+      state: vi.fn(() => ({
+        accepting: true,
+        activeOperationCount: 0,
+        controllerCount: 0,
+      })),
+      stop: stopWalletAuthenticationRuntime,
+    } as unknown as WalletAuthenticationLiveAuthorityRuntime;
+    const compositionFactory = vi.fn<WalletAuthenticationServerCompositionFactory>(async () => ({
+      httpController: { handle: vi.fn(async () => undefined) },
+      runtime: walletAuthenticationRuntime,
+    }));
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => {
+        closeOrder.push("api.close");
+      }),
+      handle: vi.fn(),
+    };
+
+    try {
+      await expect(startCampaignOsApiServer({
+        env: stageWalletAuthenticationEnv(origin),
+        host: "127.0.0.1",
+        logger: false,
+        port: occupiedAddress.port,
+        runtimeFactory: () => runtime,
+        walletAuthenticationCompositionFactory: compositionFactory,
+      })).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        occupiedServer.close((error) => error ? reject(error) : resolve());
+      });
+    }
+
+    expect(stopWalletAuthenticationRuntime).toHaveBeenCalledTimes(1);
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+    expect(closeOrder).toEqual(["wallet.stop", "api.close"]);
+  });
+
+  it("uses only explicit exact wallet-auth origins for credentialed task verification", async () => {
+    const trustedOrigin = "https://wallet.campaign-os.test";
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => ({
+        body: {
+          data: { status: "verified" },
+          ok: true as const,
+          traceId: "trace-wallet-auth-runtime",
+        },
+        headers: { "content-type": "application/json; charset=utf-8" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: ["*"],
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+      walletAuthenticationAllowedOrigins: [trustedOrigin, "*"],
+    });
+    const verify = (origin: string, traceId: string) => fetch(
+      `${server.url}/api/tasks/task-wallet-auth-1/verify`,
+      {
+        body: JSON.stringify({ campaignId: "campaign-wallet-auth-1" }),
+        headers: {
+          "content-type": "application/json",
+          cookie: `campaign_os_session=${"a".repeat(43)}`,
+          origin,
+          "x-campaign-os-csrf": "c".repeat(43),
+          "x-campaign-os-trace-id": traceId,
+        },
+        method: "POST",
+      },
+    );
+
+    try {
+      const accepted = await verify(trustedOrigin, "trace-wallet-auth-accepted");
+
+      expect(accepted.status).toBe(200);
+      expect(accepted.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
+      expect(accepted.headers.get("access-control-allow-credentials")).toBe("true");
+      expect(accepted.headers.get("access-control-allow-origin")).not.toBe("*");
+
+      for (const [origin, traceId] of [
+        ["https://unknown.invalid", "trace-wallet-auth-unknown"],
+        ["*", "trace-wallet-auth-wildcard"],
+      ] as const) {
+        const rejected = await verify(origin, traceId);
+
+        expect(rejected.status).toBe(403);
+        expect(rejected.headers.get("access-control-allow-origin")).toBeNull();
+        expect(rejected.headers.get("access-control-allow-credentials")).toBeNull();
+      }
+
+      expect(runtime.handle).toHaveBeenCalledTimes(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("rejects duplicate raw protected headers before runtime dispatch", async () => {
+    const trustedOrigin = "https://wallet-duplicate-header.campaign-os.test";
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => ({
+        body: {
+          data: { status: "verified" },
+          ok: true as const,
+          traceId: "trace-duplicate-header-runtime",
+        },
+        headers: { "content-type": "application/json; charset=utf-8" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [trustedOrigin],
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+    const body = JSON.stringify({ campaignId: "campaign-duplicate-header" });
+    const address = server.server.address();
+
+    if (!address || typeof address === "string") {
+      throw new Error("Expected the API server to expose a TCP address.");
+    }
+
+    try {
+      const rawResponse = await new Promise<string>((resolve, reject) => {
+        const socket = connect({ host: "127.0.0.1", port: address.port });
+        socket.setEncoding("utf8");
+        let response = "";
+
+        socket.on("data", (chunk) => {
+          response += chunk;
+        });
+        socket.once("error", reject);
+        socket.once("end", () => resolve(response));
+        socket.once("connect", () => {
+          socket.end([
+            "POST /api/tasks/task-duplicate-header/verify HTTP/1.1",
+            `Host: 127.0.0.1:${address.port}`,
+            `Origin: ${trustedOrigin}`,
+            "Content-Type: application/json",
+            `Cookie: campaign_os_session=${"a".repeat(43)}`,
+            `X-Campaign-OS-CSRF: ${"c".repeat(43)}`,
+            `x-campaign-os-csrf: ${"d".repeat(43)}`,
+            `Content-Length: ${Buffer.byteLength(body, "utf8")}`,
+            "Connection: close",
+            "",
+            body,
+          ].join("\r\n"));
+        });
+      });
+
+      expect(rawResponse.split("\r\n", 1)[0]).toBe("HTTP/1.1 400 Bad Request");
+      expect(runtime.handle).not.toHaveBeenCalled();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("keeps server CORS origins as the credentialed-route fallback", async () => {
+    const trustedOrigin = "https://wallet-fallback.campaign-os.test";
+    const runtime: CampaignOsApiRuntime = {
+      close: vi.fn(async () => undefined),
+      handle: vi.fn(async () => ({
+        body: {
+          data: { status: "verified" },
+          ok: true as const,
+          traceId: "trace-fallback-runtime",
+        },
+        headers: { "content-type": "application/json; charset=utf-8" },
+        status: 200,
+      })),
+    };
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [trustedOrigin],
+      logger: false,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+
+    try {
+      const response = await fetch(`${server.url}/api/tasks/task-wallet-auth-fallback/verify`, {
+        body: JSON.stringify({ campaignId: "campaign-wallet-auth-fallback" }),
+        headers: {
+          "content-type": "application/json",
+          cookie: `campaign_os_session=${"a".repeat(43)}`,
+          origin: trustedOrigin,
+          "x-campaign-os-csrf": "c".repeat(43),
+        },
+        method: "POST",
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
     } finally {
       await server.stop();
     }
@@ -615,7 +1353,9 @@ describe("Campaign OS API server entrypoint", () => {
       body: "{\"decision\":",
       contentType: "application/json",
       expectedCode: "MALFORMED_JSON",
+      expectedDiagnosticCode: undefined,
       expectedField: undefined,
+      expectedStatus: 400,
       name: "malformed JSON",
       traceId: "trace-admin-malformed-review",
     },
@@ -623,7 +1363,9 @@ describe("Campaign OS API server entrypoint", () => {
       body: "plain",
       contentType: "text/plain",
       expectedCode: "INVALID_REQUEST",
+      expectedDiagnosticCode: "INVALID_REQUEST",
       expectedField: "content-type",
+      expectedStatus: 400,
       name: "unsupported content type",
       traceId: "trace-admin-content-type-review",
     },
@@ -631,7 +1373,9 @@ describe("Campaign OS API server entrypoint", () => {
       body: JSON.stringify({ decision: "approved", note: "x".repeat(96) }),
       contentType: "application/json",
       expectedCode: "INVALID_REQUEST",
+      expectedDiagnosticCode: "REQUEST_TOO_LARGE",
       expectedField: "body",
+      expectedStatus: 413,
       name: "body limit",
       traceId: "trace-admin-body-limit-review",
     },
@@ -639,7 +1383,9 @@ describe("Campaign OS API server entrypoint", () => {
     body,
     contentType,
     expectedCode,
+    expectedDiagnosticCode,
     expectedField,
+    expectedStatus,
     traceId,
   }) => {
     const runtimeResponse = {
@@ -680,7 +1426,7 @@ describe("Campaign OS API server entrypoint", () => {
       const payload = await response.json() as Record<string, unknown>;
       const error = payload.error as Record<string, unknown>;
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(expectedStatus);
       expect(response.headers.get("content-type")).toContain("application/json");
       expect(response.headers.get("x-campaign-os-trace-id")).toBe(traceId);
       expect(response.headers.get("access-control-allow-origin")).toBe(trustedOrigin);
@@ -688,7 +1434,7 @@ describe("Campaign OS API server entrypoint", () => {
       expect(error).toEqual({
         code: expectedCode,
         ...(expectedField
-          ? { details: { diagnosticCode: "INVALID_REQUEST", field: expectedField } }
+          ? { details: { diagnosticCode: expectedDiagnosticCode, field: expectedField } }
           : {}),
         message: expect.any(String),
       });
@@ -980,7 +1726,7 @@ describe("Campaign OS API server entrypoint", () => {
     try {
       const response = await fetch(`${server.url}/api/campaigns/camp-awaken-sprint/points-ranking-ledger-runtime`, {
         headers: {
-          "access-control-request-headers": "accept, x-campaign-os-trace-id",
+          "access-control-request-headers": "x-campaign-os-trace-id",
           "access-control-request-method": "GET",
           origin: "http://127.0.0.1:5177",
           "x-campaign-os-trace-id": "trace-vite-fallback-preflight",
@@ -1050,7 +1796,7 @@ describe("Campaign OS API server entrypoint", () => {
       });
       const oversizePayload = await oversize.json();
 
-      expect(oversize.status).toBe(400);
+      expect(oversize.status).toBe(413);
       expect(oversize.headers.get("x-campaign-os-trace-id")).toBe("trace-oversize-http");
       expect(oversizePayload).toMatchObject({
         ok: false,
@@ -1278,7 +2024,8 @@ describe("Campaign OS API server entrypoint", () => {
         error: {
           code: "AUTH_SESSION_REQUIRED",
           details: {
-            routeId: "campaigns.create",
+            diagnosticCode: "DURABLE_WALLET_AUTHORITY_REQUIRED",
+            field: "authorization",
           },
         },
       });
@@ -1288,22 +2035,23 @@ describe("Campaign OS API server entrypoint", () => {
         ok: false,
         traceId: "trace-auth-http-unissued",
         error: {
-          code: "AUTH_SESSION_INVALID",
+          code: "AUTH_SESSION_REQUIRED",
           details: {
-            routeId: "campaigns.create",
+            diagnosticCode: "DURABLE_WALLET_AUTHORITY_REQUIRED",
+            field: "authorization",
           },
         },
       });
-      expect(authorized.status).toBe(200);
+      expect(authorized.status).toBe(401);
       expect(authorized.headers.get("x-campaign-os-trace-id")).toBe("trace-auth-http-authorized");
       expect(authorizedPayload).toMatchObject({
-        ok: true,
+        ok: false,
         traceId: "trace-auth-http-authorized",
-        data: {
-          payload: {
-            id: "campaign-db-draft-0001",
-            ownerAddress: "http-auth-owner",
-            projectId: "http-auth-project",
+        error: {
+          code: "AUTH_SESSION_REQUIRED",
+          details: {
+            diagnosticCode: "DURABLE_WALLET_AUTHORITY_REQUIRED",
+            field: "authorization",
           },
         },
       });

@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   adminOperatorRoutePolicies,
   evaluateAuthEnforcement,
   evaluateAdminOperatorEnforcement,
   evaluateIssuedAuthEnforcement,
+  evaluateTrustedLiveAuthorization,
   getAdminOperatorRoutePolicy,
   parseLocalAuthSessionHeaders,
   projectOwnershipReadinessPolicy,
@@ -12,12 +14,21 @@ import {
   type AuthRuntimeHeaders,
   type ParticipantCompatibilitySubject,
 } from "./authEnforcement";
+import {
+  resolveTrustedLiveAuthorizationContext,
+  type TrustedLiveAuthorizationContext,
+} from "./authSession";
 import { createAdminOperatorMembershipRegistry } from "./adminOperatorMembership";
 import {
   CAMPAIGN_OS_CAMPAIGN_ID_MAX_LENGTH,
   type CampaignOsAdminOperatorMembershipConfig,
 } from "./config";
 import type { WalletSessionRecord } from "./walletSessionRepository";
+import {
+  issueResolvedWalletSessionAuthority,
+  issueVerifiedWalletSubject,
+} from "./walletAuthentication";
+import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
 
 const sensitiveFragments = [
   "bearer raw-secret-token",
@@ -155,6 +166,68 @@ const adminRegistry = (
   sourceRevision: "admin-membership-sha256:test-revision",
 });
 
+const liveCapabilityDigest = (values: readonly string[]): string => createHash("sha256")
+  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+  .digest("hex");
+
+const trustedLiveContext = ({
+  absoluteExpiresAt = "2026-07-18T04:00:00.000Z",
+  capabilities = ["campaign:read", "task:verify"],
+  idleExpiresAt = "2026-07-18T03:00:00.000Z",
+  membershipRevision = "membership-v1",
+  roleIds = ["participant"],
+}: {
+  absoluteExpiresAt?: string;
+  capabilities?: readonly string[];
+  idleExpiresAt?: string;
+  membershipRevision?: string;
+  roleIds?: readonly string[];
+} = {}): TrustedLiveAuthorizationContext => {
+  const subject = issueVerifiedWalletSubject({
+    accountType: "EOA",
+    adapterId: "aelf-eoa-v1",
+    chainId: "AELF",
+    network: "mainnet",
+    proofDigest: "d".repeat(64),
+    proofMethod: "AELF_EOA_RECOVERABLE",
+    signerAddress: "2YVwTrustedSigner",
+    verifiedAt: "2026-07-18T01:55:00.000Z",
+    walletAddress: "2YVwTrustedParticipant",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  });
+  const authority = issueResolvedWalletSessionAuthority({
+    absoluteExpiresAt,
+    capabilities,
+    credentialBoundary: "wallet-auth-cookie/v1",
+    idleExpiresAt,
+    membershipRevision,
+    roleIds,
+    sessionId: "sess-live-participant",
+    subject,
+    version: 3,
+  });
+  const runtimeAuthorization = Object.freeze({
+    authority,
+    fence: Object.freeze({
+      capabilityDigest: liveCapabilityDigest(authority.capabilities),
+      membershipRevision,
+      sessionId: authority.sessionId,
+      subjectKey: walletAuthenticationSubjectKey(authority.subject),
+      version: authority.version,
+    }),
+    status: "authorized" as const,
+  });
+  const resolved = resolveTrustedLiveAuthorizationContext(runtimeAuthorization, {
+    now: new Date("2026-07-18T02:00:00.000Z"),
+  });
+
+  if (resolved.status !== "resolved") {
+    throw new Error("Expected a trusted live context fixture.");
+  }
+
+  return resolved.context;
+};
+
 const enforceThenMutate = async (
   options: Parameters<typeof evaluateIssuedAuthEnforcement>[0],
 ) => {
@@ -199,6 +272,235 @@ const expectNoSensitiveFragments = (value: unknown) => {
 };
 
 describe("auth enforcement", () => {
+  it("authorizes Participant from the durable context without accepting caller identity", () => {
+    const decision = evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context: trustedLiveContext(),
+      currentMembershipRevision: "membership-v1",
+      headers: {
+        "x-campaign-os-csrf": "synthetic-csrf-value",
+        "x-campaign-os-idempotency-key": "synthetic-idempotency-key",
+        "x-campaign-os-trace-id": "trace-live-participant",
+      },
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "tasks.verify",
+      taskCampaignId: "campaign-live-a",
+      traceId: "trace-live-participant",
+    });
+
+    expect(decision).toMatchObject({
+      allowed: true,
+      audit: {
+        decisionCode: "LIVE_AUTH_PARTICIPANT_ALLOWED",
+        sessionId: "sess-live-participant",
+        traceId: "trace-live-participant",
+      },
+      matchedRoles: ["participant"],
+      status: "allowed",
+    });
+    expect(Object.keys(decision.audit).sort()).toEqual([
+      "decisionCode",
+      "sessionId",
+      "traceId",
+    ]);
+    expect(JSON.stringify(decision.audit)).not.toContain("2YVwTrustedParticipant");
+  });
+
+  it.each([
+    { headers: { "x-campaign-os-roles": "project_owner" }, label: "campaign role" },
+    { headers: { "x-campaign-os-capabilities": "campaign:write" }, label: "capability" },
+    { headers: { "X-Wallet-Address": "2YVwForged" }, label: "wallet" },
+    { headers: { "x-session-id": "sess-forged" }, label: "caller session" },
+    { compatibilitySubject: { walletAddress: "2YVwTrustedParticipant" }, label: "compatibility subject" },
+  ])("rejects forged $label authority before role evaluation", (forged) => {
+    const decision = evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context: trustedLiveContext({
+        capabilities: ["campaign:write", "task:verify"],
+        roleIds: ["participant", "project_owner"],
+      }),
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      ownerAddress: "2YVwTrustedParticipant",
+      routeId: "campaigns.owner.detail",
+      traceId: "trace-live-forged",
+      ...forged,
+    } as never);
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_CALLER_AUTHORITY_FORBIDDEN" },
+      httpStatus: 403,
+      status: "forbidden",
+    });
+  });
+
+  it("requires current ownership as well as the session snapshot for Owner", () => {
+    const context = trustedLiveContext({
+      capabilities: ["campaign:write"],
+      roleIds: ["participant", "project_owner"],
+    });
+    const evaluate = (ownerAddress?: string) => evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context,
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      ownerAddress,
+      routeId: "campaigns.owner.detail",
+      traceId: "trace-live-owner",
+    });
+
+    expect(evaluate()).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_OWNERSHIP_FORBIDDEN" },
+    });
+    expect(evaluate("2yVwTrustedParticipant")).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_OWNERSHIP_FORBIDDEN" },
+    });
+    expect(evaluate("2YVwTrustedParticipant")).toMatchObject({
+      allowed: true,
+      audit: { decisionCode: "LIVE_AUTH_OWNER_ALLOWED" },
+      matchedRoles: ["project_owner"],
+    });
+  });
+
+  it("requires current server membership as well as the session snapshot for Admin", () => {
+    const revision = "admin-membership-sha256:test-revision";
+    const withSnapshot = trustedLiveContext({
+      capabilities: ["admin:review"],
+      membershipRevision: revision,
+      roleIds: ["participant", "review_operator"],
+    });
+    const withoutSnapshot = trustedLiveContext({
+      capabilities: ["admin:review"],
+      membershipRevision: revision,
+      roleIds: ["participant"],
+    });
+    const options = {
+      adminMembershipRegistry: adminRegistry([
+        adminMembership({ subjectAddress: "2YVwTrustedParticipant" }),
+      ]),
+      campaignId: "campaign-admin-a",
+      currentMembershipRevision: revision,
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "admin.reviews.detail",
+      traceId: "trace-live-admin",
+    } as const;
+
+    expect(evaluateTrustedLiveAuthorization({ ...options, context: withoutSnapshot })).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_MEMBERSHIP_FORBIDDEN" },
+    });
+    expect(evaluateTrustedLiveAuthorization({ ...options, context: withSnapshot })).toMatchObject({
+      allowed: true,
+      audit: { decisionCode: "LIVE_AUTH_ADMIN_ALLOWED" },
+      matchedRoles: ["review_operator"],
+    });
+    expect(evaluateTrustedLiveAuthorization({
+      ...options,
+      adminMembershipRegistry: adminRegistry([
+        adminMembership({
+          active: false,
+          subjectAddress: "2YVwTrustedParticipant",
+        }),
+      ]),
+      context: withSnapshot,
+    })).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_MEMBERSHIP_FORBIDDEN" },
+    });
+    expect(evaluateTrustedLiveAuthorization({
+      ...options,
+      adminMembershipRegistry: createAdminOperatorMembershipRegistry({
+        enabled: true,
+        memberships: [adminMembership({ subjectAddress: "2YVwTrustedParticipant" })],
+        sourceRevision: "admin-membership-sha256:changed-revision",
+      }),
+      context: withSnapshot,
+    })).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_SESSION_STALE" },
+      httpStatus: 409,
+    });
+  });
+
+  it.each([
+    [
+      "membership revision",
+      { currentMembershipRevision: "membership-v2" },
+      "LIVE_AUTH_SESSION_STALE",
+      409,
+    ],
+    [
+      "expiry",
+      { now: new Date("2026-07-18T03:00:00.000Z") },
+      "LIVE_AUTH_SESSION_STALE",
+      409,
+    ],
+    [
+      "task Campaign",
+      { taskCampaignId: "campaign-live-b" },
+      "LIVE_AUTH_SCOPE_FORBIDDEN",
+      403,
+    ],
+  ] as const)("fails closed for changed %s", (_case, overrides, code, httpStatus) => {
+    const decision = evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context: trustedLiveContext(),
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "tasks.verify",
+      taskCampaignId: "campaign-live-a",
+      traceId: "trace-live-stale",
+      ...overrides,
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: code },
+      httpStatus,
+    });
+  });
+
+  it("fails closed for missing intersected capability and preview context substitution", () => {
+    const missingCapability = evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context: trustedLiveContext({ capabilities: ["campaign:read"] }),
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "tasks.verify",
+      taskCampaignId: "campaign-live-a",
+      traceId: "trace-live-capability",
+    });
+    const previewSubstitution = evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context: {
+        credentialBoundary: "ordinary_user_wallet",
+        roleIds: ["participant"],
+        sessionId: "preview-header-session",
+      },
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "tasks.verify",
+      taskCampaignId: "campaign-live-a",
+      traceId: "trace-live-preview",
+    } as never);
+
+    expect(missingCapability).toMatchObject({
+      allowed: false,
+      audit: { decisionCode: "LIVE_AUTH_CAPABILITY_FORBIDDEN" },
+    });
+    expect(previewSubstitution).toMatchObject({
+      allowed: false,
+      audit: {
+        decisionCode: "LIVE_AUTH_CONTEXT_INVALID",
+        sessionId: "session-unresolved",
+      },
+      httpStatus: 401,
+    });
+  });
+
   it("publishes the complete RBAC ownership route policy matrix", () => {
     expect(rbacOwnershipRoutePolicyMatrix.map((entry) => entry.routeGroup)).toEqual([
       "runtime_metadata",
@@ -1024,8 +1326,9 @@ describe("auth enforcement", () => {
     expectNoSensitiveFragments(sanitized);
   });
 
-  it("publishes nine unique locally enforced Admin operator route policies", () => {
+  it("publishes ten unique locally enforced Admin operator route policies", () => {
     const routeIds = [
+      "admin.wallet-session.revoke",
       "admin.campaigns.list",
       "admin.reviews.list",
       "admin.reviews.detail",
@@ -1038,7 +1341,7 @@ describe("auth enforcement", () => {
     ];
 
     expect(adminOperatorRoutePolicies.map((policy) => policy.routeId)).toEqual(routeIds);
-    expect(new Set(adminOperatorRoutePolicies.map((policy) => policy.routeId)).size).toBe(9);
+    expect(new Set(adminOperatorRoutePolicies.map((policy) => policy.routeId)).size).toBe(10);
 
     for (const routeId of routeIds) {
       expect(getAdminOperatorRoutePolicy(routeId)).toMatchObject({
@@ -1051,10 +1354,12 @@ describe("auth enforcement", () => {
       });
     }
 
-    expect(getAdminOperatorRoutePolicy("admin.campaigns.list")).toMatchObject({
-      campaignScope: "membership_feed",
-    });
-    for (const routeId of routeIds.slice(1)) {
+    for (const routeId of ["admin.wallet-session.revoke", "admin.campaigns.list"]) {
+      expect(getAdminOperatorRoutePolicy(routeId)).toMatchObject({
+        campaignScope: "membership_feed",
+      });
+    }
+    for (const routeId of routeIds.slice(2)) {
       expect(getAdminOperatorRoutePolicy(routeId)).toMatchObject({
         campaignScope: "campaign_path",
       });

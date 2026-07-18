@@ -15,11 +15,13 @@ import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardD
 import type { NormalizedWalletSession } from "../domain/types";
 import {
   API_RUNTIME_CLOSE_MAX_DEADLINE_MS,
+  createDeprecatedNonLivePreviewAuthorityOption,
   createCampaignOsApiRuntime as createCampaignOsApiRuntimeBase,
   type ApiRuntimeResponse,
   type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
   type TaskVerificationRuleResolver,
+  type WalletAuthenticationAuthorityRuntime,
 } from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import {
@@ -36,7 +38,11 @@ import {
   createWalletSessionRepository,
   type WalletSessionRepository,
 } from "./walletSessionRepository";
-import { createMemoryTaskVerificationAttemptStore } from "./taskVerificationAttemptStore";
+import {
+  createMemoryTaskVerificationAttemptStore,
+  type TaskVerificationAttemptFinalizeWrite,
+  type TaskVerificationAttemptStore,
+} from "./taskVerificationAttemptStore";
 import {
   resolveTaskVerificationConfig,
   type TaskVerificationConfig,
@@ -67,6 +73,11 @@ import {
   type CampaignOsRepository,
 } from "./persistence";
 import { startCampaignOsApiServer } from "./server";
+import {
+  issueResolvedWalletSessionAuthority,
+  issueVerifiedWalletSubject,
+} from "./walletAuthentication";
+import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
 
 const productionDatabaseRequiredReferenceKeys = [
   "CAMPAIGN_OS_DATABASE_PACKAGE",
@@ -1147,6 +1158,9 @@ const createIssuedSessionLookupRepository = (): WalletSessionRepository => {
 
 const createCampaignOsApiRuntime = (options: CreateCampaignOsApiRuntimeOptions = {}) =>
   createCampaignOsApiRuntimeBase({
+    deprecatedNonLivePreviewAuthority:
+      options.deprecatedNonLivePreviewAuthority
+      ?? createDeprecatedNonLivePreviewAuthorityOption(),
     ...(!options.walletSessionRepository && !options.walletSessionRepositoryOptions
       ? { walletSessionRepository: createIssuedSessionLookupRepository() }
       : {}),
@@ -1213,16 +1227,177 @@ const createReadyTaskVerificationConfig = (): TaskVerificationConfig =>
     providerHttpTransportProvided: true,
   });
 
+const LIVE_AUTH_COOKIE = "campaign_os_session=credential-live-participant";
+const LIVE_AUTH_CSRF = "csrf-live-participant";
+const LIVE_AUTH_ORIGIN = "https://stage.campaign-os.test";
+
+const capabilityDigest = (values: readonly string[]): string => createHash("sha256")
+  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+  .digest("hex");
+
+const createLiveWalletAuthenticationAuthorityRuntime = () => {
+  const subject = issueVerifiedWalletSubject({
+    accountType: "EOA",
+    adapterId: "aelf-eoa-v1",
+    chainId: "AELF",
+    network: "mainnet",
+    proofDigest: "a".repeat(64),
+    proofMethod: "AELF_EOA_RECOVERABLE",
+    signerAddress: "2YVwLiveSigner",
+    verifiedAt: "2026-07-18T00:00:00.000Z",
+    walletAddress: "2YVwLiveParticipant",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  });
+  const authority = issueResolvedWalletSessionAuthority({
+    absoluteExpiresAt: "2099-07-18T04:00:00.000Z",
+    capabilities: ["campaign:read", "eligibility:read", "task:verify"],
+    credentialBoundary: "wallet-auth-cookie/v1",
+    idleExpiresAt: "2099-07-18T03:00:00.000Z",
+    membershipRevision: "membership-live-v1",
+    roleIds: ["participant"],
+    sessionId: "sess-live-participant",
+    subject,
+    version: 3,
+  });
+  const fence = Object.freeze({
+    capabilityDigest: capabilityDigest(authority.capabilities),
+    membershipRevision: authority.membershipRevision,
+    sessionId: authority.sessionId,
+    subjectKey: walletAuthenticationSubjectKey(authority.subject),
+    version: authority.version,
+  });
+  let authorizationAvailable = true;
+  let fenceCurrent = true;
+  const resolveAuthorization = vi.fn(async (input: {
+    cookieHeader?: string;
+    csrfHeader?: string | readonly string[];
+    origin?: string;
+    traceId: string;
+  }) => {
+    if (
+      !authorizationAvailable
+      || input.cookieHeader !== LIVE_AUTH_COOKIE
+      || input.csrfHeader !== LIVE_AUTH_CSRF
+      || input.origin !== LIVE_AUTH_ORIGIN
+    ) {
+      return Object.freeze({
+        diagnostic: Object.freeze({
+          code: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED" as const,
+          field: "cookie",
+          message: "Wallet session is unavailable.",
+          retryable: false,
+          severity: "warning" as const,
+          traceId: input.traceId,
+        }),
+        status: "unauthorized" as const,
+      });
+    }
+
+    return Object.freeze({ authority, fence, status: "authorized" as const });
+  });
+  const revalidateFenceBeforeWrite = vi.fn(async (input: {
+    traceId: string;
+    write: (context: { authority: typeof authority; signal: AbortSignal }) => unknown;
+  }) => {
+    if (!fenceCurrent) {
+      return Object.freeze({
+        diagnostic: Object.freeze({
+          code: "WALLET_AUTH_RUNTIME_FENCE_STALE" as const,
+          field: "fence",
+          message: "Wallet authorization changed before final write.",
+          retryable: false,
+          severity: "warning" as const,
+          traceId: input.traceId,
+        }),
+        status: "stale" as const,
+      });
+    }
+    const signal = new AbortController().signal;
+
+    return Object.freeze({
+      status: "committed" as const,
+      value: await input.write({ authority, signal }),
+    });
+  });
+  const stop = vi.fn(async () => Object.freeze({
+    diagnosticCodes: Object.freeze([]),
+    diagnostics: Object.freeze([]),
+    status: "drained" as const,
+  }));
+  const runtime = {
+    resolveAuthorization,
+    revalidateFenceBeforeWrite,
+    state: () => Object.freeze({ accepting: true, activeOperationCount: 0, controllerCount: 0 }),
+    stop,
+  } as unknown as WalletAuthenticationAuthorityRuntime;
+
+  return {
+    authority,
+    failResolution: () => {
+      authorizationAvailable = false;
+    },
+    invalidateFence: () => {
+      fenceCurrent = false;
+    },
+    resolveAuthorization,
+    revalidateFenceBeforeWrite,
+    runtime,
+    stop,
+  };
+};
+
+const liveTaskVerificationHeaders = (overrides: Record<string, string> = {}) => ({
+  cookie: LIVE_AUTH_COOKIE,
+  origin: LIVE_AUTH_ORIGIN,
+  "x-campaign-os-csrf": LIVE_AUTH_CSRF,
+  ...overrides,
+});
+
+const createLiveVerificationCampaign = async (
+  repository: CampaignDbRepository,
+  suffix: string,
+) => {
+  const campaign = await repository.createDraft({
+    duration: "2026-11-01/2026-11-14",
+    endTime: "2026-11-14T23:59:59Z",
+    goal: `M244 live verification ${suffix}`,
+    ownerAddress: `m244-live-owner-${suffix}`,
+    projectId: `m244-live-project-${suffix}`,
+    rewardDescription: "M244 live wallet authorization verification boundary.",
+    startTime: "2026-11-01T00:00:00Z",
+    status: "scheduled",
+    walletPolicy: "ANY",
+  });
+  const task = await repository.addTaskDraft({
+    campaignId: campaign.id,
+    evidenceRule: {
+      chainId: "AELF",
+      expectedField: "verified",
+      expectedType: "boolean",
+      expectedValue: true,
+      providerBindingId: "wp04-live-binding",
+    },
+    points: 25,
+    required: true,
+    templateCode: `m244_live_task_${suffix}`,
+    verificationType: "ON_CHAIN",
+    walletCompatibility: "ANY",
+  });
+
+  return { campaign, task };
+};
+
 const createTaskVerificationPostureRepository = (
   repository: CampaignDbRepository,
   options: {
+    attemptStore?: TaskVerificationAttemptStore;
     mode?: "deterministic_test" | "postgres";
     schemaVersion?: string;
   } = {},
 ): CampaignDbRepository => {
   const mode = options.mode ?? "postgres";
   const schemaVersion = options.schemaVersion ?? "0004_live_provider_task_verification";
-  const attemptStore = createMemoryTaskVerificationAttemptStore();
+  const attemptStore = options.attemptStore ?? createMemoryTaskVerificationAttemptStore();
   const getById: CampaignDbRepository["getById"] = async (...args) => {
     const projection = await repository.getById(...args);
 
@@ -1808,6 +1983,70 @@ const createInitializationTrackingRepository = () => {
 
 describe("Campaign OS API runtime", () => {
   const runtime = createCampaignOsApiRuntime();
+
+  it("dispatches wallet authentication transport before legacy route matching", async () => {
+    const handleWalletAuthentication = vi.fn(async (request: {
+      body?: unknown;
+      headers?: Record<string, string | readonly string[] | undefined>;
+      method: string;
+      path: string;
+    }) => request.path === "/api/wallet/auth/session"
+      ? {
+        body: {
+          data: { csrfToken: "csrf-safe", session: { sessionId: "was_public" } },
+          ok: true as const,
+          traceId: "trace-wallet-current",
+        },
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "set-cookie": "campaign_os_session=credential; HttpOnly; Path=/",
+          "x-campaign-os-trace-id": "trace-wallet-current",
+        },
+        status: 200,
+      }
+      : undefined);
+    const walletRuntime = createCampaignOsApiRuntime({
+      walletAuthenticationHttpController: { handle: handleWalletAuthentication },
+    });
+
+    const response = await walletRuntime.handle({
+      headers: {
+        cookie: "campaign_os_session=credential",
+        origin: "http://127.0.0.1:5173",
+      },
+      method: "GET",
+      path: "/api/wallet/auth/session",
+    });
+    const health = await walletRuntime.handle({ method: "GET", path: "/api/health" });
+
+    expect(response).toEqual({
+      body: {
+        data: { csrfToken: "csrf-safe", session: { sessionId: "was_public" } },
+        ok: true,
+        traceId: "trace-wallet-current",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "set-cookie": "campaign_os_session=credential; HttpOnly; Path=/",
+        "x-campaign-os-trace-id": "trace-wallet-current",
+      },
+      status: 200,
+    });
+    expect(handleWalletAuthentication).toHaveBeenNthCalledWith(1, {
+      headers: {
+        cookie: "campaign_os_session=credential",
+        origin: "http://127.0.0.1:5173",
+      },
+      method: "GET",
+      path: "/api/wallet/auth/session",
+    });
+    expect(handleWalletAuthentication).toHaveBeenNthCalledWith(2, {
+      method: "GET",
+      path: "/api/health",
+    });
+    expect(health).toMatchObject({ status: 200, body: { ok: true } });
+    await walletRuntime.close();
+  });
 
   it("returns health, contract, and service metadata through uniform envelopes", async () => {
     const health = await runtime.handle({
@@ -4803,6 +5042,8 @@ describe("Campaign OS API runtime", () => {
       evidenceRule: {
         chainId: "AELF",
         expectedField: "verified",
+        expectedType: "boolean",
+        expectedValue: true,
         providerBindingId: "wp04-live-binding",
       },
       points: 25,
@@ -4811,20 +5052,25 @@ describe("Campaign OS API runtime", () => {
       verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
     });
-    const upsertTaskVerification = vi.fn(repository.upsertTaskVerification!.bind(repository));
-    const taskVerificationRuntime = createPendingTaskVerificationRuntime();
+    const attemptStore = createMemoryTaskVerificationAttemptStore();
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
+    const transport = vi.fn(async () => ({
+      body: { status: "pending" },
+      durationMs: 4,
+      statusCode: 202,
+      timedOut: false,
+    })) satisfies ProviderHttpTransport;
     const runtime = createCampaignOsApiRuntime({
-      campaignDbRepository: createTaskVerificationPostureRepository({
-        ...repository,
-        upsertTaskVerification,
-      }),
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
       taskVerificationConfig: createReadyTaskVerificationConfig(),
-      taskVerificationRuntime,
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+      taskVerificationTransport: transport,
+      walletAuthenticationRuntime: authority.runtime,
     });
     const response = await runtime.handle({
       method: "POST",
       path: `/api/tasks/${task.id}/verify`,
-      headers: participantAuthHeaders("2F4Wp04PendingParticipant", {
+      headers: liveTaskVerificationHeaders({
         "x-campaign-os-trace-id": "trace-wp04-pending",
       }),
       body: JSON.stringify({ campaignId: campaign.id }),
@@ -4845,8 +5091,8 @@ describe("Campaign OS API runtime", () => {
             storeId: "campaign-db",
           },
           payload: {
-            authoritative: false,
-            diagnosticCodes: ["TASK_VERIFICATION_ATTEMPT_IN_PROGRESS"],
+            authoritative: true,
+            diagnosticCodes: ["PROVIDER_PENDING"],
             outcome: "pending",
             pointsAwarded: 0,
             providerFamily: "aefinder",
@@ -4854,19 +5100,20 @@ describe("Campaign OS API runtime", () => {
             retryAfterMs: 1_000,
             status: "pending",
             taskId: task.id,
-            verificationAttemptId: "attempt-wp04-pending",
+            verificationAttemptId: expect.any(String),
           },
         },
       },
     });
     expect(JSON.stringify(response.body)).not.toContain("campaignDbCompletion");
     expect(JSON.stringify(response.body)).not.toContain("campaignDbEvidence");
-    expect(taskVerificationRuntime.execute).toHaveBeenCalledTimes(1);
-    expect(upsertTaskVerification).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(authority.revalidateFenceBeforeWrite).toHaveBeenCalledTimes(1);
     expect(Buffer.byteLength(JSON.stringify(response.body), "utf8")).toBeLessThan(16_384);
     expectNoForbiddenResponseKeys(response.body);
     await runtime.close();
-    expect(taskVerificationRuntime.close).toHaveBeenCalledTimes(1);
+    expect(authority.stop).toHaveBeenCalledTimes(1);
+    await attemptStore.close();
   });
 
   it.each(["failed", "manual_review"] as const)(
@@ -4887,7 +5134,10 @@ describe("Campaign OS API runtime", () => {
       const task = await repository.addTaskDraft({
         campaignId: campaign.id,
         evidenceRule: {
+          chainId: "AELF",
           expectedField: "verified",
+          expectedType: "boolean",
+          expectedValue: true,
           providerBindingId: "wp04-live-binding",
         },
         points: 25,
@@ -4896,31 +5146,30 @@ describe("Campaign OS API runtime", () => {
         verificationType: "ON_CHAIN",
         walletCompatibility: "ANY",
       });
-      const taskVerificationRuntime = {
-        close: vi.fn(async () => ({ activeCallCount: 0, status: "drained" as const })),
-        execute: vi.fn(async (
-          input: ExecuteTaskVerificationRuntimeInput,
-        ): Promise<TaskVerificationRuntimeResult> => ({
-          attemptId: `attempt-wp04-${outcome}`,
-          authoritative: true,
-          diagnosticCodes: [`PROVIDER_${outcome.toUpperCase()}`],
-          outcome,
-          pointsAwarded: 0,
-          positiveMatch: false,
-          taskId: task.id,
-          traceId: input.traceId ?? `trace-wp04-${outcome}`,
-          transportExecuted: true,
-        })),
-        state: vi.fn(() => ({ accepting: true, activeCallCount: 0, controllerCount: 0 })),
-      };
+      const attemptStore = createMemoryTaskVerificationAttemptStore();
+      const authority = createLiveWalletAuthenticationAuthorityRuntime();
+      const transport = vi.fn(async () => {
+        if (outcome === "manual_review") {
+          throw new Error("provider failed after dispatch");
+        }
+
+        return {
+          body: { status: "completed", verified: false },
+          durationMs: 4,
+          statusCode: 200,
+          timedOut: false,
+        };
+      }) satisfies ProviderHttpTransport;
       const runtime = createCampaignOsApiRuntime({
-        campaignDbRepository: createTaskVerificationPostureRepository(repository),
+        campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
         taskVerificationConfig: createReadyTaskVerificationConfig(),
-        taskVerificationRuntime,
+        taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+        taskVerificationTransport: transport,
+        walletAuthenticationRuntime: authority.runtime,
       });
       const response = await runtime.handle({
         body: JSON.stringify({ campaignId: campaign.id }),
-        headers: participantAuthHeaders("2F4Wp04TerminalParticipant", {
+        headers: liveTaskVerificationHeaders({
           "x-campaign-os-trace-id": `trace-wp04-${outcome}`,
         }),
         method: "POST",
@@ -4948,19 +5197,22 @@ describe("Campaign OS API runtime", () => {
               status: outcome,
               taskId: task.id,
               transportExecuted: true,
-              verificationAttemptId: `attempt-wp04-${outcome}`,
+              verificationAttemptId: expect.any(String),
             },
           },
         },
       });
       expect(JSON.stringify(response.body)).not.toContain("campaignDbCompletion");
       expect(JSON.stringify(response.body)).not.toContain("campaignDbEvidence");
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(authority.revalidateFenceBeforeWrite).toHaveBeenCalledTimes(1);
       expectNoForbiddenResponseKeys(response.body);
       await runtime.close();
+      await attemptStore.close();
     },
   );
 
-  it("creates the provider runtime lazily only after PostgreSQL schema and binding readiness pass", async () => {
+  it("keeps a caller-supplied non-fence-aware provider factory disabled after schema readiness", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft({
       duration: "2026-11-01/2026-11-14",
@@ -4987,10 +5239,12 @@ describe("Campaign OS API runtime", () => {
     });
     const taskVerificationRuntime = createPendingTaskVerificationRuntime();
     const taskVerificationRuntimeFactory = vi.fn(() => taskVerificationRuntime);
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
     const runtime = createCampaignOsApiRuntime({
       campaignDbRepository: createTaskVerificationPostureRepository(repository),
       taskVerificationConfig: createReadyTaskVerificationConfig(),
       taskVerificationRuntimeFactory,
+      walletAuthenticationRuntime: authority.runtime,
     });
 
     expect(taskVerificationRuntimeFactory).not.toHaveBeenCalled();
@@ -5007,10 +5261,10 @@ describe("Campaign OS API runtime", () => {
     }>(health).taskVerificationRuntime).toEqual({
       bindingCount: 1,
       enabled: true,
-      providerStatus: "configured",
+      providerStatus: "disabled",
       requiredSchemaVersion: "0004_live_provider_task_verification",
       schemaStatus: "ready",
-      status: "ready",
+      status: "blocked",
     });
     expect(JSON.stringify(health.body)).not.toContain("wp04-live-binding");
     expect(JSON.stringify(health.body)).not.toContain("CAMPAIGN_OS_WP04_TEST_ENDPOINT");
@@ -5018,15 +5272,24 @@ describe("Campaign OS API runtime", () => {
     const response = await runtime.handle({
       method: "POST",
       path: `/api/tasks/${task.id}/verify`,
-      headers: participantAuthHeaders("2F4Wp04LazyParticipant", {
+      headers: liveTaskVerificationHeaders({
         "x-campaign-os-trace-id": "trace-wp04-lazy",
       }),
       body: JSON.stringify({ campaignId: campaign.id }),
     });
 
-    expect(response.status).toBe(202);
-    expect(taskVerificationRuntimeFactory).toHaveBeenCalledTimes(1);
-    expect(taskVerificationRuntime.execute).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({
+      status: 503,
+      body: {
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
+        ok: false,
+      },
+    });
+    expect(taskVerificationRuntimeFactory).not.toHaveBeenCalled();
+    expect(taskVerificationRuntime.execute).not.toHaveBeenCalled();
     await runtime.close();
   });
 
@@ -5064,15 +5327,15 @@ describe("Campaign OS API runtime", () => {
     await runtime.close();
   });
 
-  it("composes the WP02 attempt runtime with an explicitly supplied WP03 transport", async () => {
+  it("denies protected routes when live provider composition has no wallet authority runtime", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft({
       duration: "2026-11-01/2026-11-14",
       endTime: "2026-11-14T23:59:59Z",
-      goal: "WP04 direct runtime composition",
+      goal: "M244 no-authority provider isolation",
       ownerAddress: "wp04-direct-owner",
-      projectId: "wp04-direct-project",
-      rewardDescription: "WP04 direct runtime boundary.",
+      projectId: "m244-no-authority-provider",
+      rewardDescription: "Live provider work requires durable wallet authority.",
       startTime: "2026-11-01T00:00:00Z",
       status: "scheduled",
       walletPolicy: "ANY",
@@ -5088,7 +5351,7 @@ describe("Campaign OS API runtime", () => {
       },
       points: 25,
       required: true,
-      templateCode: "wp04_direct_task",
+      templateCode: "m244_no_authority_task",
       verificationType: "ON_CHAIN",
       walletCompatibility: "ANY",
     });
@@ -5098,57 +5361,496 @@ describe("Campaign OS API runtime", () => {
       statusCode: 202,
       timedOut: false,
     })) satisfies ProviderHttpTransport;
-    const providerRuntime = createActivatedProviderHttpRuntime();
-    expect(providerRuntime).toMatchObject({ status: "activated", valid: true });
-    const runtime = createCampaignOsApiRuntime({
-      campaignDbRepository: createTaskVerificationPostureRepository(repository),
+    const persistFinalization = vi.fn(async (write: TaskVerificationAttemptFinalizeWrite) => write);
+    const attemptStore = createMemoryTaskVerificationAttemptStore({ persistFinalization });
+    const runtime = createCampaignOsApiRuntimeBase({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
       taskVerificationConfig: createReadyTaskVerificationConfig(),
-      taskVerificationProviderRuntime: providerRuntime,
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
       taskVerificationTransport: transport,
     });
 
-    expect(transport).not.toHaveBeenCalled();
-    const response = await runtime.handle({
+    const protectedResponse = await runtime.handle({
       method: "POST",
       path: `/api/tasks/${task.id}/verify`,
       headers: participantAuthHeaders("2F4Wp04DirectParticipant", {
-        "x-campaign-os-trace-id": "trace-wp04-direct",
+        "x-campaign-os-trace-id": "trace-m244-no-authority",
       }),
       body: JSON.stringify({ campaignId: campaign.id }),
     });
+    const publicResponse = await runtime.handle({ method: "GET", path: "/api/health" });
+    const projection = await repository.getById(campaign.id, {
+      traceId: "trace-m244-no-authority-projection",
+    });
+
+    expect(protectedResponse).toMatchObject({
+      status: 401,
+      body: {
+        error: {
+          code: "AUTH_SESSION_REQUIRED",
+          details: { diagnosticCode: "DURABLE_WALLET_AUTHORITY_REQUIRED" },
+        },
+        ok: false,
+      },
+    });
+    expect(publicResponse).toMatchObject({ status: 200, body: { ok: true } });
+    expect(transport).not.toHaveBeenCalled();
+    expect(persistFinalization).not.toHaveBeenCalled();
+    expect(await attemptStore.listSafe()).toEqual([]);
+    expect(projection).toMatchObject({
+      completions: [],
+      participants: [],
+      taskEvidence: [],
+    });
+    await runtime.close();
+    await attemptStore.close();
+  });
+
+  it("keeps explicit deprecated preview demo auth while blocking live provider and final facts", async () => {
+    const repository = createCampaignDbRepository();
+    const { campaign, task } = await createLiveVerificationCampaign(repository, "preview-isolated");
+    const persistFinalization = vi.fn(async (write: TaskVerificationAttemptFinalizeWrite) => write);
+    const attemptStore = createMemoryTaskVerificationAttemptStore({ persistFinalization });
+    const transport = vi.fn(async () => ({
+      body: {
+        evidenceHash: "c".repeat(64),
+        evidenceRef: "evidence-ref:must-not-dispatch",
+        status: "completed",
+        verified: true,
+      },
+      durationMs: 4,
+      statusCode: 200,
+      timedOut: false,
+    })) satisfies ProviderHttpTransport;
+    const walletAddress = "2F4M244PreviewParticipant";
+    const runtime = createCampaignOsApiRuntimeBase({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
+      deprecatedNonLivePreviewAuthority: createDeprecatedNonLivePreviewAuthorityOption(),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+      taskVerificationTransport: transport,
+      walletSessionActivationPolicy: "repository_trusted",
+      walletSessionRepository: createIssuedSessionLookupRepository(),
+    });
+    const headers = participantAuthHeaders(walletAddress, {
+      "x-campaign-os-trace-id": "trace-m244-preview-isolated",
+    });
+
+    const demoRead = await runtime.handle({
+      headers,
+      method: "GET",
+      path: "/api/participant/campaigns",
+    });
+    const verify = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers,
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+    const projection = await repository.getById(campaign.id, {
+      traceId: "trace-m244-preview-isolated-projection",
+    });
+
+    expect(demoRead).toMatchObject({ status: 200, body: { ok: true } });
+    expect(verify).toMatchObject({
+      status: 503,
+      body: {
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
+        ok: false,
+      },
+    });
+    expect(transport).not.toHaveBeenCalled();
+    expect(persistFinalization).not.toHaveBeenCalled();
+    expect(await attemptStore.listSafe()).toEqual([]);
+    expect(projection).toMatchObject({ completions: [], participants: [], taskEvidence: [] });
+    await runtime.close();
+    await attemptStore.close();
+  });
+
+  it("uses the durable cookie subject for a committed live verification and its final facts", async () => {
+    const repository = createCampaignDbRepository();
+    const { campaign, task } = await createLiveVerificationCampaign(repository, "committed");
+    let committedWrite: TaskVerificationAttemptFinalizeWrite | undefined;
+    const attemptStore = createMemoryTaskVerificationAttemptStore({
+      persistFinalization: async (write) => {
+        committedWrite = write;
+        return write;
+      },
+    });
+    const getById: CampaignDbRepository["getById"] = async (...args) => {
+      const projection = await repository.getById(...args);
+
+      return projection && committedWrite
+        ? {
+            ...projection,
+            completions: [committedWrite.completion],
+            participants: [committedWrite.participant],
+            taskEvidence: [committedWrite.evidence],
+          }
+        : projection;
+    };
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
+    const transport = vi.fn(async () => ({
+      body: {
+        evidenceHash: "c".repeat(64),
+        evidenceRef: "evidence-ref:m244-live-committed",
+        status: "completed",
+        verified: true,
+      },
+      durationMs: 4,
+      statusCode: 200,
+      timedOut: false,
+    })) satisfies ProviderHttpTransport;
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository({
+        ...repository,
+        getById,
+      }, { attemptStore }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+      taskVerificationTransport: transport,
+      walletAuthenticationRuntime: authority.runtime,
+    });
+
+    const response = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders({
+        "x-campaign-os-trace-id": "trace-m244-live-committed",
+      }),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
 
     expect(response, JSON.stringify(response.body)).toMatchObject({
-      status: 202,
+      status: 200,
       body: {
         ok: true,
-        data: { payload: { outcome: "pending", pointsAwarded: 0 } },
+        data: {
+          payload: {
+            authoritative: true,
+            outcome: "completed",
+            pointsAwarded: task.points,
+            walletAddress: authority.authority.subject.walletAddress,
+          },
+        },
       },
     });
     expect(transport).toHaveBeenCalledTimes(1);
-    const participantSession = issuedProjectOwnerSession("2F4Wp04DirectParticipant");
-    issuedProjectOwnerSessions.set(participantSession.sessionId, participantSession);
-    const bridgedPending = await createParticipantJourneyApiBridge({
-      config: { baseUrl: "http://campaign-os-runtime.test" },
-      fetchImpl: createParticipantBridgeRuntimeFetch(runtime),
-    }).verifyTask(task.id, {
-      mode: "durable",
-      selectedCampaignId: campaign.id,
-      session: participantSession,
+    expect(authority.resolveAuthorization).toHaveBeenCalledWith({
+      cookieHeader: LIVE_AUTH_COOKIE,
+      csrfHeader: LIVE_AUTH_CSRF,
+      origin: LIVE_AUTH_ORIGIN,
+      traceId: "trace-m244-live-committed",
     });
-    expect(bridgedPending).toMatchObject({
-      httpStatus: 202,
-      ok: true,
-      outcome: "pending",
-      status: "pending",
-      verification: {
-        attempt: { status: "pending" },
-        repository: { mode: "postgres" },
-      },
-    });
+    expect(authority.revalidateFenceBeforeWrite).toHaveBeenCalledTimes(1);
+    expect(committedWrite).toBeDefined();
+    if (!committedWrite) {
+      throw new Error("Expected the fenced live finalization write.");
+    }
+    for (const fact of [
+      committedWrite.completion,
+      committedWrite.evidence,
+      committedWrite.participant,
+    ]) {
+      expect(fact).toMatchObject({
+        accountType: authority.authority.subject.accountType,
+        campaignId: campaign.id,
+        walletAddress: authority.authority.subject.walletAddress,
+        walletSource: authority.authority.subject.walletSource,
+      });
+    }
+    expect(await attemptStore.listSafe()).toEqual([
+      expect.objectContaining({
+        accountType: authority.authority.subject.accountType,
+        campaignId: campaign.id,
+        status: "completed",
+        taskId: task.id,
+        walletAddress: authority.authority.subject.walletAddress,
+        walletSource: authority.authority.subject.walletSource,
+      }),
+    ]);
     await runtime.close();
+    expect(authority.stop).toHaveBeenCalledTimes(1);
+    await attemptStore.close();
   });
 
-  it("returns terminal success and replay only from the committed durable projection", async () => {
+  it("rejects forged caller authority and cross-scope live verification before provider dispatch", async () => {
+    const repository = createCampaignDbRepository();
+    const { campaign, task } = await createLiveVerificationCampaign(repository, "scope-primary");
+    const { campaign: otherCampaign } = await createLiveVerificationCampaign(
+      repository,
+      "scope-other",
+    );
+    const attemptStore = createMemoryTaskVerificationAttemptStore();
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
+    const transport = vi.fn(async () => ({
+      body: { status: "pending" },
+      durationMs: 4,
+      statusCode: 202,
+      timedOut: false,
+    })) satisfies ProviderHttpTransport;
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+      taskVerificationTransport: transport,
+      walletAuthenticationRuntime: authority.runtime,
+    });
+    const valid = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+    const resolutionCountBeforeInvalidBody = authority.resolveAuthorization.mock.calls.length;
+    const invalidBody = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id, chainId: "AELF" }),
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+    const duplicateCampaignBody = await runtime.handle({
+      body: `{"campaignId":"${campaign.id}","campaignId":"${otherCampaign.id}"}`,
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+    const forgedHeaders = await Promise.all([
+      ["x-wallet-address", "2YVwForgedParticipant"],
+      ["x-campaign-os-chain-id", "tDVV"],
+      ["x-campaign-os-network", "testnet"],
+      ["x-campaign-os-role", "project_owner"],
+    ].map(async ([name, value]) => runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders({ [name]: value }),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    })));
+    const wrongTask = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: "/api/tasks/task-from-another-campaign/verify",
+    });
+    const crossCampaign = await runtime.handle({
+      body: JSON.stringify({ campaignId: otherCampaign.id }),
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+
+    expect(valid).toMatchObject({
+      status: 202,
+      body: { ok: true, data: { payload: { outcome: "pending", pointsAwarded: 0 } } },
+    });
+    for (const response of [invalidBody, duplicateCampaignBody]) {
+      expect(response).toMatchObject({
+        status: 400,
+        body: { ok: false, error: { code: "INVALID_REQUEST" } },
+      });
+    }
+    expect(authority.resolveAuthorization).toHaveBeenCalledTimes(
+      resolutionCountBeforeInvalidBody + forgedHeaders.length + 2,
+    );
+    for (const response of [...forgedHeaders, wrongTask, crossCampaign]) {
+      expect(response).toMatchObject({
+        status: 403,
+        body: { ok: false, error: { code: "AUTH_FORBIDDEN" } },
+      });
+      expectNoForbiddenResponseKeys(response.body);
+    }
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(await attemptStore.listSafe()).toEqual([
+      expect.objectContaining({
+        campaignId: campaign.id,
+        status: "pending",
+        taskId: task.id,
+        walletAddress: authority.authority.subject.walletAddress,
+      }),
+    ]);
+    await runtime.close();
+    await attemptStore.close();
+  });
+
+  it("fails live session resolution before provider dispatch or Attempt creation", async () => {
+    const repository = createCampaignDbRepository();
+    const { campaign, task } = await createLiveVerificationCampaign(repository, "session-failure");
+    const attemptStore = createMemoryTaskVerificationAttemptStore();
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
+    authority.failResolution();
+    const transport = vi.fn(async () => ({
+      body: { status: "pending" },
+      durationMs: 4,
+      statusCode: 202,
+      timedOut: false,
+    })) satisfies ProviderHttpTransport;
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+      taskVerificationTransport: transport,
+      walletAuthenticationRuntime: authority.runtime,
+    });
+
+    const response = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+
+    expect(response).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: "AUTH_SESSION_INVALID" } },
+    });
+    expect(authority.resolveAuthorization).toHaveBeenCalledTimes(1);
+    expect(authority.revalidateFenceBeforeWrite).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+    expect(await attemptStore.listSafe()).toEqual([]);
+    await runtime.close();
+    await attemptStore.close();
+  });
+
+  it("fails closed when a caller supplies a non-fence-aware live verification factory", async () => {
+    const repository = createCampaignDbRepository();
+    const { campaign, task } = await createLiveVerificationCampaign(repository, "unsafe-factory");
+    const attemptStore = createMemoryTaskVerificationAttemptStore();
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
+    const taskVerificationRuntime = createPendingTaskVerificationRuntime();
+    const taskVerificationRuntimeFactory = vi.fn(() => taskVerificationRuntime);
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationRuntimeFactory,
+      walletAuthenticationRuntime: authority.runtime,
+    });
+
+    const response = await runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders(),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+
+    expect(response).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        error: {
+          code: "PERSISTENCE_UNAVAILABLE",
+          details: { operation: "taskVerificationRuntime.activate" },
+        },
+      },
+    });
+    expect(taskVerificationRuntimeFactory).not.toHaveBeenCalled();
+    expect(taskVerificationRuntime.execute).not.toHaveBeenCalled();
+    expect(authority.revalidateFenceBeforeWrite).not.toHaveBeenCalled();
+    expect(await attemptStore.listSafe()).toEqual([]);
+    await runtime.close();
+    await attemptStore.close();
+  });
+
+  it.each([
+    "session revocation",
+    "session rotation",
+    "membership revision change",
+  ])("keeps only the bounded Attempt when %s occurs during provider work", async (race) => {
+    const repository = createCampaignDbRepository();
+    const suffix = race.replace(/ /g, "-");
+    const { campaign, task } = await createLiveVerificationCampaign(repository, suffix);
+    const persistFinalization = vi.fn(async (write: TaskVerificationAttemptFinalizeWrite) => write);
+    const attemptStore = createMemoryTaskVerificationAttemptStore({ persistFinalization });
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
+    let signalTransportStarted: () => void = () => undefined;
+    const transportStarted = new Promise<void>((resolve) => {
+      signalTransportStarted = resolve;
+    });
+    let releaseTransport: () => void = () => undefined;
+    const transportGate = new Promise<void>((resolve) => {
+      releaseTransport = resolve;
+    });
+    const transport = vi.fn(async () => {
+      signalTransportStarted();
+      await transportGate;
+
+      return {
+        body: {
+          evidenceHash: "d".repeat(64),
+          evidenceRef: `evidence-ref:m244-${suffix}`,
+          status: "completed",
+          verified: true,
+        },
+        durationMs: 4,
+        statusCode: 200,
+        timedOut: false,
+      };
+    }) satisfies ProviderHttpTransport;
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: createTaskVerificationPostureRepository(repository, { attemptStore }),
+      taskVerificationConfig: createReadyTaskVerificationConfig(),
+      taskVerificationProviderRuntime: createActivatedProviderHttpRuntime(),
+      taskVerificationTransport: transport,
+      walletAuthenticationRuntime: authority.runtime,
+    });
+    const responsePromise = runtime.handle({
+      body: JSON.stringify({ campaignId: campaign.id }),
+      headers: liveTaskVerificationHeaders({
+        "x-campaign-os-trace-id": `trace-m244-${suffix}`,
+      }),
+      method: "POST",
+      path: `/api/tasks/${task.id}/verify`,
+    });
+
+    await transportStarted;
+    expect(transport, `${race} must reach provider work before authority changes`).toHaveBeenCalledTimes(1);
+    authority.invalidateFence();
+    releaseTransport();
+    const response = await responsePromise;
+    const projection = await repository.getById(campaign.id, {
+      traceId: `trace-m244-${suffix}-projection`,
+    });
+
+    expect(response, JSON.stringify(response.body)).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        data: {
+          payload: {
+            authoritative: false,
+            outcome: "manual_review",
+            pointsAwarded: 0,
+            transportExecuted: true,
+          },
+        },
+      },
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(authority.revalidateFenceBeforeWrite).toHaveBeenCalledTimes(1);
+    expect(persistFinalization, `${race} must commit zero final facts`).not.toHaveBeenCalled();
+    expect(await attemptStore.listSafe()).toEqual([
+      expect.objectContaining({
+        campaignId: campaign.id,
+        dispatchState: "started",
+        status: "running",
+        taskId: task.id,
+        walletAddress: authority.authority.subject.walletAddress,
+      }),
+    ]);
+    expect(projection).toMatchObject({
+      completions: [],
+      participants: [],
+      taskEvidence: [],
+    });
+    expect(JSON.stringify(response.body)).not.toContain("evidence-ref:m244");
+    expectNoForbiddenResponseKeys(response.body);
+    await runtime.close();
+    await attemptStore.close();
+  });
+
+  it("never serves terminal facts from a caller-supplied non-fence-aware runtime", async () => {
     const repository = createCampaignDbRepository();
     const campaign = await repository.createDraft({
       duration: "2026-11-01/2026-11-14",
@@ -5277,6 +5979,7 @@ describe("Campaign OS API runtime", () => {
       execute,
       state: vi.fn(() => ({ accepting: true, activeCallCount: 0, controllerCount: 0 })),
     };
+    const authority = createLiveWalletAuthenticationAuthorityRuntime();
     const upsertTaskVerification = vi.fn(repository.upsertTaskVerification!.bind(repository));
     const runtime = createCampaignOsApiRuntime({
       campaignDbRepository: createTaskVerificationPostureRepository({
@@ -5286,11 +5989,12 @@ describe("Campaign OS API runtime", () => {
       }),
       taskVerificationConfig: createReadyTaskVerificationConfig(),
       taskVerificationRuntime,
+      walletAuthenticationRuntime: authority.runtime,
     });
     const request = {
       method: "POST",
       path: `/api/tasks/${task.id}/verify`,
-      headers: participantAuthHeaders(walletAddress, {
+      headers: liveTaskVerificationHeaders({
         "x-campaign-os-trace-id": "trace-wp04-terminal",
       }),
       body: JSON.stringify({ campaignId: campaign.id }),
@@ -5300,67 +6004,19 @@ describe("Campaign OS API runtime", () => {
     const replay = await runtime.handle(request);
     for (const response of [first, replay]) {
       expect(response).toMatchObject({
-        status: 200,
+        status: 503,
         body: {
-          ok: true,
-          data: {
-            campaignDb: {
-              adapterId: "campaign-db-postgresql-adapter",
-              createdViaRepository: true,
-              mode: "postgres",
-              repositoryId: "campaign-db-repository-runtime",
-              storeId: "campaign-db",
-            },
-            campaignDbCompletion: { completionId: completion.id },
-            campaignDbEvidence: { evidenceId: evidence.id },
-            payload: {
-              authoritative: true,
-              evidence: {
-                evidenceHash,
-                evidenceId: evidence.id,
-                live: true,
-              },
-              evidenceHash,
-              evidenceId: evidence.id,
-              evidenceRef: evidence.evidenceRef,
-              liveProviderExecuted: true,
-              outcome: "completed",
-              pointsAwarded: task.points,
-              providerFamily: "aefinder",
-              retryable: false,
-              retryAfterMs: 0,
-              status: "completed",
-              verificationAttemptId: attemptId,
-            },
+          error: {
+            code: "PERSISTENCE_UNAVAILABLE",
+            details: { operation: "taskVerificationRuntime.activate" },
           },
+          ok: false,
         },
       });
-      expect(JSON.stringify(response.body)).not.toContain("evidence-hash:");
       expectNoForbiddenResponseKeys(response.body);
     }
-    const participantSession = issuedProjectOwnerSession(walletAddress);
-    issuedProjectOwnerSessions.set(participantSession.sessionId, participantSession);
-    const bridgedCompleted = await createParticipantJourneyApiBridge({
-      config: { baseUrl: "http://campaign-os-runtime.test" },
-      fetchImpl: createParticipantBridgeRuntimeFetch(runtime),
-    }).verifyTask(task.id, {
-      mode: "durable",
-      selectedCampaignId: campaign.id,
-      session: participantSession,
-    });
-    expect(bridgedCompleted).toMatchObject({
-      httpStatus: 200,
-      ok: true,
-      outcome: "completed",
-      status: "completed",
-      verification: {
-        attempt: { id: attemptId, status: "completed" },
-        completion: { id: completion.id },
-        evidence: { id: evidence.id },
-        repository: { mode: "postgres" },
-      },
-    });
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).not.toHaveBeenCalled();
+    expect(committed).toBe(false);
     expect(upsertTaskVerification).not.toHaveBeenCalled();
     await runtime.close();
   });
@@ -5428,6 +6084,15 @@ describe("Campaign OS API runtime", () => {
       walletName: "Portkey EOA Extension",
       walletSource: "PORTKEY_EOA_EXTENSION",
     });
+    const legacyIdentityValues = {
+      accountType: "EOA",
+      chainId: "AELF",
+      network: "mainnet",
+      role: "participant",
+      sessionId: headers["x-campaign-os-session-id"],
+      walletAddress,
+      walletSource: "PORTKEY_EOA_EXTENSION",
+    } as const;
     previewConfigReadCount = 0;
 
     const feed = await participantRuntime.handle({
@@ -5520,6 +6185,20 @@ describe("Campaign OS API runtime", () => {
       headers: { ...headers, "x-campaign-os-trace-id": "trace-participant-cross-campaign-task" },
       body: JSON.stringify({ campaignId: publicCampaign.id }),
     });
+    const matchingLegacyIdentityClaims = await Promise.all(
+      Object.entries(legacyIdentityValues).map(async ([field, value]) => ({
+        field,
+        response: await participantRuntime.handle({
+          method: "POST",
+          path: `/api/tasks/${task.id}/verify`,
+          headers: {
+            ...headers,
+            "x-campaign-os-trace-id": `trace-participant-legacy-${field}`,
+          },
+          body: JSON.stringify({ campaignId: previewCampaign.id, [field]: value }),
+        }),
+      })),
+    );
 
     expect(upsertTaskVerification).not.toHaveBeenCalled();
 
@@ -5592,16 +6271,22 @@ describe("Campaign OS API runtime", () => {
     });
     for (const rejected of [substitution, accountMismatch, sourceMismatch]) {
       expect(rejected).toMatchObject({
-        status: 403,
+        status: 400,
         body: {
           ok: false,
           error: {
-            code: "AUTH_SUBJECT_MISMATCH",
-            details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+            code: "INVALID_REQUEST",
           },
         },
       });
       expectNoForbiddenResponseKeys(rejected.body);
+    }
+    for (const { field, response } of matchingLegacyIdentityClaims) {
+      expect(response, field).toMatchObject({
+        status: 400,
+        body: { ok: false, error: { code: "INVALID_REQUEST" } },
+      });
+      expectNoForbiddenResponseKeys(response.body);
     }
     expect(internalCredential).toMatchObject({
       status: 403,
@@ -5612,12 +6297,11 @@ describe("Campaign OS API runtime", () => {
       body: { ok: false, error: { code: "INVALID_REQUEST" } },
     });
     expect(conflictingClaims).toMatchObject({
-      status: 403,
+      status: 400,
       body: {
         ok: false,
         error: {
-          code: "AUTH_SUBJECT_MISMATCH",
-          details: { diagnosticCode: "AUTH_SUBJECT_MISMATCH" },
+          code: "INVALID_REQUEST",
         },
       },
     });
@@ -5885,7 +6569,10 @@ describe("Campaign OS API runtime", () => {
     );
     issuedProjectOwnerSessions.set(participantSession.sessionId, participantSession);
     const bridgedFailure = await createParticipantJourneyApiBridge({
-      config: { baseUrl: "http://campaign-os-runtime.test" },
+      config: {
+        authorityMode: "deprecated_non_live_preview",
+        baseUrl: "http://127.0.0.1:5184",
+      },
       fetchImpl: createParticipantBridgeRuntimeFetch(unavailableReadRuntime),
     }).verifyTask(task.id, {
       mode: "durable",
@@ -6829,12 +7516,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
         "x-campaign-os-trace-id": "trace-campaign-db-completion-optional-verify",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4CompletionWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
     const optionalEligibility = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
@@ -6847,12 +7529,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
         "x-campaign-os-trace-id": "trace-campaign-db-completion-required-verify",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4CompletionWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
     const eligible = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
@@ -7000,12 +7677,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
         "x-campaign-os-trace-id": "trace-campaign-db-export-optional-verify",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4ExportWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
     const blockedPreview = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
@@ -7026,12 +7698,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
         "x-campaign-os-trace-id": "trace-campaign-db-export-required-verify",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4ExportWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
     const repeatedRequiredVerification = await runtimeWithCampaignDbRepository.handle({
       method: "POST",
@@ -7039,12 +7706,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4ExportWallet", {
         "x-campaign-os-trace-id": "trace-campaign-db-export-required-reverify",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4ExportWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
     const requiredEvidenceHash = sha256(
       `historical-on-chain:${requiredTaskPayload.campaignDbTask.taskId}`,
@@ -7393,12 +8055,7 @@ describe("Campaign OS API runtime", () => {
       method: "POST",
       path: "/api/tasks/missing-repository-task/verify",
       headers: eoaParticipantAuthHeaders("2F4CompletionWallet"),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4CompletionWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
 
     expect(missingTask.status).toBe(404);
@@ -7421,12 +8078,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4CompletionWallet", {
         "x-campaign-os-trace-id": "trace-campaign-db-missing-campaign-verify",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: missingCampaignId,
-        walletAddress: "2F4CompletionWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: missingCampaignId }),
     });
     const eligibility = await runtimeWithCampaignDbRepository.handle({
       method: "GET",
@@ -8017,12 +8669,7 @@ describe("Campaign OS API runtime", () => {
       method: "POST",
       path: `/api/tasks/${persistedTaskDraft.campaignDbTask.taskId}/verify`,
       headers: participantAuthHeaders("2F4...9aB"),
-      body: JSON.stringify({
-        accountType: "AA",
-        campaignId: persistedCampaignDraft.payload.id,
-        walletAddress: "2F4...9aB",
-        walletSource: "PORTKEY_AA",
-      }),
+      body: JSON.stringify({ campaignId: persistedCampaignDraft.payload.id }),
     });
     const i18nDraft = await runtimeWithPersistence.handle({
       method: "POST",
@@ -8349,6 +8996,7 @@ describe("Campaign OS API runtime", () => {
       mode: "durable_test",
     });
     const firstRuntime = createCampaignOsApiRuntimeBase({
+      deprecatedNonLivePreviewAuthority: createDeprecatedNonLivePreviewAuthorityOption(),
       walletSessionRepository: firstRepository,
     });
     let restartedRuntime: CampaignOsApiRuntime | undefined;
@@ -8368,6 +9016,7 @@ describe("Campaign OS API runtime", () => {
         mode: "durable_test",
       });
       restartedRuntime = createCampaignOsApiRuntimeBase({
+        deprecatedNonLivePreviewAuthority: createDeprecatedNonLivePreviewAuthorityOption(),
         walletSessionRepository: restartedRepository,
       });
       const staleAccessBeforeFreshIssuance = await restartedRuntime.handle({
@@ -8623,12 +9272,7 @@ describe("Campaign OS API runtime", () => {
         headers: participantAuthHeaders("2F4...9aB", {
           "x-campaign-os-trace-id": "trace-durable-verification",
         }),
-        body: JSON.stringify({
-          accountType: "AA",
-          campaignId: persistedCampaignDraft.payload.id,
-          walletAddress: "2F4...9aB",
-          walletSource: "PORTKEY_AA",
-        }),
+        body: JSON.stringify({ campaignId: persistedCampaignDraft.payload.id }),
       });
       const exportPreview = await firstRuntime.handle({
         method: "POST",
@@ -9028,12 +9672,7 @@ describe("Campaign OS API runtime", () => {
       headers: eoaParticipantAuthHeaders("2F4AuditWallet", {
         "x-campaign-os-trace-id": "trace-audit-verification-unavailable",
       }),
-      body: JSON.stringify({
-        accountType: "EOA",
-        campaignId: created.payload.id,
-        walletAddress: "2F4AuditWallet",
-        walletSource: "PORTKEY_EOA_EXTENSION",
-      }),
+      body: JSON.stringify({ campaignId: created.payload.id }),
     });
     const detail = await runtimeWithFailingAudit.handle({
       method: "GET",
@@ -9218,12 +9857,7 @@ describe("Campaign OS API runtime", () => {
       method: "POST",
       path: "/api/tasks/missing-task/verify",
       headers: participantAuthHeaders("2F4...9aB"),
-      body: JSON.stringify({
-        accountType: "AA",
-        campaignId: campaignDetail.id,
-        walletAddress: "2F4...9aB",
-        walletSource: "PORTKEY_AA",
-      }),
+      body: JSON.stringify({ campaignId: campaignDetail.id }),
     });
     const invalidCreate = await runtime.handle({
       method: "POST",
@@ -9377,28 +10011,22 @@ describe("Campaign OS API runtime", () => {
       },
     });
     expect(invalidWalletSource).toMatchObject({
-      status: 403,
+      status: 400,
       body: {
         ok: false,
         error: {
-          code: "AUTH_SUBJECT_MISMATCH",
-          details: {
-            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-            field: "walletSource",
-          },
+          code: "INVALID_REQUEST",
+          details: { field: "body" },
         },
       },
     });
     expect(invalidPersistedWalletSource).toMatchObject({
-      status: 403,
+      status: 400,
       body: {
         ok: false,
         error: {
-          code: "AUTH_SUBJECT_MISMATCH",
-          details: {
-            diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-            field: "walletSource",
-          },
+          code: "INVALID_REQUEST",
+          details: { field: "body" },
         },
       },
     });

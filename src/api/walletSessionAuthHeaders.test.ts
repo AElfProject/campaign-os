@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
 import {
+  createDeprecatedPreviewWalletSessionAuthHeaders,
   createWalletSessionAuthHeaders,
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  mergeDeprecatedPreviewWalletSessionAuthHeaders,
   mergeWalletSessionAuthHeaders,
   protectedWalletSessionAuthHeaderNames,
 } from "./walletSessionAuthHeaders";
@@ -47,9 +50,75 @@ const session = (
   ...overrides,
 });
 
+const createPreviewAuthHeaders = (
+  value: NormalizedWalletSession | unknown,
+  requestedRole: "participant" | "review_operator" = "participant",
+) => createDeprecatedPreviewWalletSessionAuthHeaders(
+  value,
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  requestedRole,
+);
+
+const mergePreviewAuthHeaders = (
+  authHeaders: Parameters<typeof mergeDeprecatedPreviewWalletSessionAuthHeaders>[0],
+  customHeaders?: HeadersInit,
+  additionalProtectedHeaderNames: readonly string[] = [],
+) => mergeDeprecatedPreviewWalletSessionAuthHeaders(
+  authHeaders,
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  customHeaders,
+  additionalProtectedHeaderNames,
+);
+
 describe("wallet session auth headers", () => {
+  it("fails closed through the legacy constructor instead of creating live credentials", () => {
+    expect(createWalletSessionAuthHeaders(session())).toEqual({
+      code: "WALLET_SESSION_AUTH_PREVIEW_CONFIGURATION_REQUIRED",
+      field: "previewConfiguration",
+      ok: false,
+    });
+  });
+
+  it("fails closed through the legacy merge boundary", () => {
+    const previewAuth = createPreviewAuthHeaders(session());
+    expect(previewAuth.ok).toBe(true);
+    if (!previewAuth.ok) {
+      throw new Error("Expected valid preview auth fixture");
+    }
+
+    expect(mergeWalletSessionAuthHeaders(previewAuth.headers)).toEqual({
+      code: "WALLET_SESSION_AUTH_PREVIEW_CONFIGURATION_REQUIRED",
+      field: "previewConfiguration",
+      ok: false,
+    });
+  });
+
+  it("rejects live or structurally copied configuration at the explicit preview boundary", () => {
+    const copiedPreviewConfiguration = {
+      ...deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+    };
+
+    for (const previewConfiguration of [
+      {
+        authorityMode: "durable_cookie_session",
+        liveCredential: true,
+        runtimeMode: "live",
+      },
+      copiedPreviewConfiguration,
+    ]) {
+      expect(createDeprecatedPreviewWalletSessionAuthHeaders(
+        session(),
+        previewConfiguration as never,
+      )).toEqual({
+        code: "WALLET_SESSION_AUTH_PREVIEW_CONFIGURATION_REQUIRED",
+        field: "previewConfiguration",
+        ok: false,
+      });
+    }
+  });
+
   it("derives all Participant authority headers and preserves Base58 case", () => {
-    const result = createWalletSessionAuthHeaders(session({
+    const result = createPreviewAuthHeaders(session({
       accountType: " EOA " as never,
       address: "  2F4xYZaB9mQCaseExact  ",
       sessionId: "  sess-participant-issued  ",
@@ -66,6 +135,8 @@ describe("wallet session auth headers", () => {
         "x-campaign-os-wallet-address": "2F4xYZaB9mQCaseExact",
         "x-campaign-os-wallet-source": "PORTKEY_EOA_EXTENSION",
       },
+      authorityMode: "deprecated_non_live_preview",
+      liveCredential: false,
       ok: true,
     });
     expect(result.ok && result.headers["x-campaign-os-wallet-address"])
@@ -73,21 +144,23 @@ describe("wallet session auth headers", () => {
   });
 
   it("requests the typed review operator role without changing issued identity", () => {
-    const result = createWalletSessionAuthHeaders(session(), "review_operator");
+    const result = createPreviewAuthHeaders(session(), "review_operator");
 
     expect(result).toMatchObject({
+      authorityMode: "deprecated_non_live_preview",
       headers: {
         "x-campaign-os-credential-boundary": "ordinary_user_wallet",
         "x-campaign-os-roles": "review_operator",
         "x-campaign-os-session-id": "sess-participant-issued",
         "x-campaign-os-wallet-address": "2F4xYZaB9mQCaseExact",
       },
+      liveCredential: false,
       ok: true,
     });
   });
 
   it("rejects an opaque requested role at runtime", () => {
-    const result = createWalletSessionAuthHeaders(
+    const result = createPreviewAuthHeaders(
       session(),
       "internal_operator" as never,
     );
@@ -100,7 +173,7 @@ describe("wallet session auth headers", () => {
   });
 
   it("prefers issued proof status and safely derives a missing proof status", () => {
-    const stale = createWalletSessionAuthHeaders(session({
+    const stale = createPreviewAuthHeaders(session({
       proof: {
         diagnosticCodes: [],
         liveVerificationExecuted: false,
@@ -110,7 +183,7 @@ describe("wallet session auth headers", () => {
       },
       verificationStatus: "verified",
     }));
-    const derived = createWalletSessionAuthHeaders(session({ proof: undefined }));
+    const derived = createPreviewAuthHeaders(session({ proof: undefined }));
 
     expect(stale.ok && stale.headers["x-campaign-os-proof-status"]).toBe("stale");
     expect(derived.ok && derived.headers["x-campaign-os-proof-status"]).toBe("verified");
@@ -120,7 +193,7 @@ describe("wallet session auth headers", () => {
     ["AGENT_SKILL source", { walletSource: "AGENT_SKILL" }],
     ["internal capability", { capabilities: ["SIGN_MESSAGE", "INTERNAL_AUTOMATION"] }],
   ])("keeps %s within the internal credential boundary", (_name, overrides) => {
-    const result = createWalletSessionAuthHeaders(session(overrides as Partial<NormalizedWalletSession>));
+    const result = createPreviewAuthHeaders(session(overrides as Partial<NormalizedWalletSession>));
 
     expect(result.ok && result.headers["x-campaign-os-credential-boundary"])
       .toBe("internal_agent_credential");
@@ -133,7 +206,7 @@ describe("wallet session auth headers", () => {
     ["session.accountType", { accountType: "ADMIN" }],
     ["session.walletSource", { walletSource: "INTERNAL_AUTOMATION" }],
   ])("returns a typed result for malformed %s", (field, overrides) => {
-    const result = createWalletSessionAuthHeaders(session(overrides as Partial<NormalizedWalletSession>));
+    const result = createPreviewAuthHeaders(session(overrides as Partial<NormalizedWalletSession>));
 
     expect(result).toEqual({
       code: "WALLET_SESSION_AUTH_INVALID",
@@ -146,7 +219,7 @@ describe("wallet session auth headers", () => {
     const cyclic: Record<string, unknown> = { sessionId: "secret-session" };
     cyclic.self = cyclic;
 
-    const result = createWalletSessionAuthHeaders(cyclic as never);
+    const result = createPreviewAuthHeaders(cyclic as never);
     const serialized = JSON.stringify(result).toLowerCase();
 
     expect(result).toMatchObject({ code: "WALLET_SESSION_AUTH_INVALID", ok: false });
@@ -154,7 +227,7 @@ describe("wallet session auth headers", () => {
   });
 
   it("rejects malformed proof metadata with only a safe field diagnostic", () => {
-    const result = createWalletSessionAuthHeaders(session({
+    const result = createPreviewAuthHeaders(session({
       proof: {
         diagnosticCodes: ["raw signature should not leak"],
         liveVerificationExecuted: false,
@@ -175,7 +248,7 @@ describe("wallet session auth headers", () => {
     ["missing", undefined],
     ["invalid", { ...session().issuer!, valid: false }],
   ])("rejects an %s issued-session boundary", (_name, issuer) => {
-    expect(createWalletSessionAuthHeaders(session({ issuer }))).toEqual({
+    expect(createPreviewAuthHeaders(session({ issuer }))).toEqual({
       code: "WALLET_SESSION_AUTH_INVALID",
       field: "session.issuer",
       ok: false,
@@ -220,7 +293,7 @@ describe("wallet session auth headers", () => {
       capabilities: ["SIGN_MESSAGE", "INTERNAL_AUTOMATION"],
     }, "session.credentialBoundary"],
   ])("rejects invalid Admin %s authority", (_name, overrides, field) => {
-    const result = createWalletSessionAuthHeaders(
+    const result = createPreviewAuthHeaders(
       session(overrides as Partial<NormalizedWalletSession>),
       "review_operator",
     );
@@ -233,18 +306,18 @@ describe("wallet session auth headers", () => {
   });
 
   it("rejects custom authority header collisions while merging safe transport headers", () => {
-    const auth = createWalletSessionAuthHeaders(session());
+    const auth = createPreviewAuthHeaders(session());
     expect(auth.ok).toBe(true);
     if (!auth.ok) {
       throw new Error("Expected valid auth fixture");
     }
 
-    const merged = mergeWalletSessionAuthHeaders(auth.headers, {
+    const merged = mergePreviewAuthHeaders(auth.headers, {
       accept: "application/json",
       "content-type": "application/json",
       "x-campaign-os-trace-id": "trace-participant",
     });
-    const conflict = mergeWalletSessionAuthHeaders(auth.headers, {
+    const conflict = mergePreviewAuthHeaders(auth.headers, {
       "X-Campaign-OS-Roles": "project_owner,admin",
     });
 
@@ -255,6 +328,8 @@ describe("wallet session auth headers", () => {
         "x-campaign-os-roles": "participant",
         "x-campaign-os-trace-id": "trace-participant",
       },
+      authorityMode: "deprecated_non_live_preview",
+      liveCredential: false,
       ok: true,
     });
     expect(conflict).toEqual({
@@ -266,13 +341,13 @@ describe("wallet session auth headers", () => {
   });
 
   it("allows callers to protect operation-specific transport authority", () => {
-    const auth = createWalletSessionAuthHeaders(session(), "review_operator");
+    const auth = createPreviewAuthHeaders(session(), "review_operator");
     expect(auth.ok).toBe(true);
     if (!auth.ok) {
       throw new Error("Expected valid auth fixture");
     }
 
-    const result = mergeWalletSessionAuthHeaders(
+    const result = mergePreviewAuthHeaders(
       auth.headers,
       {
         "x-campaign-os-idempotency-key": "external-command-key",
@@ -298,19 +373,28 @@ describe("wallet session auth headers", () => {
     ["X-Campaign-OS-Credential-Boundary", "ordinary_user_wallet", "x-campaign-os-credential-boundary", []],
     ["Authorization", "Bearer secret", "authorization", []],
     ["Cookie", "session=secret", "cookie", []],
+    ["X-Account-Type", "EOA", "x-account-type", []],
+    ["X-Auth-Session-ID", "spoofed-session", "x-auth-session-id", []],
+    ["X-Capabilities", "task:verify", "x-capabilities", []],
+    ["X-Capability", "task:verify", "x-capability", []],
+    ["X-Chain-ID", "AELF", "x-chain-id", []],
+    ["X-Network", "mainnet", "x-network", []],
+    ["X-Role", "review_operator", "x-role", []],
+    ["X-Roles", "review_operator", "x-roles", []],
+    ["X-Session-ID", "spoofed-session", "x-session-id", []],
     ["X-Campaign-OS-Trace-ID", "spoofed-trace", "x-campaign-os-trace-id", ["x-campaign-os-trace-id"]],
     ["Idempotency-Key", "spoofed-command", "idempotency-key", ["idempotency-key"]],
     ["X-Campaign-OS-Idempotency-Key", "spoofed-command", "x-campaign-os-idempotency-key", ["x-campaign-os-idempotency-key"]],
   ])(
     "rejects a case-insensitive custom %s authority collision",
     (name, value, field, additionalProtectedHeaderNames) => {
-      const auth = createWalletSessionAuthHeaders(session(), "review_operator");
+      const auth = createPreviewAuthHeaders(session(), "review_operator");
       expect(auth.ok).toBe(true);
       if (!auth.ok) {
         throw new Error("Expected valid auth fixture");
       }
 
-      expect(mergeWalletSessionAuthHeaders(
+      expect(mergePreviewAuthHeaders(
         auth.headers,
         { [name as string]: value as string },
         additionalProtectedHeaderNames as string[],

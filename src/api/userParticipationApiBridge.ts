@@ -5,6 +5,12 @@ import type {
   TaskVerificationStatus,
   WalletSource,
 } from "../domain/types";
+import {
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  isCallerControlledWalletAuthorityHeaderName,
+  mergeDeprecatedPreviewWalletSessionAuthHeaders,
+  type DeprecatedPreviewWalletSessionAuthHeaders,
+} from "./walletSessionAuthHeaders";
 
 export type UserParticipationApiSource =
   | "api_runtime"
@@ -26,6 +32,8 @@ export interface UserParticipationApiDiagnostic {
     | "API_BASE_URL_MISSING"
     | "API_DURABLE_FACADE_REQUIRED"
     | "API_ELIGIBILITY_FAILED"
+    | "API_PREVIEW_AUTHORITY_CONFLICT"
+    | "API_PREVIEW_AUTHORITY_REQUIRED"
     | "API_REQUEST_FAILED"
     | "API_REQUEST_TIMEOUT"
     | "API_RESPONSE_INVALID"
@@ -36,9 +44,13 @@ export interface UserParticipationApiDiagnostic {
 }
 
 export interface UserParticipationApiConfig {
+  /** @deprecated Explicit opt-in for disposable loopback preview runtimes only. */
+  authorityMode?: "deprecated_non_live_preview";
   baseUrl?: string;
   headers?: Record<string, string>;
   mode?: "durable" | "seeded_preview";
+  /** @deprecated Must be produced by the wallet-session preview auth helper. */
+  previewAuthHeaders?: DeprecatedPreviewWalletSessionAuthHeaders;
   timeoutMs?: number;
   tracePrefix?: string;
 }
@@ -138,6 +150,7 @@ interface NormalizedConfig {
   headers: Record<string, string>;
   mode: "durable" | "seeded_preview";
   normalizedTracePrefix: string;
+  previewAuthorityEnabled: boolean;
   timeoutMs: number;
 }
 
@@ -156,9 +169,17 @@ interface FetchJsonResult {
   traceId?: string;
 }
 
+interface TaskVerificationRequestBody {
+  campaignId: string;
+}
+
 const defaultTimeoutMs = 2_000;
 const minTimeoutMs = 250;
 const maxTimeoutMs = 8_000;
+
+const taskVerificationRequestBody = (campaignId: string): TaskVerificationRequestBody => ({
+  campaignId,
+});
 
 export const userParticipationApiBoundary: LocalizedText = {
   "en-US":
@@ -189,6 +210,16 @@ const diagnosticMessages: Record<UserParticipationApiDiagnostic["code"], Localiz
     "en-US": "Task verification completed, but the local eligibility refresh did not return a usable result.",
     "zh-CN": "任务验证已完成，但本地资格刷新未返回可用结果。",
     "zh-TW": "任務驗證已完成，但本地資格刷新未回傳可用結果。",
+  },
+  API_PREVIEW_AUTHORITY_CONFLICT: {
+    "en-US": "Caller-controlled authority headers are not accepted by the participation preview bridge.",
+    "zh-CN": "参与 preview bridge 不接受调用方直接配置 authority headers。",
+    "zh-TW": "參與 preview bridge 不接受呼叫方直接設定 authority headers。",
+  },
+  API_PREVIEW_AUTHORITY_REQUIRED: {
+    "en-US": "Participation preview authority requires explicit deprecated non-live mode on a loopback runtime.",
+    "zh-CN": "参与 preview authority 仅允许在显式 deprecated non-live 模式的 loopback runtime 中使用。",
+    "zh-TW": "參與 preview authority 僅允許在明確 deprecated non-live 模式的 loopback runtime 中使用。",
   },
   API_REQUEST_FAILED: {
     "en-US": "The local participation API request failed.",
@@ -315,31 +346,90 @@ const normalizeTracePrefix = (tracePrefix: string | undefined) => {
   return sanitized || "user-participation-review";
 };
 
-const normalizeHeaders = (headers: Record<string, string> | undefined) =>
-  Object.fromEntries(
-    Object.entries(headers ?? {})
-      .filter(([key, value]) => key.trim() && value.trim())
-      .map(([key, value]) => [
-        sanitizeUserParticipationApiText(key).toLowerCase(),
-        sanitizeUserParticipationApiText(value),
-      ]),
-  );
+interface NormalizedHeaderResult {
+  conflictField?: string;
+  headers: Record<string, string>;
+  invalidField?: string;
+}
+
+const normalizeHeaders = (headers: Record<string, string> | undefined): NormalizedHeaderResult => {
+  try {
+    const normalized = new Headers(headers);
+    const result: Record<string, string> = {};
+    let conflictField: string | undefined;
+
+    normalized.forEach((rawValue, rawName) => {
+      const name = rawName.trim().toLowerCase();
+
+      if (!conflictField && isCallerControlledWalletAuthorityHeaderName(name)) {
+        conflictField = name;
+        return;
+      }
+
+      if (name && rawValue.trim()) {
+        result[sanitizeUserParticipationApiText(name).toLowerCase()] =
+          sanitizeUserParticipationApiText(rawValue);
+      }
+    });
+
+    return {
+      ...(conflictField ? { conflictField } : {}),
+      headers: result,
+    };
+  } catch {
+    return { headers: {}, invalidField: "headers" };
+  }
+};
 
 const normalizeConfig = (config: UserParticipationApiConfig | undefined): NormalizedConfig => {
   const timeoutMs = clampTimeout(config?.timeoutMs);
   const normalizedTracePrefix = normalizeTracePrefix(config?.tracePrefix);
-  const headers = normalizeHeaders(config?.headers);
-  const mode = config?.mode === "seeded_preview" ? "seeded_preview" : "durable";
+  const normalizedHeaders = normalizeHeaders(config?.headers);
+  let headers = normalizedHeaders.headers;
+  const mode: NormalizedConfig["mode"] =
+    config?.mode === "seeded_preview" ? "seeded_preview" : "durable";
   const rawBaseUrl = config?.baseUrl?.trim();
+  const explicitPreview = config?.authorityMode === "deprecated_non_live_preview";
+
+  const baseConfig = {
+    headers,
+    mode,
+    normalizedTracePrefix,
+    previewAuthorityEnabled: false,
+    timeoutMs,
+  };
+
+  if (mode === "seeded_preview" && normalizedHeaders.conflictField) {
+    return {
+      ...baseConfig,
+      configured: Boolean(rawBaseUrl),
+      diagnostic: diagnostic("API_PREVIEW_AUTHORITY_CONFLICT", "error", {
+        field: normalizedHeaders.conflictField,
+        reason: "caller_authority_header_rejected",
+      }),
+    };
+  }
+
+  if (mode === "seeded_preview" && normalizedHeaders.invalidField) {
+    return {
+      ...baseConfig,
+      configured: Boolean(rawBaseUrl),
+      diagnostic: diagnostic("API_PREVIEW_AUTHORITY_CONFLICT", "error", {
+        field: normalizedHeaders.invalidField,
+        reason: "headers_invalid",
+      }),
+    };
+  }
 
   if (!rawBaseUrl) {
     return {
+      ...baseConfig,
       configured: false,
-      diagnostic: diagnostic("API_BASE_URL_MISSING", "info"),
-      headers,
-      mode,
-      normalizedTracePrefix,
-      timeoutMs,
+      diagnostic: explicitPreview
+        ? diagnostic("API_BASE_URL_MISSING", "info")
+        : diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error", {
+          reason: "explicit_preview_opt_in_required",
+        }),
     };
   }
 
@@ -348,24 +438,74 @@ const normalizeConfig = (config: UserParticipationApiConfig | undefined): Normal
 
     if (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") {
       return {
+        ...baseConfig,
         configured: true,
         diagnostic: diagnostic("API_BASE_URL_INVALID", "warning", { protocol: baseUrl.protocol }),
-        headers,
-        mode,
-        normalizedTracePrefix,
-        timeoutMs,
       };
     }
 
-    return { baseUrl, configured: true, headers, mode, normalizedTracePrefix, timeoutMs };
-  } catch (error) {
+    if (baseUrl.username !== "" || baseUrl.password !== "") {
+      return {
+        ...baseConfig,
+        configured: true,
+        diagnostic: diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error", {
+          reason: "credentialed_url_rejected",
+        }),
+      };
+    }
+
+    const loopbackHost = baseUrl.hostname === "localhost"
+      || baseUrl.hostname === "127.0.0.1"
+      || baseUrl.hostname === "[::1]"
+      || baseUrl.hostname === "::1";
+
+    if (!explicitPreview || !loopbackHost) {
+      return {
+        ...baseConfig,
+        baseUrl,
+        configured: true,
+        diagnostic: diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error", {
+          reason: explicitPreview ? "loopback_runtime_required" : "explicit_preview_opt_in_required",
+        }),
+      };
+    }
+
+    if (config?.previewAuthHeaders) {
+      const merged = mergeDeprecatedPreviewWalletSessionAuthHeaders(
+        config.previewAuthHeaders,
+        deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+        headers,
+      );
+
+      if (!merged.ok) {
+        return {
+          ...baseConfig,
+          baseUrl,
+          configured: true,
+          diagnostic: diagnostic("API_PREVIEW_AUTHORITY_CONFLICT", "error", {
+            field: merged.field,
+            reason: merged.code,
+          }),
+        };
+      }
+
+      headers = { ...merged.headers };
+    }
+
     return {
+      baseUrl,
       configured: true,
-      diagnostic: diagnostic("API_BASE_URL_INVALID", "warning", { error }),
       headers,
       mode,
       normalizedTracePrefix,
+      previewAuthorityEnabled: true,
       timeoutMs,
+    };
+  } catch (error) {
+    return {
+      ...baseConfig,
+      configured: true,
+      diagnostic: diagnostic("API_BASE_URL_INVALID", "warning", { error }),
     };
   }
 };
@@ -812,13 +952,27 @@ export const submitUserParticipationApiReview = async ({
 
   if (!normalizedConfig.baseUrl) {
     const seededPreview = normalizedConfig.mode === "seeded_preview";
+    const previewConfigurationRejected = seededPreview
+      && normalizedConfig.diagnostic?.severity === "error";
 
     return fallbackState(
       request,
       normalizedConfig,
-      seededPreview ? "seeded_fallback" : "api_runtime",
-      seededPreview ? "fallback" : "error",
+      previewConfigurationRejected
+        ? "error_fallback"
+        : seededPreview ? "seeded_fallback" : "api_runtime",
+      previewConfigurationRejected ? "error" : seededPreview ? "fallback" : "error",
       [normalizedConfig.diagnostic ?? diagnostic("API_BASE_URL_MISSING", "info")],
+    );
+  }
+
+  if (!normalizedConfig.previewAuthorityEnabled) {
+    return fallbackState(
+      request,
+      normalizedConfig,
+      "error_fallback",
+      "error",
+      [normalizedConfig.diagnostic ?? diagnostic("API_PREVIEW_AUTHORITY_REQUIRED", "error")],
     );
   }
 
@@ -829,12 +983,7 @@ export const submitUserParticipationApiReview = async ({
     endpointUrl(normalizedConfig.baseUrl, verifyEndpoint),
     verifyEndpoint,
     {
-      body: JSON.stringify({
-        accountType: request.accountType,
-        campaignId: request.campaignId,
-        walletAddress: request.walletAddress,
-        walletSource: request.walletSource,
-      }),
+      body: JSON.stringify(taskVerificationRequestBody(request.campaignId)),
       headers: requestHeaders(normalizedConfig, true, verifyTraceId),
       method: "POST",
     },

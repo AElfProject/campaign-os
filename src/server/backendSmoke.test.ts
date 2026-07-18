@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
-import { createCampaignOsApiRuntime } from "./apiRuntime";
+import {
+  createCampaignOsApiRuntime,
+  createDeprecatedNonLivePreviewAuthorityOption,
+} from "./apiRuntime";
 import { createBackendServiceReadinessReport } from "./backendService";
 import type { ApiRuntimeEnvelope } from "./envelope";
 import { startCampaignOsApiServer } from "./server";
@@ -175,6 +178,7 @@ const startTestDurableCampaignServer = async (
       durableStoreFilePath,
       mode: "durable_test",
     },
+    deprecatedNonLivePreviewAuthority: createDeprecatedNonLivePreviewAuthorityOption(),
   });
   const server: Server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -883,7 +887,11 @@ describe("backend scaffold HTTP smoke", () => {
   });
 
   it("creates and reads Campaign DB drafts through HTTP without external services", async () => {
-    const server = await startCampaignOsApiServer({ logger: false, port: 0 });
+    const server = await startCampaignOsApiServer({
+      deprecatedNonLivePreviewAuthority: createDeprecatedNonLivePreviewAuthorityOption(),
+      logger: false,
+      port: 0,
+    });
 
     try {
       const ownerSession = await issueWalletSession(

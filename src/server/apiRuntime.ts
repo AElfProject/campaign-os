@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -80,12 +81,20 @@ import {
 import {
   evaluateAdminOperatorEnforcement,
   evaluateIssuedAuthEnforcement,
+  evaluateTrustedLiveAuthorization,
   getAdminOperatorRoutePolicy,
   type AuthorizedAdminOperatorContext,
   type AuthEnforcementDecision,
   type ParticipantCompatibilitySubject,
+  type TrustedLiveAuthorizationDecision,
 } from "./authEnforcement";
-import { getProtectedRouteAuth } from "./authSession";
+import {
+  getProtectedRouteAuth,
+  resolveTrustedLiveAuthorizationContext,
+  unwrapLiveAuthorizationFence,
+  type LiveAuthorizationFence,
+  type TrustedLiveAuthorizationContext,
+} from "./authSession";
 import {
   createAdminOperatorMembershipRegistry,
   type AdminOperatorMembershipRegistry,
@@ -98,8 +107,12 @@ import {
 import {
   createAdminFailureEnvelope,
   isAdminRequestTarget,
+  parseJsonWithUniqueObjectKeys,
   type AdminApiFailureEnvelope,
 } from "./serverRequestGuard";
+import type {
+  WalletAuthenticationHttpController,
+} from "./walletAuthenticationHttp";
 import {
   createPostgresAdminReviewStore,
   type PostgresAdminReviewStorePool,
@@ -132,6 +145,15 @@ import {
 } from "./taskVerificationRuntime";
 import type { ProviderHttpRuntimeSummary } from "./providerHttpRuntimeTypes";
 import type { ProviderHttpTransport } from "./providerHttpTransport";
+import type {
+  FinalizeTaskVerificationAttemptResult,
+  TaskVerificationAttemptStore,
+} from "./taskVerificationAttemptStore";
+import type {
+  RevalidateWalletAuthenticationFenceResult,
+  ResolveWalletAuthenticationAuthorizationResult,
+  WalletAuthenticationRuntime,
+} from "./walletAuthenticationRuntime";
 
 export type ApiRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 
@@ -193,6 +215,8 @@ export interface ApiRuntimeHandlerContext {
   adminOperator?: AuthorizedAdminOperatorContext;
   adminReviewStore?: AdminReviewStore;
   auth?: AuthEnforcementDecision;
+  liveAuthorization?: TrustedLiveAuthorizationContext;
+  liveAuthorizationDecision?: TrustedLiveAuthorizationDecision;
 }
 
 export type ApiRuntimeHandler = (context: ApiRuntimeHandlerContext) => unknown | Promise<unknown>;
@@ -207,6 +231,23 @@ export interface CampaignOsApiRuntime {
   handle(request: ApiRuntimeRequest): Promise<ApiRuntimeResponse>;
 }
 
+const deprecatedNonLivePreviewAuthorityBrand: unique symbol = Symbol(
+  "campaign-os.deprecated-non-live-preview-authority",
+);
+
+export interface DeprecatedNonLivePreviewAuthorityOption {
+  readonly mode: "deprecated_non_live_preview";
+  readonly [deprecatedNonLivePreviewAuthorityBrand]: true;
+}
+
+const deprecatedNonLivePreviewAuthorityOption = Object.freeze({
+  mode: "deprecated_non_live_preview" as const,
+  [deprecatedNonLivePreviewAuthorityBrand]: true as const,
+});
+
+export const createDeprecatedNonLivePreviewAuthorityOption =
+(): DeprecatedNonLivePreviewAuthorityOption => deprecatedNonLivePreviewAuthorityOption;
+
 export const TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION =
   "0004_live_provider_task_verification";
 
@@ -214,10 +255,18 @@ export type TaskVerificationRuntimePort = Pick<
   TaskVerificationRuntime,
   "close" | "execute" | "state"
 >;
-export type TaskVerificationRuntimeFactory = () => TaskVerificationRuntimePort;
+export type TaskVerificationRuntimeFactory = (
+  attemptStore?: TaskVerificationAttemptStore,
+) => TaskVerificationRuntimePort;
+
+export type WalletAuthenticationAuthorityRuntime = Pick<
+  WalletAuthenticationRuntime,
+  "resolveAuthorization" | "revalidateFenceBeforeWrite" | "state" | "stop"
+>;
 
 export interface ProtectedTaskVerificationExecuteInput {
   issuedSubject: IssuedTaskVerificationSubjectInput;
+  liveAuthorization?: TrustedLiveAuthorizationContext;
   task: CanonicalTaskVerificationRevision;
   traceId: string;
 }
@@ -423,8 +472,57 @@ const hasRequiredTaskVerificationSchema = (
     TASK_VERIFICATION_REQUIRED_SCHEMA_VERSION,
   ) === true;
 
+interface TaskVerificationAuthorizationScope {
+  readonly fence: LiveAuthorizationFence;
+}
+
+const staleTaskVerificationFinalization = async (
+  store: TaskVerificationAttemptStore,
+  input: Parameters<TaskVerificationAttemptStore["finalize"]>[0],
+): Promise<FinalizeTaskVerificationAttemptResult> => {
+  const attempt = await store.get(input.owner.attemptId, { traceId: input.traceId });
+
+  if (!attempt) {
+    throw new Error("Task verification attempt is unavailable after authorization changed.");
+  }
+
+  return Object.freeze({ attempt, kind: "stale_owner" as const });
+};
+
+const createAuthorizationFencedTaskVerificationAttemptStore = (
+  store: TaskVerificationAttemptStore,
+  authorizationRuntime: WalletAuthenticationAuthorityRuntime,
+  authorizationScope: AsyncLocalStorage<TaskVerificationAuthorizationScope>,
+): TaskVerificationAttemptStore => ({
+  begin: (input) => store.begin(input),
+  close: () => store.close(),
+  finalize: async (input) => {
+    const activeAuthorization = authorizationScope.getStore();
+
+    if (!activeAuthorization) {
+      return store.finalize(input);
+    }
+
+    const result = await authorizationRuntime.revalidateFenceBeforeWrite({
+      fence: unwrapLiveAuthorizationFence(activeAuthorization.fence),
+      traceId: input.traceId,
+      write: () => store.finalize(input),
+    });
+
+    return result.status === "committed"
+      ? result.value
+      : staleTaskVerificationFinalization(store, input);
+  },
+  get: (attemptId, context) => store.get(attemptId, context),
+  markTransportStarted: (input) => store.markTransportStarted(input),
+});
+
 const createProtectedTaskVerificationRuntime = (options: {
+  authorizationRuntime?: WalletAuthenticationAuthorityRuntime;
+  authorizationScope: AsyncLocalStorage<TaskVerificationAuthorizationScope>;
   config: TaskVerificationConfig;
+  fenceAwareRuntimeComposition: boolean;
+  fencedAttemptStore?: TaskVerificationAttemptStore;
   repository: CampaignDbRepository;
   runtimeFactory?: TaskVerificationRuntimeFactory;
   safeRepository: CampaignDbRepository;
@@ -434,7 +532,8 @@ const createProtectedTaskVerificationRuntime = (options: {
   let activeRuntime = options.runtime;
   let infrastructureReadiness: Promise<boolean> | undefined;
   let observedSchemaStatus: TaskVerificationRuntimeReadiness["schemaStatus"] = "unchecked";
-  const runtimeConfigured = () => Boolean(activeRuntime || options.runtimeFactory);
+  const runtimeConfigured = () => options.fenceAwareRuntimeComposition
+    && Boolean(activeRuntime || options.runtimeFactory);
   const observeSchema = (health: CampaignDbRepositoryHealth): boolean => {
     const ready = hasRequiredTaskVerificationSchema(health);
     observedSchemaStatus = ready ? "ready" : "blocked";
@@ -446,7 +545,7 @@ const createProtectedTaskVerificationRuntime = (options: {
       || !options.config.enabled
       || !options.config.valid
       || !options.config.hasLiveBindings
-      || (!activeRuntime && !options.runtimeFactory)
+      || !runtimeConfigured()
       || !hasTaskVerificationAttemptStore(options.repository)
     ) {
       return Promise.resolve(false);
@@ -499,7 +598,7 @@ const createProtectedTaskVerificationRuntime = (options: {
       }
 
       try {
-        activeRuntime ??= options.runtimeFactory?.();
+        activeRuntime ??= options.runtimeFactory?.(options.fencedAttemptStore);
         if (!activeRuntime) {
           return blockedTaskVerificationResult(input.traceId);
         }
@@ -515,11 +614,17 @@ const createProtectedTaskVerificationRuntime = (options: {
           }),
         );
 
-        const result = await activeRuntime.execute({
+        const execute = () => activeRuntime!.execute({
           identity,
           task: input.task,
           traceId: input.traceId,
         } satisfies ExecuteTaskVerificationRuntimeInput);
+        const result = input.liveAuthorization && options.authorizationRuntime
+          ? await options.authorizationScope.run(
+            { fence: input.liveAuthorization.fence },
+            execute,
+          )
+          : await execute();
 
         return projectProtectedTaskVerificationResult(
           result,
@@ -693,6 +798,7 @@ export interface CreateCampaignOsApiRuntimeOptions {
   campaignDbRepository?: CampaignDbRepository;
   campaignDbRepositoryOptions?: CreateCampaignDbRepositoryOptions;
   closeDeadlineMs?: number;
+  deprecatedNonLivePreviewAuthority?: DeprecatedNonLivePreviewAuthorityOption;
   exportArtifactRegistry?: ExportArtifactRegistry;
   logger?: Pick<Console, "error"> | false;
   participantPreviewConfigOptions?: CampaignOsParticipantPreviewConfigOptions;
@@ -708,6 +814,9 @@ export interface CreateCampaignOsApiRuntimeOptions {
   taskVerificationRuntimeFactory?: TaskVerificationRuntimeFactory;
   taskVerificationTransport?: ProviderHttpTransport;
   version?: string;
+  walletAuthenticationHttpController?: WalletAuthenticationHttpController;
+  walletAuthenticationRuntime?: WalletAuthenticationAuthorityRuntime;
+  walletAuthenticationRuntimeOwnership?: "external" | "runtime";
   walletSessionActivationPolicy?: WalletSessionActivationPolicy;
   walletSessionRepository?: WalletSessionRepository;
   walletSessionRepositoryOptions?: CreateWalletSessionRepositoryOptions;
@@ -927,7 +1036,11 @@ const parseRequestTarget = (path: string) => {
   };
 };
 
-const parseBody = (request: ApiRuntimeRequest, method: string) => {
+const parseBody = (
+  request: ApiRuntimeRequest,
+  method: string,
+  rejectDuplicateObjectKeys = false,
+) => {
   if (method !== "POST") {
     return undefined;
   }
@@ -938,6 +1051,19 @@ const parseBody = (request: ApiRuntimeRequest, method: string) => {
 
   if (typeof request.body !== "string") {
     return request.body;
+  }
+
+  if (rejectDuplicateObjectKeys) {
+    const parsed = parseJsonWithUniqueObjectKeys(request.body);
+    if (parsed.ok) {
+      return parsed.value;
+    }
+    try {
+      JSON.parse(request.body);
+    } catch {
+      throw malformedJson();
+    }
+    throw invalidRequest("body", "Duplicate JSON object keys are not allowed.");
   }
 
   try {
@@ -1039,7 +1165,6 @@ const ownerAddressFromBody = (body: unknown) =>
   isRecord(body) && typeof body.ownerAddress === "string" ? body.ownerAddress : undefined;
 
 const participantCompatibilityRouteIds = new Set([
-  "tasks.verify",
   "campaigns.eligibility",
   "campaigns.points.ranking.ledger.runtime",
 ]);
@@ -1265,6 +1390,113 @@ const authErrorFromDecision = (decision: AuthEnforcementDecision) => {
   return authForbidden(details);
 };
 
+const liveAuthRuntimeError = (
+  status: number,
+  diagnosticCode: string,
+  field = "authorization",
+) => new ApiRuntimeError({
+  code: status === 403 ? "AUTH_FORBIDDEN" : "AUTH_SESSION_INVALID",
+  details: { diagnosticCode, field },
+  message: {
+    "en-US": "The durable wallet authorization is not valid for this request.",
+    "zh-CN": "当前 durable wallet authorization 不适用于该请求。",
+    "zh-TW": "The durable wallet authorization is not valid for this request.",
+  },
+  status,
+});
+
+const rawHeader = (
+  headers: ApiRuntimeHeaders | undefined,
+  name: string,
+): string | readonly string[] | undefined => {
+  if (!headers) {
+    return undefined;
+  }
+
+  const normalizedName = name.toLowerCase();
+  return Object.entries(headers).find(([key]) => key.toLowerCase() === normalizedName)?.[1];
+};
+
+const singleHeader = (
+  headers: ApiRuntimeHeaders | undefined,
+  name: string,
+): string | undefined => {
+  const value = rawHeader(headers, name);
+
+  return typeof value === "string" ? value : undefined;
+};
+
+const resolveLiveAuthorization = async ({
+  request,
+  runtime,
+  traceId,
+}: {
+  request: ApiRuntimeRequest;
+  runtime: WalletAuthenticationAuthorityRuntime;
+  traceId: string;
+}): Promise<TrustedLiveAuthorizationContext> => {
+  let authorization: ResolveWalletAuthenticationAuthorizationResult;
+
+  try {
+    authorization = await runtime.resolveAuthorization({
+      cookieHeader: singleHeader(request.headers, "cookie"),
+      csrfHeader: rawHeader(request.headers, "x-campaign-os-csrf"),
+      origin: singleHeader(request.headers, "origin"),
+      traceId,
+    });
+  } catch {
+    throw persistenceUnavailable("walletAuthentication.resolveAuthorization");
+  }
+
+  if (authorization.status !== "authorized") {
+    const diagnosticCode = authorization.diagnostic.code;
+
+    if (authorization.status === "unavailable") {
+      throw persistenceUnavailable(`walletAuthentication.${diagnosticCode}`);
+    }
+    if (authorization.status === "forbidden") {
+      throw liveAuthRuntimeError(403, diagnosticCode, authorization.diagnostic.field);
+    }
+    if (authorization.status === "conflict") {
+      throw liveAuthRuntimeError(409, diagnosticCode, authorization.diagnostic.field);
+    }
+
+    throw liveAuthRuntimeError(401, diagnosticCode, authorization.diagnostic.field);
+  }
+
+  const trusted = resolveTrustedLiveAuthorizationContext(authorization, { now: new Date() });
+  if (trusted.status !== "resolved") {
+    throw liveAuthRuntimeError(401, "LIVE_AUTH_CONTEXT_INVALID");
+  }
+
+  return trusted.context;
+};
+
+const liveAuthErrorFromDecision = (decision: TrustedLiveAuthorizationDecision) =>
+  liveAuthRuntimeError(
+    decision.httpStatus ?? 403,
+    decision.audit.decisionCode,
+  );
+
+const exactTaskVerificationCampaignId = (body: unknown): string => {
+  if (!isRecord(body)) {
+    throw invalidRequest("body", "Task verification requires an exact JSON object.");
+  }
+  const keys = Object.keys(body);
+  const campaignId = body.campaignId;
+  if (
+    keys.length !== 1
+    || keys[0] !== "campaignId"
+    || typeof campaignId !== "string"
+    || campaignId.length === 0
+    || campaignId.length > 160
+  ) {
+    throw invalidRequest("body", "Task verification accepts only a bounded campaignId.");
+  }
+
+  return campaignId;
+};
+
 const ownerAddressFromCampaignDb = async ({
   campaignDbRepository,
   campaignId,
@@ -1281,6 +1513,46 @@ const ownerAddressFromCampaignDb = async ({
   const campaign = await campaignDbRepository.getById(campaignId, { traceId });
 
   return campaign?.ownerAddress;
+};
+
+const createLiveAdminOperatorContext = ({
+  campaignId,
+  context,
+  decision,
+  registry,
+}: {
+  campaignId?: string;
+  context: TrustedLiveAuthorizationContext;
+  decision: TrustedLiveAuthorizationDecision;
+  registry: AdminOperatorMembershipRegistry;
+}): AuthorizedAdminOperatorContext | undefined => {
+  const requestedRole = decision.matchedRoles.find(
+    (role): role is "internal_operator" | "review_operator" =>
+      role === "internal_operator" || role === "review_operator",
+  );
+  if (!requestedRole) {
+    return undefined;
+  }
+  const membership = registry.lookup({
+    campaignId,
+    requestedRole,
+    subjectAddress: context.subject.walletAddress,
+  });
+  if (!membership.authorized) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    ...membership.context,
+    accountType: context.subject.accountType,
+    chainId: context.subject.chainId,
+    credentialBoundary: "ordinary_user_wallet" as const,
+    issuerMode: "local_opaque" as const,
+    network: context.subject.network,
+    proofStatus: "verified" as const,
+    sessionId: context.sessionId,
+    walletSource: context.subject.walletSource,
+  });
 };
 
 const createHealthDatabaseReadinessMetadata = (
@@ -1861,6 +2133,7 @@ export const createCampaignOsApiRuntime = ({
   campaignDbRepository,
   campaignDbRepositoryOptions,
   closeDeadlineMs,
+  deprecatedNonLivePreviewAuthority,
   exportArtifactRegistry = createExportArtifactRegistry(),
   logger = console,
   participantPreviewConfigOptions,
@@ -1876,11 +2149,17 @@ export const createCampaignOsApiRuntime = ({
   taskVerificationRuntimeFactory,
   taskVerificationTransport,
   version,
+  walletAuthenticationHttpController,
+  walletAuthenticationRuntime,
+  walletAuthenticationRuntimeOwnership = "runtime",
   walletSessionActivationPolicy = "runtime_issued_only",
   walletSessionRepository,
   walletSessionRepositoryOptions,
 }: CreateCampaignOsApiRuntimeOptions = {}): CampaignOsApiRuntime => {
   const runtimeCloseDeadlineMs = resolveCloseDeadlineMs(closeDeadlineMs);
+  const deprecatedNonLivePreviewAuthorityEnabled =
+    !walletAuthenticationRuntime
+    && deprecatedNonLivePreviewAuthority === deprecatedNonLivePreviewAuthorityOption;
   let configError: unknown;
   const resolvedConfig = (() => {
     if (runtimeConfig) {
@@ -1982,13 +2261,23 @@ export const createCampaignOsApiRuntime = ({
       }),
       providerHttpTransportProvided: taskVerificationCompositionProvided,
     });
+  const taskVerificationAuthorizationScope =
+    new AsyncLocalStorage<TaskVerificationAuthorizationScope>();
+  const fencedTaskVerificationAttemptStore = walletAuthenticationRuntime
+    && composedCampaignDbRepository.taskVerificationAttempts
+      ? createAuthorizationFencedTaskVerificationAttemptStore(
+        composedCampaignDbRepository.taskVerificationAttempts,
+        walletAuthenticationRuntime,
+        taskVerificationAuthorizationScope,
+      )
+      : composedCampaignDbRepository.taskVerificationAttempts;
   const composedTaskVerificationRuntimeFactory = taskVerificationRuntimeFactory
     ?? (
       !taskVerificationRuntime
       && taskVerificationTransport
-      && composedCampaignDbRepository.taskVerificationAttempts
-        ? () => createTaskVerificationRuntime({
-          attemptStore: composedCampaignDbRepository.taskVerificationAttempts!,
+      && fencedTaskVerificationAttemptStore
+        ? (attemptStore = fencedTaskVerificationAttemptStore) => createTaskVerificationRuntime({
+          attemptStore,
           config: resolvedTaskVerificationConfig,
           finalizationWriteFactory: createTaskVerificationFinalizationWrite,
           ...(taskVerificationProviderRuntime
@@ -1998,19 +2287,32 @@ export const createCampaignOsApiRuntime = ({
         })
         : undefined
     );
+  const fenceAwareTaskVerificationComposition = Boolean(
+    walletAuthenticationRuntime
+    && !taskVerificationRuntime
+    && !taskVerificationRuntimeFactory
+    && taskVerificationTransport
+    && fencedTaskVerificationAttemptStore,
+  );
   const protectedTaskVerificationRuntime = createProtectedTaskVerificationRuntime({
+    authorizationRuntime: walletAuthenticationRuntime,
+    authorizationScope: taskVerificationAuthorizationScope,
     config: resolvedTaskVerificationConfig,
+    fenceAwareRuntimeComposition: fenceAwareTaskVerificationComposition,
+    fencedAttemptStore: fencedTaskVerificationAttemptStore,
     repository: composedCampaignDbRepository,
     runtime: taskVerificationRuntime,
     runtimeFactory: composedTaskVerificationRuntimeFactory,
     safeRepository: safeCampaignDbRepository,
   });
-  const activeWalletSessionIds = new Set<string>();
+  const deprecatedPreviewActiveWalletSessionIds = new Set<string>();
   const composedWalletSessionRepository = walletSessionRepository
     ?? createWalletSessionRepository(walletSessionRepositoryOptions);
   const safeWalletSessionRepository = createSafeWalletSessionRepository(
     composedWalletSessionRepository,
-    (sessionId) => activeWalletSessionIds.add(sessionId),
+    deprecatedNonLivePreviewAuthorityEnabled
+      ? (sessionId) => deprecatedPreviewActiveWalletSessionIds.add(sessionId)
+      : undefined,
   );
   let adminReviewInitializationError: unknown;
   let adminReviewPartialCleanup: Promise<void> | undefined;
@@ -2113,6 +2415,16 @@ export const createCampaignOsApiRuntime = ({
     resourceClosers.push({ close: closeResource, closed: false, key });
   };
 
+  if (walletAuthenticationRuntime && walletAuthenticationRuntimeOwnership === "runtime") {
+    registerResourceCloser(walletAuthenticationRuntime, async () => {
+      const result = await walletAuthenticationRuntime.stop(
+        `wallet-auth-runtime-close-${randomUUID()}`,
+      );
+      if (result.status !== "drained") {
+        throw new Error("Wallet authentication runtime did not drain cleanly.");
+      }
+    });
+  }
   if (composedCampaignDbRepository.close) {
     registerResourceCloser(
       composedCampaignDbRepository,
@@ -2244,7 +2556,7 @@ export const createCampaignOsApiRuntime = ({
           runtimeCloseDeadlineMs,
         );
         await closeOwnedResources(deadlineAt);
-        activeWalletSessionIds.clear();
+        deprecatedPreviewActiveWalletSessionIds?.clear();
       } catch (error) {
         if (closePromise === operation) {
           closePromise = undefined;
@@ -2284,6 +2596,21 @@ export const createCampaignOsApiRuntime = ({
 
       try {
         const method = normalizeMethod(request.method);
+        const walletAuthenticationResponse = await walletAuthenticationHttpController?.handle({
+          ...(request.body === undefined ? {} : { body: request.body }),
+          ...(request.headers === undefined ? {} : { headers: request.headers }),
+          method,
+          path: request.path,
+        });
+        if (walletAuthenticationResponse) {
+          return {
+            body: walletAuthenticationResponse.body as
+              | AdminApiFailureEnvelope
+              | AdminApiSuccessEnvelope<unknown>,
+            headers: { ...walletAuthenticationResponse.headers },
+            status: walletAuthenticationResponse.status,
+          };
+        }
         const { pathname, query: parsedQuery } = parseRequestTarget(request.path);
         const { matcher, params, query } = findMatchingRequestRoute(
           matchers,
@@ -2295,6 +2622,24 @@ export const createCampaignOsApiRuntime = ({
         const adminPolicy = getAdminOperatorRoutePolicy(matcher.route.id);
         let body: unknown;
         let authDecision: AuthEnforcementDecision | undefined;
+        let liveAdminOperator: AuthorizedAdminOperatorContext | undefined;
+        let liveAuthorization: TrustedLiveAuthorizationContext | undefined;
+        let liveAuthorizationDecision: TrustedLiveAuthorizationDecision | undefined;
+        let membershipRegistry: AdminOperatorMembershipRegistry | undefined;
+        const requiresProtectedAuthorization = Boolean(
+          adminPolicy || shouldEvaluateLocalAuth(matcher.route.id),
+        );
+
+        if (
+          requiresProtectedAuthorization
+          && !walletAuthenticationRuntime
+          && !deprecatedNonLivePreviewAuthorityEnabled
+        ) {
+          throw authSessionRequired({
+            diagnosticCode: "DURABLE_WALLET_AUTHORITY_REQUIRED",
+            field: "authorization",
+          });
+        }
 
         if (adminPolicy) {
           let currentAdminReviewConfig: CampaignOsAdminReviewConfig;
@@ -2324,10 +2669,80 @@ export const createCampaignOsApiRuntime = ({
             throw adminRuntimeUnavailable("ADMIN_REVIEW_STORE_UNAVAILABLE");
           }
 
-          const membershipRegistry = adminOperatorMembershipRegistry
+          membershipRegistry = adminOperatorMembershipRegistry
             ?? createAdminOperatorMembershipRegistry(currentAdminReviewConfig);
+        } else {
+          if (configError) {
+            throw createRuntimeConfigBlockedError(configError);
+          }
+        }
+        body = parseBody(request, method, matcher.route.id === "tasks.verify");
+
+        if (walletAuthenticationRuntime && requiresProtectedAuthorization) {
+          let campaignId = params.campaignId;
+          let taskCampaignId: string | undefined;
+          if (matcher.route.id === "tasks.verify") {
+            campaignId = exactTaskVerificationCampaignId(body);
+          }
+
+          liveAuthorization = await resolveLiveAuthorization({
+            request,
+            runtime: walletAuthenticationRuntime,
+            traceId,
+          });
+
+          if (matcher.route.id === "tasks.verify" && campaignId) {
+            const campaign = await safeCampaignDbRepository.getById(campaignId, { traceId });
+            taskCampaignId = campaign?.tasks.find((task) => task.id === params.taskId)?.campaignId;
+          }
+
+          let ownerAddress = ownerAddressFromBody(body);
+          if (campaignOwnerRouteIds.has(matcher.route.id)) {
+            ownerAddress = await ownerAddressFromCampaignDb({
+              campaignDbRepository: safeCampaignDbRepository,
+              campaignId: params.campaignId,
+              traceId,
+            });
+          } else if (matcher.route.id === "campaigns.owner.list") {
+            ownerAddress = liveAuthorization.subject.walletAddress;
+          }
+
+          liveAuthorizationDecision = evaluateTrustedLiveAuthorization({
+            ...(membershipRegistry ? { adminMembershipRegistry: membershipRegistry } : {}),
+            ...(campaignId ? { campaignId } : {}),
+            context: liveAuthorization,
+            currentMembershipRevision: membershipRegistry
+              ? membershipRegistry.health().sourceRevision
+              : liveAuthorization.membershipRevision,
+            headers: request.headers,
+            now: new Date(),
+            ...(ownerAddress ? { ownerAddress } : {}),
+            routeId: matcher.route.id,
+            ...(taskCampaignId ? { taskCampaignId } : {}),
+            traceId,
+          });
+          if (!liveAuthorizationDecision.allowed) {
+            throw liveAuthErrorFromDecision(liveAuthorizationDecision);
+          }
+
+          if (adminPolicy && membershipRegistry) {
+            liveAdminOperator = createLiveAdminOperatorContext({
+              campaignId: params.campaignId,
+              context: liveAuthorization,
+              decision: liveAuthorizationDecision,
+              registry: membershipRegistry,
+            });
+            if (!liveAdminOperator) {
+              throw liveAuthRuntimeError(403, "LIVE_AUTH_MEMBERSHIP_FORBIDDEN");
+            }
+          }
+        } else if (
+          deprecatedNonLivePreviewAuthorityEnabled
+          && adminPolicy
+          && membershipRegistry
+        ) {
           authDecision = await evaluateRuntimeAdminAuth({
-            activeWalletSessionIds,
+            activeWalletSessionIds: deprecatedPreviewActiveWalletSessionIds,
             campaignId: params.campaignId,
             headers: request.headers,
             membershipRegistry,
@@ -2340,19 +2755,12 @@ export const createCampaignOsApiRuntime = ({
           if (!authDecision.allowed) {
             throw authErrorFromDecision(authDecision);
           }
-
-          body = parseBody(request, method);
-        } else {
-          if (configError) {
-            throw createRuntimeConfigBlockedError(configError);
-          }
-
-          body = parseBody(request, method);
-        }
-
-        if (!adminPolicy && shouldEvaluateLocalAuth(matcher.route.id)) {
+        } else if (
+          deprecatedNonLivePreviewAuthorityEnabled
+          && shouldEvaluateLocalAuth(matcher.route.id)
+        ) {
           authDecision = await evaluateRuntimeIssuedAuth({
-            activeWalletSessionIds,
+            activeWalletSessionIds: deprecatedPreviewActiveWalletSessionIds,
             compatibilitySubject: participantCompatibilitySubjectFromRequest(
               matcher.route.id,
               body,
@@ -2379,7 +2787,7 @@ export const createCampaignOsApiRuntime = ({
 
             if (ownerAddress) {
               authDecision = await evaluateRuntimeIssuedAuth({
-                activeWalletSessionIds,
+                activeWalletSessionIds: deprecatedPreviewActiveWalletSessionIds,
                 headers: request.headers,
                 ownerAddress,
                 routeId: matcher.route.id,
@@ -2421,11 +2829,15 @@ export const createCampaignOsApiRuntime = ({
           ...(taskVerificationRuleResolver ? { taskVerificationRuleResolver } : {}),
           ...(authDecision?.adminOperator
             ? { adminOperator: authDecision.adminOperator }
+            : liveAdminOperator
+              ? { adminOperator: liveAdminOperator }
             : {}),
           ...(activeAdminReviewStore
             ? { adminReviewStore: activeAdminReviewStore }
             : {}),
           auth: authDecision,
+          ...(liveAuthorization ? { liveAuthorization } : {}),
+          ...(liveAuthorizationDecision ? { liveAuthorizationDecision } : {}),
         });
         const transport = isHandlerTransportResult(handlerResult)
           ? handlerResult

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { NormalizedWalletSession } from "../domain/types";
 import {
   createUserParticipationApiLoadingState,
   sanitizeUserParticipationApiText,
@@ -7,6 +8,10 @@ import {
   type UserParticipationRepositoryEvidenceMetadata,
   type UserParticipationReviewRequest,
 } from "./userParticipationApiBridge";
+import {
+  createDeprecatedPreviewWalletSessionAuthHeaders,
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+} from "./walletSessionAuthHeaders";
 
 const request: UserParticipationReviewRequest = {
   accountType: "EOA",
@@ -14,6 +19,67 @@ const request: UserParticipationReviewRequest = {
   taskId: "tpl-bridge-ebridge",
   walletAddress: "2F4...9aB",
   walletSource: "PORTKEY_EOA_EXTENSION",
+};
+const legacyVerificationAuthorityFields = [
+  "accountType",
+  "chainId",
+  "network",
+  "role",
+  "sessionId",
+  "walletAddress",
+  "walletSource",
+] as const;
+const explicitPreviewConfig = {
+  authorityMode: "deprecated_non_live_preview" as const,
+  mode: "seeded_preview" as const,
+};
+const previewSession: NormalizedWalletSession = {
+  accountType: request.accountType,
+  address: request.walletAddress,
+  capabilities: ["SIGN_MESSAGE", "CONTRACT_VIEW"],
+  chainId: "AELF",
+  displayAddress: request.walletAddress,
+  id: "wallet-session-user-participation-preview",
+  issuer: {
+    artifactType: "local_session_reference",
+    cookieIssued: false,
+    diagnosticCodes: [],
+    issuerMode: "local_opaque",
+    jwtIssued: false,
+    liveSigningExecuted: false,
+    referenceId: "issuer-ref-user-participation-preview",
+    ttlSeconds: 900,
+    valid: true,
+  },
+  network: "testnet",
+  normalUserRecommended: true,
+  proof: {
+    diagnosticCodes: [],
+    liveVerificationExecuted: false,
+    proofType: "wallet_signature",
+    status: "verified",
+    trustLevel: "verified_local",
+  },
+  sessionId: "session-user-participation-preview",
+  signatureStatus: "signed",
+  statusMessage: { "en-US": "Connected", "zh-CN": "Connected" },
+  verificationStatus: "verified",
+  walletName: "Portkey EOA",
+  walletSource: request.walletSource,
+  walletTypeVerified: true,
+};
+
+const createLegacyPreviewHeaders = () => {
+  const result = createDeprecatedPreviewWalletSessionAuthHeaders(
+    previewSession,
+    deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  );
+
+  if (!result.ok) {
+    throw new Error(`Preview auth fixture failed: ${result.code}:${result.field}`);
+  }
+
+  return result.headers;
 };
 
 const response = (
@@ -57,7 +123,7 @@ describe("user participation API bridge", () => {
     const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "   ", mode: "seeded_preview" },
+      config: { ...explicitPreviewConfig, baseUrl: "   " },
       fetchImpl,
       request,
     });
@@ -70,6 +136,124 @@ describe("user participation API bridge", () => {
       source: "seeded_fallback",
       status: "fallback",
     });
+  });
+
+  it("fails closed before fetch when seeded preview lacks explicit deprecated authority opt-in", async () => {
+    const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
+
+    const state = await submitUserParticipationApiReview({
+      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
+      fetchImpl,
+      request,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_PREVIEW_AUTHORITY_REQUIRED",
+        safeDetails: { reason: "explicit_preview_opt_in_required" },
+        severity: "error",
+      }],
+      source: "error_fallback",
+      status: "error",
+    });
+  });
+
+  it("fails closed before fetch when deprecated preview authority targets a non-loopback runtime", async () => {
+    const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
+
+    const state = await submitUserParticipationApiReview({
+      config: {
+        ...explicitPreviewConfig,
+        baseUrl: "https://campaign-os.example",
+      },
+      fetchImpl,
+      request,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_PREVIEW_AUTHORITY_REQUIRED",
+        safeDetails: { reason: "loopback_runtime_required" },
+        severity: "error",
+      }],
+      source: "error_fallback",
+      status: "error",
+    });
+  });
+
+  it.each([
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "x-wallet-session",
+    "x-campaign-os-account-type",
+    "x-campaign-os-auth-token",
+    "x-campaign-os-capability",
+    "x-campaign-os-credential-boundary",
+    "x-campaign-os-csrf-token",
+    "x-campaign-os-proof-status",
+    "x-campaign-os-role",
+    "x-campaign-os-session-id",
+    "x-campaign-os-wallet-address",
+    "x-account-type",
+    "x-auth-session-id",
+    "x-capabilities",
+    "x-capability",
+    "x-chain-id",
+    "x-network",
+    "x-role",
+    "x-roles",
+    "x-session-id",
+  ])("rejects config authority header %s before fetch", async (headerName) => {
+    const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
+
+    const state = await submitUserParticipationApiReview({
+      config: {
+        ...explicitPreviewConfig,
+        baseUrl: "http://localhost:5184",
+        headers: { [headerName]: "caller-controlled" },
+      },
+      fetchImpl,
+      request,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_PREVIEW_AUTHORITY_CONFLICT",
+        safeDetails: { field: headerName },
+        severity: "error",
+      }],
+      source: "error_fallback",
+      status: "error",
+    });
+  });
+
+  it("rejects loopback preview URL credentials before fetch", async () => {
+    const fetchImpl = vi.fn() as unknown as UserParticipationApiFetch;
+
+    const state = await submitUserParticipationApiReview({
+      config: {
+        ...explicitPreviewConfig,
+        baseUrl: "http://operator:private-value@127.0.0.1:5184",
+      },
+      fetchImpl,
+      request,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_PREVIEW_AUTHORITY_REQUIRED",
+        safeDetails: { reason: "credentialed_url_rejected" },
+        severity: "error",
+      }],
+      source: "error_fallback",
+      status: "error",
+    });
+    expect(JSON.stringify(state)).not.toMatch(/operator|private-value/);
   });
 
   it("routes every durable request away from the legacy bridge without touching the network", async () => {
@@ -99,6 +283,7 @@ describe("user participation API bridge", () => {
   it("redacts malformed config and token query fragments from diagnostics", async () => {
     const state = await submitUserParticipationApiReview({
       config: {
+        authorityMode: "deprecated_non_live_preview",
         baseUrl: "ftp://api.invalid/path?token=sample-token&api_key=private-key-sample",
         mode: "seeded_preview",
       },
@@ -199,11 +384,13 @@ describe("user participation API bridge", () => {
 
     const state = await submitUserParticipationApiReview({
       config: {
+        ...explicitPreviewConfig,
         baseUrl: "http://127.0.0.1:5184/",
         headers: {
-          "x-campaign-os-roles": "participant",
+          "x-content-locale": "en-US",
+          "x-review-trace-context": "preview",
         },
-        mode: "seeded_preview",
+        previewAuthHeaders: createLegacyPreviewHeaders(),
         tracePrefix: "user-participation-review",
       },
       fetchImpl,
@@ -247,21 +434,25 @@ describe("user participation API bridge", () => {
       1,
       "http://127.0.0.1:5184/api/tasks/tpl-bridge-ebridge/verify",
       expect.objectContaining({
-        body: JSON.stringify({
-          accountType: request.accountType,
-          campaignId: request.campaignId,
-          walletAddress: request.walletAddress,
-          walletSource: request.walletSource,
-        }),
+        body: JSON.stringify({ campaignId: request.campaignId }),
         headers: expect.objectContaining({
           accept: "application/json",
           "content-type": "application/json",
+          "x-campaign-os-account-type": request.accountType,
           "x-campaign-os-roles": "participant",
+          "x-campaign-os-session-id": previewSession.sessionId,
+          "x-content-locale": "en-US",
           "x-campaign-os-trace-id": expect.stringMatching(/^user-participation-review-/),
+          "x-review-trace-context": "preview",
         }),
         method: "POST",
       }),
     );
+    const verifyBody = JSON.parse(String(vi.mocked(fetchImpl).mock.calls[0][1]?.body));
+    expect(verifyBody).toEqual({ campaignId: request.campaignId });
+    for (const field of legacyVerificationAuthorityFields) {
+      expect(verifyBody).not.toHaveProperty(field);
+    }
     expect(fetchImpl).toHaveBeenNthCalledWith(
       2,
       "http://127.0.0.1:5184/api/campaigns/camp-awaken-sprint/eligibility?address=2F4...9aB&accountType=EOA&walletSource=PORTKEY_EOA_EXTENSION",
@@ -307,7 +498,7 @@ describe("user participation API bridge", () => {
       }, { ok: false, status: 500, traceId: "trace-eligibility-failed" })) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
+      config: { ...explicitPreviewConfig, baseUrl: "http://127.0.0.1:5184" },
       fetchImpl,
       request,
     });
@@ -369,7 +560,7 @@ describe("user participation API bridge", () => {
     }, { ok: false, status: 400, traceId: "trace-verify-failed" })) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
+      config: { ...explicitPreviewConfig, baseUrl: "http://127.0.0.1:5184" },
       fetchImpl,
       request,
     });
@@ -404,7 +595,7 @@ describe("user participation API bridge", () => {
     })) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview" },
+      config: { ...explicitPreviewConfig, baseUrl: "http://127.0.0.1:5184" },
       fetchImpl,
       request,
     });
@@ -427,7 +618,11 @@ describe("user participation API bridge", () => {
     ) as unknown as UserParticipationApiFetch;
 
     const state = await submitUserParticipationApiReview({
-      config: { baseUrl: "http://127.0.0.1:5184", mode: "seeded_preview", timeoutMs: 250 },
+      config: {
+        ...explicitPreviewConfig,
+        baseUrl: "http://127.0.0.1:5184",
+        timeoutMs: 250,
+      },
       fetchImpl,
       request,
     });

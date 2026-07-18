@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
   authSessionRolePolicyById,
   getProtectedRouteAuth,
+  isTrustedLiveAuthorizationContext,
+  isTrustedLiveAuthorizationContextFresh,
   resolveTrustedAdminOperatorSession,
   type AdminOperatorSessionCompatibilityClaims,
   type AuthRoleCapabilityId,
@@ -13,6 +15,8 @@ import {
   type ProtectedRouteAuthMapEntry,
   type ProductionAuthSessionDependencyId,
   type SessionProofStatus,
+  type LiveAuthorizationFence,
+  type TrustedLiveAuthorizationContext,
 } from "./authSession";
 import type {
   AdminOperatorMembershipRegistry,
@@ -32,6 +36,52 @@ import type {
 } from "../domain/types";
 
 export type AuthRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
+export type TrustedLiveAuthorizationDecisionCode =
+  | "LIVE_AUTH_ADMIN_ALLOWED"
+  | "LIVE_AUTH_CALLER_AUTHORITY_FORBIDDEN"
+  | "LIVE_AUTH_CAPABILITY_FORBIDDEN"
+  | "LIVE_AUTH_CONTEXT_INVALID"
+  | "LIVE_AUTH_MEMBERSHIP_FORBIDDEN"
+  | "LIVE_AUTH_OWNER_ALLOWED"
+  | "LIVE_AUTH_OWNERSHIP_FORBIDDEN"
+  | "LIVE_AUTH_PARTICIPANT_ALLOWED"
+  | "LIVE_AUTH_ROLE_FORBIDDEN"
+  | "LIVE_AUTH_SCOPE_FORBIDDEN"
+  | "LIVE_AUTH_SESSION_STALE";
+export type TrustedLiveAuthorizationDecisionStatus =
+  | "allowed"
+  | "forbidden"
+  | "stale"
+  | "unauthenticated";
+
+export interface TrustedLiveAuthorizationAudit {
+  readonly decisionCode: TrustedLiveAuthorizationDecisionCode;
+  readonly sessionId: string;
+  readonly traceId: string;
+}
+
+export interface TrustedLiveAuthorizationDecision {
+  readonly allowed: boolean;
+  readonly audit: Readonly<TrustedLiveAuthorizationAudit>;
+  readonly fence?: LiveAuthorizationFence;
+  readonly httpStatus?: 401 | 403 | 409;
+  readonly matchedRoles: readonly AuthSessionRoleId[];
+  readonly status: TrustedLiveAuthorizationDecisionStatus;
+}
+
+export interface EvaluateTrustedLiveAuthorizationOptions {
+  readonly adminMembershipRegistry?: AdminOperatorMembershipRegistry;
+  readonly campaignId?: string;
+  readonly context: TrustedLiveAuthorizationContext;
+  readonly currentMembershipRevision: string;
+  readonly headers?: AuthRuntimeHeaders;
+  readonly now: Date;
+  readonly ownerAddress?: string;
+  readonly routeId: string;
+  readonly taskCampaignId?: string;
+  readonly traceId: string;
+}
+
 export type AuthEnforcementDecisionStatus =
   | "allowed"
   | "not_required"
@@ -48,6 +98,7 @@ export type AuthEnforcementDiagnosticCode =
   | "AUTH_OWNERSHIP_SOURCE_MISSING"
   | "AUTH_PROOF_FORBIDDEN";
 
+/** @deprecated Preview-only caller-header session. Never use for live authorization. */
 export interface LocalAuthSession {
   accountType: AuthSessionAccountType;
   address: string;
@@ -101,6 +152,7 @@ export type ParseLocalAuthSessionResult =
       reason: "missing" | "invalid";
     };
 
+/** @deprecated Preview-only header authorization options. */
 export interface EvaluateAuthEnforcementOptions {
   headers?: AuthRuntimeHeaders;
   ownerAddress?: string;
@@ -108,8 +160,10 @@ export interface EvaluateAuthEnforcementOptions {
   routeId: string;
 }
 
+/** @deprecated Preview-only issued-session lookup. */
 export type IssuedSessionLookup = Pick<WalletSessionRepository, "getBySessionId">["getBySessionId"];
 
+/** @deprecated Preview-only issued-session compatibility options. */
 export interface EvaluateIssuedAuthEnforcementOptions extends EvaluateAuthEnforcementOptions {
   compatibilitySubject?: ParticipantCompatibilitySubject;
   issuedSessionLookup: IssuedSessionLookup;
@@ -117,6 +171,7 @@ export interface EvaluateIssuedAuthEnforcementOptions extends EvaluateAuthEnforc
 }
 
 export type AdminOperatorRouteId =
+  | "admin.wallet-session.revoke"
   | "admin.campaigns.list"
   | "admin.reviews.list"
   | "admin.reviews.detail"
@@ -149,6 +204,7 @@ export interface AuthorizedAdminOperatorContext
   walletSource: AuthSessionWalletSource;
 }
 
+/** @deprecated Preview-only Admin issued-session/header options. */
 export interface EvaluateAdminOperatorEnforcementOptions {
   campaignId?: string;
   headers?: AuthRuntimeHeaders;
@@ -163,6 +219,7 @@ export interface CanonicalWalletSubject {
   walletAddress: string;
 }
 
+/** @deprecated Caller-provided compatibility subjects have no live authority. */
 export interface ParticipantCompatibilitySubject {
   accountType?: AuthSessionAccountType;
   chainId?: string;
@@ -237,6 +294,7 @@ const adminOperatorPolicy = (
 });
 
 export const adminOperatorRoutePolicies = Object.freeze([
+  adminOperatorPolicy("admin.wallet-session.revoke", "membership_feed"),
   adminOperatorPolicy("admin.campaigns.list", "membership_feed"),
   adminOperatorPolicy("admin.reviews.list", "campaign_path"),
   adminOperatorPolicy("admin.reviews.detail", "campaign_path"),
@@ -649,6 +707,7 @@ const participantSubjectMismatchDiagnostic = (
   message: "Participant compatibility subject does not match the issued wallet session.",
 });
 
+/** @deprecated Caller-provided compatibility subjects have no live authority. */
 export const evaluateParticipantCompatibilitySubject = (
   issuedSession: LocalAuthSession,
   compatibilitySubject: ParticipantCompatibilitySubject | undefined,
@@ -742,6 +801,7 @@ const issuedSessionToLocalAuthSession = (
   };
 };
 
+/** @deprecated Preview-only caller-header parser. */
 export const parseLocalAuthSessionHeaders = (
   headers?: AuthRuntimeHeaders,
 ): ParseLocalAuthSessionResult => {
@@ -1035,6 +1095,7 @@ const evaluateResolvedAuthSession = ({
   });
 };
 
+/** @deprecated Preview-only caller-header enforcement. */
 export const evaluateAuthEnforcement = ({
   headers,
   ownerAddress,
@@ -1098,6 +1159,7 @@ export const evaluateAuthEnforcement = ({
   });
 };
 
+/** @deprecated Preview-only issued-session/header enforcement. */
 export const evaluateIssuedAuthEnforcement = async ({
   compatibilitySubject,
   headers,
@@ -1366,6 +1428,7 @@ const adminCompatibilityClaims = (
   };
 };
 
+/** @deprecated Preview-only Admin issued-session/header enforcement. */
 export const evaluateAdminOperatorEnforcement = async ({
   campaignId,
   headers,
@@ -1497,5 +1560,293 @@ export const evaluateAdminOperatorEnforcement = async ({
       traceId: resolvedTraceId,
     },
     status: "allowed",
+  });
+};
+
+const trustedLiveCapabilityByRouteGroup: Readonly<Partial<
+  Record<AuthRouteGroupId, AuthRoleCapabilityId>
+>> = Object.freeze({
+  admin_review: "admin:review",
+  campaign_read: "campaign:read",
+  campaign_write: "campaign:write",
+  eligibility: "eligibility:read",
+  export: "export:preview",
+  risk: "risk:review",
+  service_readiness: "service:readiness",
+  task_builder: "task:build",
+  task_verify: "task:verify",
+  wallet_session: "wallet:session_create",
+} satisfies Partial<Record<AuthRouteGroupId, AuthRoleCapabilityId>>);
+
+const liveCallerAuthorityOptionNames = Object.freeze([
+  "accountType",
+  "authority",
+  "capability",
+  "capabilities",
+  "chainId",
+  "compatibilitySubject",
+  "credentialBoundary",
+  "network",
+  "proofStatus",
+  "requestedRole",
+  "role",
+  "roleIds",
+  "sessionId",
+  "subject",
+  "walletAddress",
+  "walletSource",
+]);
+
+const liveCallerAuthorityHeaderNames = new Set([
+  "authorization",
+  "x-account-type",
+  "x-auth-session-id",
+  "x-campaign-os-account-type",
+  "x-campaign-os-capabilities",
+  "x-campaign-os-capability",
+  "x-campaign-os-chain-id",
+  "x-campaign-os-credential-boundary",
+  "x-campaign-os-network",
+  "x-campaign-os-proof-status",
+  "x-campaign-os-role",
+  "x-campaign-os-roles",
+  "x-campaign-os-session-id",
+  "x-campaign-os-wallet-address",
+  "x-campaign-os-wallet-source",
+  "x-capabilities",
+  "x-capability",
+  "x-chain-id",
+  "x-network",
+  "x-role",
+  "x-roles",
+  "x-session-id",
+]);
+
+const hasCallerAuthorityOption = (options: unknown): boolean => {
+  if (options === null || typeof options !== "object") {
+    return false;
+  }
+
+  return liveCallerAuthorityOptionNames.some((name) =>
+    Object.prototype.hasOwnProperty.call(options, name)
+  );
+};
+
+const hasCallerAuthorityHeader = (headers: AuthRuntimeHeaders | undefined): boolean => {
+  if (!headers) {
+    return false;
+  }
+
+  try {
+    return Object.entries(headers).some(([name, value]) => {
+      if (value === undefined) {
+        return false;
+      }
+
+      const normalized = name.toLowerCase();
+
+      return liveCallerAuthorityHeaderNames.has(normalized)
+        || normalized.startsWith("x-wallet");
+    });
+  } catch {
+    return true;
+  }
+};
+
+const trustedLiveDecision = ({
+  allowed,
+  code,
+  context,
+  httpStatus,
+  matchedRoles = [],
+  status,
+  traceId,
+}: {
+  allowed: boolean;
+  code: TrustedLiveAuthorizationDecisionCode;
+  context?: TrustedLiveAuthorizationContext;
+  httpStatus?: 401 | 403 | 409;
+  matchedRoles?: readonly AuthSessionRoleId[];
+  status: TrustedLiveAuthorizationDecisionStatus;
+  traceId: string;
+}): TrustedLiveAuthorizationDecision => Object.freeze({
+  allowed,
+  audit: Object.freeze({
+    decisionCode: code,
+    sessionId: context?.sessionId ?? "session-unresolved",
+    traceId,
+  }),
+  ...(allowed && context ? { fence: context.fence } : {}),
+  ...(httpStatus === undefined ? {} : { httpStatus }),
+  matchedRoles: Object.freeze([...matchedRoles]),
+  status,
+});
+
+const isExactLiveCampaignScope = (
+  campaignId: string | undefined,
+  taskCampaignId: string | undefined,
+): boolean => Boolean(
+  campaignId
+  && taskCampaignId
+  && isCanonicalCampaignId(campaignId)
+  && isCanonicalCampaignId(taskCampaignId)
+  && campaignId === taskCampaignId,
+);
+
+export const evaluateTrustedLiveAuthorization = (
+  options: EvaluateTrustedLiveAuthorizationOptions,
+): TrustedLiveAuthorizationDecision => {
+  const traceId = safeAdminTraceId(options?.traceId);
+  const context = options?.context;
+  const deny = (
+    code: TrustedLiveAuthorizationDecisionCode,
+    httpStatus: 401 | 403 | 409,
+    status: Exclude<TrustedLiveAuthorizationDecisionStatus, "allowed">,
+  ) => trustedLiveDecision({
+    allowed: false,
+    code,
+    context: isTrustedLiveAuthorizationContext(context) ? context : undefined,
+    httpStatus,
+    status,
+    traceId,
+  });
+
+  if (!isTrustedLiveAuthorizationContext(context)) {
+    return deny("LIVE_AUTH_CONTEXT_INVALID", 401, "unauthenticated");
+  }
+
+  if (
+    hasCallerAuthorityOption(options)
+    || hasCallerAuthorityHeader(options.headers)
+  ) {
+    return deny("LIVE_AUTH_CALLER_AUTHORITY_FORBIDDEN", 403, "forbidden");
+  }
+
+  if (
+    !isTrustedLiveAuthorizationContextFresh(context, options.now)
+    || options.currentMembershipRevision !== context.membershipRevision
+  ) {
+    return deny("LIVE_AUTH_SESSION_STALE", 409, "stale");
+  }
+
+  const adminPolicy = getAdminOperatorRoutePolicy(options.routeId);
+  const routeAuth = getProtectedRouteAuth(options.routeId);
+
+  if (!adminPolicy && !routeAuth?.sessionRequired) {
+    return deny("LIVE_AUTH_ROLE_FORBIDDEN", 403, "forbidden");
+  }
+
+  if (
+    options.routeId === "tasks.verify"
+    && !isExactLiveCampaignScope(options.campaignId, options.taskCampaignId)
+  ) {
+    return deny("LIVE_AUTH_SCOPE_FORBIDDEN", 403, "forbidden");
+  }
+
+  if (
+    adminPolicy?.campaignScope === "campaign_path"
+    && (!options.campaignId || !isCanonicalCampaignId(options.campaignId))
+  ) {
+    return deny("LIVE_AUTH_SCOPE_FORBIDDEN", 403, "forbidden");
+  }
+
+  if (options.campaignId !== undefined && !isCanonicalCampaignId(options.campaignId)) {
+    return deny("LIVE_AUTH_SCOPE_FORBIDDEN", 403, "forbidden");
+  }
+
+  const requiredCapability = adminPolicy
+    ? "admin:review"
+    : routeAuth
+      ? trustedLiveCapabilityByRouteGroup[routeAuth.routeGroup]
+      : undefined;
+
+  if (!requiredCapability || !context.capabilities.includes(requiredCapability)) {
+    return deny("LIVE_AUTH_CAPABILITY_FORBIDDEN", 403, "forbidden");
+  }
+
+  const requiredRoles: readonly AuthSessionRoleId[] = adminPolicy
+    ? adminPolicy.allowedRoles
+    : routeAuth?.requiredRoles ?? [];
+  const ownerPermitted = requiredRoles.includes("project_owner")
+    && context.roleIds.includes("project_owner")
+    && options.ownerAddress === context.subject.walletAddress;
+
+  if (ownerPermitted) {
+    return trustedLiveDecision({
+      allowed: true,
+      code: "LIVE_AUTH_OWNER_ALLOWED",
+      context,
+      matchedRoles: ["project_owner"],
+      status: "allowed",
+      traceId,
+    });
+  }
+
+  const adminRoles = requiredRoles.filter((role): role is CampaignOsAdminOperatorRoleId =>
+    role === "internal_operator" || role === "review_operator"
+  );
+
+  if (adminRoles.length > 0) {
+    const registry = options.adminMembershipRegistry;
+
+    if (!registry) {
+      return deny("LIVE_AUTH_MEMBERSHIP_FORBIDDEN", 403, "forbidden");
+    }
+
+    try {
+      if (registry.health().sourceRevision !== options.currentMembershipRevision) {
+        return deny("LIVE_AUTH_SESSION_STALE", 409, "stale");
+      }
+
+      const matchedRole = adminRoles.find((role) => {
+        if (!context.roleIds.includes(role)) {
+          return false;
+        }
+
+        return registry.lookup({
+          campaignId: adminPolicy?.campaignScope === "membership_feed"
+            ? undefined
+            : options.campaignId,
+          requestedRole: role,
+          subjectAddress: context.subject.walletAddress,
+        }).authorized;
+      });
+
+      if (!matchedRole) {
+        return deny("LIVE_AUTH_MEMBERSHIP_FORBIDDEN", 403, "forbidden");
+      }
+
+      return trustedLiveDecision({
+        allowed: true,
+        code: "LIVE_AUTH_ADMIN_ALLOWED",
+        context,
+        matchedRoles: [matchedRole],
+        status: "allowed",
+        traceId,
+      });
+    } catch {
+      return deny("LIVE_AUTH_MEMBERSHIP_FORBIDDEN", 403, "forbidden");
+    }
+  }
+
+  if (requiredRoles.includes("project_owner")) {
+    return deny("LIVE_AUTH_OWNERSHIP_FORBIDDEN", 403, "forbidden");
+  }
+
+  const participantPermitted = context.proofRoleId === "participant"
+    && context.roleIds.includes("participant")
+    && (requiredRoles.length === 0 || requiredRoles.includes("participant"));
+
+  if (!participantPermitted) {
+    return deny("LIVE_AUTH_ROLE_FORBIDDEN", 403, "forbidden");
+  }
+
+  return trustedLiveDecision({
+    allowed: true,
+    code: "LIVE_AUTH_PARTICIPANT_ALLOWED",
+    context,
+    matchedRoles: ["participant"],
+    status: "allowed",
+    traceId,
   });
 };

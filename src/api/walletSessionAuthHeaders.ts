@@ -1,5 +1,15 @@
 import type { NormalizedWalletSession } from "../domain/types";
 
+declare const deprecatedPreviewConfigurationBrand: unique symbol;
+declare const deprecatedPreviewHeadersBrand: unique symbol;
+declare const deprecatedPreviewTransportHeadersBrand: unique symbol;
+
+/**
+ * Caller-issued session headers retained only so preview guards can identify and reject them.
+ * Live authentication uses the durable HttpOnly cookie session instead.
+ *
+ * @deprecated These header names have no authority in live mode.
+ */
 export const protectedWalletSessionAuthHeaderNames = Object.freeze([
   "x-campaign-os-account-type",
   "x-campaign-os-credential-boundary",
@@ -10,18 +20,69 @@ export const protectedWalletSessionAuthHeaderNames = Object.freeze([
   "x-campaign-os-wallet-source",
 ] as const);
 
+/** @deprecated Caller-issued session headers have no authority in live mode. */
 export type ProtectedWalletSessionAuthHeaderName =
   (typeof protectedWalletSessionAuthHeaderNames)[number];
 
-export type WalletSessionAuthHeaders = Readonly<
+/**
+ * Nominally isolated compatibility headers for a non-live preview runtime.
+ * They are not a live credential and must never be passed to a live handler.
+ *
+ * @deprecated Live authentication uses the durable HttpOnly cookie session.
+ */
+export type DeprecatedPreviewWalletSessionAuthHeaders = Readonly<
   Record<ProtectedWalletSessionAuthHeaderName, string>
->;
+> & {
+  readonly [deprecatedPreviewHeadersBrand]: "deprecated_non_live_preview";
+};
 
+/** @deprecated Use `DeprecatedPreviewWalletSessionAuthHeaders` only in explicit preview code. */
+export type WalletSessionAuthHeaders = DeprecatedPreviewWalletSessionAuthHeaders;
+
+/**
+ * Transport headers produced by merging the deprecated preview authority with safe custom fields.
+ * The nominal marker keeps this type out of live credential contracts.
+ *
+ * @deprecated Live requests use cookie credentials and ordinary non-authority transport headers.
+ */
+export type DeprecatedPreviewWalletSessionTransportHeaders = Readonly<
+  Record<string, string>
+> & {
+  readonly [deprecatedPreviewTransportHeadersBrand]: "deprecated_non_live_preview";
+};
+
+/** @deprecated Header-requested roles are preview-only and have no live authority. */
 export type WalletSessionRequestedRole = "participant" | "review_operator";
+
+/**
+ * Explicit capability required to retain the old issued-session demo in a non-live runtime.
+ * The exported singleton is intentionally nominal and cannot represent a live credential.
+ *
+ * @deprecated Remove with the issued-session preview compatibility path.
+ */
+export interface DeprecatedNonLivePreviewWalletSessionAuthConfiguration {
+  readonly authorityMode: "deprecated_non_live_preview";
+  readonly liveCredential: false;
+  readonly runtimeMode: "preview";
+  readonly [deprecatedPreviewConfigurationBrand]: true;
+}
+
+/**
+ * Explicit opt-in for disposable, non-live issued-session header demos.
+ * Equivalent copied objects are rejected so live configuration cannot opt in accidentally.
+ *
+ * @deprecated Live authentication uses the durable HttpOnly cookie session.
+ */
+export const deprecatedNonLivePreviewWalletSessionAuthConfiguration = Object.freeze({
+  authorityMode: "deprecated_non_live_preview",
+  liveCredential: false,
+  runtimeMode: "preview",
+}) as DeprecatedNonLivePreviewWalletSessionAuthConfiguration;
 
 export type WalletSessionAuthHeaderFailureCode =
   | "WALLET_SESSION_AUTH_HEADER_CONFLICT"
-  | "WALLET_SESSION_AUTH_INVALID";
+  | "WALLET_SESSION_AUTH_INVALID"
+  | "WALLET_SESSION_AUTH_PREVIEW_CONFIGURATION_REQUIRED";
 
 export interface WalletSessionAuthHeaderFailure {
   code: WalletSessionAuthHeaderFailureCode;
@@ -29,23 +90,45 @@ export interface WalletSessionAuthHeaderFailure {
   ok: false;
 }
 
-export interface WalletSessionAuthHeaderSuccess {
-  headers: WalletSessionAuthHeaders;
+/** @deprecated Successful caller-issued authority exists only in explicit non-live preview mode. */
+export interface DeprecatedPreviewWalletSessionAuthHeaderSuccess {
+  authorityMode: "deprecated_non_live_preview";
+  headers: DeprecatedPreviewWalletSessionAuthHeaders;
+  liveCredential: false;
   ok: true;
 }
 
-export interface WalletSessionAuthHeaderMergeSuccess {
-  headers: Readonly<Record<string, string>>;
+/** @deprecated Use `DeprecatedPreviewWalletSessionAuthHeaderSuccess` in preview-only code. */
+export type WalletSessionAuthHeaderSuccess = DeprecatedPreviewWalletSessionAuthHeaderSuccess;
+
+/** @deprecated Merged caller-issued authority exists only in explicit non-live preview mode. */
+export interface DeprecatedPreviewWalletSessionAuthHeaderMergeSuccess {
+  authorityMode: "deprecated_non_live_preview";
+  headers: DeprecatedPreviewWalletSessionTransportHeaders;
+  liveCredential: false;
   ok: true;
 }
 
-export type WalletSessionAuthHeaderResult =
+/** @deprecated Use `DeprecatedPreviewWalletSessionAuthHeaderMergeSuccess` in preview-only code. */
+export type WalletSessionAuthHeaderMergeSuccess =
+  DeprecatedPreviewWalletSessionAuthHeaderMergeSuccess;
+
+/** @deprecated Caller-issued authority results are restricted to explicit non-live preview mode. */
+export type DeprecatedPreviewWalletSessionAuthHeaderResult =
   | WalletSessionAuthHeaderFailure
-  | WalletSessionAuthHeaderSuccess;
+  | DeprecatedPreviewWalletSessionAuthHeaderSuccess;
 
+/** @deprecated Use `DeprecatedPreviewWalletSessionAuthHeaderResult` in preview-only code. */
+export type WalletSessionAuthHeaderResult = DeprecatedPreviewWalletSessionAuthHeaderResult;
+
+/** @deprecated Caller-issued authority results are restricted to explicit non-live preview mode. */
+export type DeprecatedPreviewWalletSessionAuthHeaderMergeResult =
+  | WalletSessionAuthHeaderFailure
+  | DeprecatedPreviewWalletSessionAuthHeaderMergeSuccess;
+
+/** @deprecated Use `DeprecatedPreviewWalletSessionAuthHeaderMergeResult` in preview-only code. */
 export type WalletSessionAuthHeaderMergeResult =
-  | WalletSessionAuthHeaderFailure
-  | WalletSessionAuthHeaderMergeSuccess;
+  DeprecatedPreviewWalletSessionAuthHeaderMergeResult;
 
 const accountTypes = new Set(["AA", "EOA"]);
 const walletSources = new Set([
@@ -84,15 +167,40 @@ const walletCapabilities = new Set([
   "VIEW_BALANCE",
 ]);
 const protectedHeaderNames = new Set<string>(protectedWalletSessionAuthHeaderNames);
-const forbiddenCustomHeaderNames = new Set([
-  ...protectedWalletSessionAuthHeaderNames,
+const callerAuthorityAliasHeaderNames = new Set([
   "authorization",
   "cookie",
   "proxy-authorization",
   "set-cookie",
+  "x-account-type",
+  "x-api-key",
+  "x-auth-session-id",
+  "x-capabilities",
+  "x-capability",
+  "x-chain-id",
+  "x-network",
+  "x-role",
+  "x-roles",
+  "x-session-id",
 ]);
+const campaignAuthorityHeaderToken = /(?:^|-)(?:account|actor|address|api-key|auth|authentication|authorization|capability|capabilities|chain|credential|csrf|identity|member|membership|network|nonce|permission|principal|proof|role|roles|scope|session|signature|subject|token|user|wallet)(?:-|$)/;
 const maxAuthorityValueLength = 256;
 const maxCustomHeaderValueLength = 2_048;
+
+export const isCallerControlledWalletAuthorityHeaderName = (value: unknown): boolean => {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const name = value.trim().toLowerCase();
+
+  return callerAuthorityAliasHeaderNames.has(name)
+    || protectedHeaderNames.has(name)
+    || name.startsWith("x-wallet-")
+    || (
+      name.startsWith("x-campaign-os-")
+      && campaignAuthorityHeaderToken.test(name.slice("x-campaign-os-".length))
+    );
+};
 
 const invalid = (field: string): WalletSessionAuthHeaderFailure => ({
   code: "WALLET_SESSION_AUTH_INVALID",
@@ -103,6 +211,12 @@ const invalid = (field: string): WalletSessionAuthHeaderFailure => ({
 const conflict = (field: string): WalletSessionAuthHeaderFailure => ({
   code: "WALLET_SESSION_AUTH_HEADER_CONFLICT",
   field,
+  ok: false,
+});
+
+const previewConfigurationRequired = (): WalletSessionAuthHeaderFailure => ({
+  code: "WALLET_SESSION_AUTH_PREVIEW_CONFIGURATION_REQUIRED",
+  field: "previewConfiguration",
   ok: false,
 });
 
@@ -191,7 +305,7 @@ const invalidReviewOperatorAuthorityField = (
     : "session.credentialBoundary";
 };
 
-export const createWalletSessionAuthHeaders = (
+const createPreviewWalletSessionAuthHeaders = (
   value: NormalizedWalletSession | unknown,
   requestedRole: WalletSessionRequestedRole = "participant",
 ): WalletSessionAuthHeaderResult => {
@@ -264,7 +378,7 @@ export const createWalletSessionAuthHeaders = (
       }
     }
 
-    const headers: WalletSessionAuthHeaders = Object.freeze({
+    const headers = Object.freeze({
       "x-campaign-os-account-type": accountType,
       "x-campaign-os-credential-boundary": credentialBoundaryForSession(session),
       "x-campaign-os-proof-status": proofStatusForSession(session),
@@ -272,16 +386,47 @@ export const createWalletSessionAuthHeaders = (
       "x-campaign-os-session-id": sessionId,
       "x-campaign-os-wallet-address": address,
       "x-campaign-os-wallet-source": walletSource,
-    });
+    }) as DeprecatedPreviewWalletSessionAuthHeaders;
 
-    return { headers, ok: true };
+    return {
+      authorityMode: "deprecated_non_live_preview",
+      headers,
+      liveCredential: false,
+      ok: true,
+    };
   } catch {
     return invalid("session");
   }
 };
 
-export const mergeWalletSessionAuthHeaders = (
-  authHeaders: WalletSessionAuthHeaders,
+/**
+ * Creates caller-issued compatibility headers only after an explicit non-live preview opt-in.
+ * Live code must use the durable cookie session and current server-side policy instead.
+ *
+ * @deprecated Retained only for explicit non-live preview demos.
+ */
+export const createDeprecatedPreviewWalletSessionAuthHeaders = (
+  value: NormalizedWalletSession | unknown,
+  previewConfiguration: DeprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  requestedRole: WalletSessionRequestedRole = "participant",
+): DeprecatedPreviewWalletSessionAuthHeaderResult =>
+  previewConfiguration === deprecatedNonLivePreviewWalletSessionAuthConfiguration
+    ? createPreviewWalletSessionAuthHeaders(value, requestedRole)
+    : previewConfigurationRequired();
+
+/**
+ * Legacy constructor intentionally fails closed. Migrate preview-only callers to
+ * `createDeprecatedPreviewWalletSessionAuthHeaders` with the explicit preview singleton.
+ *
+ * @deprecated Caller-issued headers are not live credentials.
+ */
+export const createWalletSessionAuthHeaders = (
+  _value: NormalizedWalletSession | unknown,
+  _requestedRole: WalletSessionRequestedRole = "participant",
+): WalletSessionAuthHeaderResult => previewConfigurationRequired();
+
+const mergePreviewWalletSessionAuthHeaders = (
+  authHeaders: DeprecatedPreviewWalletSessionAuthHeaders,
   customHeaders?: HeadersInit,
   additionalProtectedHeaderNames: readonly string[] = [],
 ): WalletSessionAuthHeaderMergeResult => {
@@ -301,7 +446,8 @@ export const mergeWalletSessionAuthHeaders = (
       const name = rawName.trim().toLowerCase();
       const value = transportText(rawValue, maxCustomHeaderValueLength);
 
-      if (forbiddenCustomHeaderNames.has(name) || requestProtectedHeaderNames.has(name)) {
+      if (isCallerControlledWalletAuthorityHeaderName(name)
+        || requestProtectedHeaderNames.has(name)) {
         failure = conflict(name);
         return;
       }
@@ -327,10 +473,44 @@ export const mergeWalletSessionAuthHeaders = (
     }
 
     return {
-      headers: Object.freeze(merged),
+      authorityMode: "deprecated_non_live_preview",
+      headers: Object.freeze(merged) as DeprecatedPreviewWalletSessionTransportHeaders,
+      liveCredential: false,
       ok: true,
     };
   } catch {
     return invalid("headers");
   }
 };
+
+/**
+ * Merges preview compatibility headers only after the same explicit non-live opt-in.
+ * The returned transport headers remain non-authoritative in every live composition.
+ *
+ * @deprecated Retained only for explicit non-live preview demos.
+ */
+export const mergeDeprecatedPreviewWalletSessionAuthHeaders = (
+  authHeaders: DeprecatedPreviewWalletSessionAuthHeaders,
+  previewConfiguration: DeprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  customHeaders?: HeadersInit,
+  additionalProtectedHeaderNames: readonly string[] = [],
+): DeprecatedPreviewWalletSessionAuthHeaderMergeResult =>
+  previewConfiguration === deprecatedNonLivePreviewWalletSessionAuthConfiguration
+    ? mergePreviewWalletSessionAuthHeaders(
+      authHeaders,
+      customHeaders,
+      additionalProtectedHeaderNames,
+    )
+    : previewConfigurationRequired();
+
+/**
+ * Legacy merge intentionally fails closed so pre-existing header objects cannot bypass the
+ * explicit preview boundary.
+ *
+ * @deprecated Caller-issued headers are not live credentials.
+ */
+export const mergeWalletSessionAuthHeaders = (
+  _authHeaders: WalletSessionAuthHeaders,
+  _customHeaders?: HeadersInit,
+  _additionalProtectedHeaderNames: readonly string[] = [],
+): WalletSessionAuthHeaderMergeResult => previewConfigurationRequired();

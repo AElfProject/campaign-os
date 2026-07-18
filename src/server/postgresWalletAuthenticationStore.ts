@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import type {
   ConsumeChallengeAndCreateSessionInput,
@@ -24,11 +25,41 @@ import {
   type WalletAuthenticationStoreOperation,
   type WalletAuthenticationStorePolicy,
 } from "./walletAuthenticationStore";
+import type {
+  WalletAuthenticationAtomicFinalWritePort,
+  WalletAuthenticationFinalWriteCommitInput,
+  WalletAuthenticationFinalWriteCommitResult,
+} from "./walletAuthenticationRuntime";
 
 const DEFAULT_TRACE_ID = "wallet-auth-postgres";
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 const SAFE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+
+interface AtomicFinalWriteCallbackScope {
+  acceptingNestedRevoke: boolean;
+  readonly client: PostgresWalletAuthenticationClient;
+  firstNestedRevokeFailure?: unknown;
+  readonly kind: "callback";
+  nestedRevokeFailed: boolean;
+  readonly nestedRevokeTasks: Array<Promise<unknown>>;
+  reentryFailure?: WalletAuthenticationStoreError;
+  reenteredAuthenticationStore: boolean;
+  readonly storeToken: object;
+  readonly traceId: string;
+}
+
+interface AtomicFinalWriteNestedRevokeScope {
+  readonly kind: "nested_revoke";
+  readonly root: AtomicFinalWriteCallbackScope;
+  readonly storeToken: object;
+}
+
+type AtomicFinalWriteScope =
+  | AtomicFinalWriteCallbackScope
+  | AtomicFinalWriteNestedRevokeScope;
+
+const atomicFinalWriteCallbackStorage = new AsyncLocalStorage<AtomicFinalWriteScope>();
 
 const CHALLENGE_COLUMNS = `
   id,
@@ -120,6 +151,11 @@ export interface CreateRequiredPostgresWalletAuthenticationStoreOptions
   readonly poolFactory: (databaseUrl: string) => PostgresWalletAuthenticationPool;
 }
 
+export interface PostgresWalletAuthenticationStore extends DurableWalletAuthenticationStore {
+  /** Its callback may call revokeSession on this same store; all other re-entry fails closed. */
+  readonly atomicFinalWritePort: WalletAuthenticationAtomicFinalWritePort;
+}
+
 interface DriverErrorLike {
   readonly code?: unknown;
 }
@@ -185,6 +221,18 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
   }
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+};
+
+const isAbortSignal = (value: unknown): value is AbortSignal => {
+  try {
+    return value !== null
+      && typeof value === "object"
+      && typeof (value as Partial<AbortSignal>).aborted === "boolean"
+      && typeof (value as Partial<AbortSignal>).addEventListener === "function"
+      && typeof (value as Partial<AbortSignal>).removeEventListener === "function";
+  } catch {
+    return false;
+  }
 };
 
 const readField = (row: Record<string, unknown>, field: string): unknown => {
@@ -308,6 +356,10 @@ const challengeSubjectKey = (challenge: WalletAuthenticationChallengeSnapshot): 
     ].join("\n"), "utf8")
     .digest("hex");
 
+const sessionCapabilityDigest = (values: readonly string[]): string => createHash("sha256")
+  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+  .digest("hex");
+
 const challengeRateLockKeys = (
   subjectKey: string,
   fingerprintDigest?: string,
@@ -395,7 +447,7 @@ export const createPostgresWalletAuthenticationStore = ({
   policy: policyOverrides,
   pool,
   shutdownTimeoutMs: requestedShutdownTimeoutMs,
-}: CreatePostgresWalletAuthenticationStoreOptions): DurableWalletAuthenticationStore => {
+}: CreatePostgresWalletAuthenticationStoreOptions): PostgresWalletAuthenticationStore => {
   if (
     !pool
     || typeof pool.query !== "function"
@@ -411,15 +463,48 @@ export const createPostgresWalletAuthenticationStore = ({
   const activeTransactions = new Set<Promise<unknown>>();
   const activeClients = new Set<PostgresWalletAuthenticationClient>();
   const forceReleasedClients = new WeakSet<object>();
+  const storeToken = Object.freeze({});
   let closing = false;
   let closed = false;
   let closePromise: Promise<void> | undefined;
+
+  const failAtomicFinalWriteReentry = (scope: AtomicFinalWriteScope): never => {
+    const root = scope.kind === "callback" ? scope : scope.root;
+    root.reenteredAuthenticationStore = true;
+    const failure = storeError(
+      "WALLET_AUTH_STORE_CONFLICT",
+      "finalWriteCallback",
+      "assertFence",
+      root.traceId,
+    );
+    root.reentryFailure ??= failure;
+    throw failure;
+  };
+
+  const rejectAtomicFinalWriteReentry = (
+    allowNestedRevokeInternal = false,
+  ): void => {
+    const scope = atomicFinalWriteCallbackStorage.getStore();
+    if (!scope) {
+      return;
+    }
+    if (
+      allowNestedRevokeInternal
+      && scope.kind === "nested_revoke"
+      && scope.storeToken === storeToken
+    ) {
+      return;
+    }
+    failAtomicFinalWriteReentry(scope);
+  };
 
   const ensureOpen = (
     operation: WalletAuthenticationStoreOperation,
     traceId = DEFAULT_TRACE_ID,
     accepting = true,
+    allowNestedRevokeInternal = false,
   ): void => {
+    rejectAtomicFinalWriteReentry(allowNestedRevokeInternal);
     if (closed || (accepting && closing)) {
       throw storeError("WALLET_AUTH_STORE_CLOSED", "store", operation, traceId);
     }
@@ -432,7 +517,7 @@ export const createPostgresWalletAuthenticationStore = ({
     values: unknown[],
     traceId: string,
   ): Promise<Array<Record<string, unknown>>> => {
-    ensureOpen(operation, traceId, false);
+    ensureOpen(operation, traceId, false, true);
     try {
       const result = await queryable.query(text, values);
       if (!result || !Array.isArray(result.rows) || result.rows.some((row) => !isPlainRecord(row))) {
@@ -1307,76 +1392,88 @@ export const createPostgresWalletAuthenticationStore = ({
     }
   };
 
-  const revokeBy = async (
+  const revokeByWithClient = async (
+    client: PostgresWalletAuthenticationClient,
     field: "credential_digest" | "id",
     value: string,
     reasonCode: string,
     traceId: string,
   ): Promise<Readonly<{ status: "revoked" | "already_terminal" | "not_found" }>> => {
+    const rows = await queryWith(
+      client,
+      "revokeSession",
+      `SELECT id, status, idle_expires_at, absolute_expires_at
+       FROM campaign_os.wallet_sessions WHERE ${field} = $1 FOR UPDATE`,
+      [value],
+      traceId,
+    );
+    const row = rows[0];
+    if (!row) {
+      return Object.freeze({ status: "already_terminal" as const });
+    }
+    if (readString(row, "status") !== "active") {
+      return Object.freeze({ status: "already_terminal" as const });
+    }
     const now = readClock(clock, "revokeSession", traceId);
-    return withTransaction("revokeSession", traceId, async (client) => {
-      const rows = await queryWith(
-        client,
-        "revokeSession",
-        `SELECT id, status, idle_expires_at, absolute_expires_at
-         FROM campaign_os.wallet_sessions WHERE ${field} = $1 FOR UPDATE`,
-        [value],
-        traceId,
-      );
-      const row = rows[0];
-      if (!row) {
-        return Object.freeze({ status: "already_terminal" as const });
-      }
-      if (readString(row, "status") !== "active") {
-        return Object.freeze({ status: "already_terminal" as const });
-      }
-      if (
-        Date.parse(readInstant(row, "idle_expires_at")) <= now.getTime()
-        || Date.parse(readInstant(row, "absolute_expires_at")) <= now.getTime()
-      ) {
-        await queryWith(
-          client,
-          "revokeSession",
-          `
-            UPDATE campaign_os.wallet_sessions
-            SET
-              status = 'expired',
-              version = version + 1,
-              revoked_at = $2,
-              revocation_code = 'SESSION_EXPIRED',
-              last_trace_id = $3,
-              updated_at = $2
-            WHERE id = $1 AND status = 'active'
-          `,
-          [readString(row, "id"), now.toISOString(), traceId],
-          traceId,
-        );
-        return Object.freeze({ status: "already_terminal" as const });
-      }
+    if (
+      Date.parse(readInstant(row, "idle_expires_at")) <= now.getTime()
+      || Date.parse(readInstant(row, "absolute_expires_at")) <= now.getTime()
+    ) {
       await queryWith(
         client,
         "revokeSession",
         `
           UPDATE campaign_os.wallet_sessions
           SET
-            status = 'revoked',
+            status = 'expired',
             version = version + 1,
             revoked_at = $2,
-            revocation_code = $3,
-            last_trace_id = $4,
+            revocation_code = 'SESSION_EXPIRED',
+            last_trace_id = $3,
             updated_at = $2
           WHERE id = $1 AND status = 'active'
         `,
-        [readString(row, "id"), now.toISOString(), reasonCode, traceId],
+        [readString(row, "id"), now.toISOString(), traceId],
         traceId,
       );
-      return Object.freeze({ status: "revoked" as const });
-    });
+      return Object.freeze({ status: "already_terminal" as const });
+    }
+    await queryWith(
+      client,
+      "revokeSession",
+      `
+        UPDATE campaign_os.wallet_sessions
+        SET
+          status = 'revoked',
+          version = version + 1,
+          revoked_at = $2,
+          revocation_code = $3,
+          last_trace_id = $4,
+          updated_at = $2
+        WHERE id = $1 AND status = 'active'
+      `,
+      [readString(row, "id"), now.toISOString(), reasonCode, traceId],
+      traceId,
+    );
+    return Object.freeze({ status: "revoked" as const });
   };
 
-  const revokeSession: WalletAuthenticationStore["revokeSession"] = async (input) => {
-    const traceId = safeTraceId(input?.traceId);
-    ensureOpen("revokeSession", traceId);
+  const revokeBy = (
+    field: "credential_digest" | "id",
+    value: string,
+    reasonCode: string,
+    traceId: string,
+  ): Promise<Readonly<{ status: "revoked" | "already_terminal" | "not_found" }>> =>
+    withTransaction(
+      "revokeSession",
+      traceId,
+      (client) => revokeByWithClient(client, field, value, reasonCode, traceId),
+    );
+
+  const assertValidRevokeSessionInput = (
+    input: Parameters<WalletAuthenticationStore["revokeSession"]>[0],
+    traceId: string,
+  ): void => {
     if (
       !isPlainRecord(input)
       || !safeId(input.sessionId)
@@ -1385,6 +1482,48 @@ export const createPostgresWalletAuthenticationStore = ({
     ) {
       throw storeError("WALLET_AUTH_STORE_ARGUMENT_INVALID", "input", "revokeSession", traceId);
     }
+  };
+
+  const revokeSession: WalletAuthenticationStore["revokeSession"] = async (input) => {
+    const traceId = safeTraceId(input?.traceId);
+    const activeScope = atomicFinalWriteCallbackStorage.getStore();
+    if (activeScope) {
+      if (activeScope.kind !== "callback") {
+        return failAtomicFinalWriteReentry(activeScope);
+      }
+      if (activeScope.storeToken !== storeToken || !activeScope.acceptingNestedRevoke) {
+        return failAtomicFinalWriteReentry(activeScope);
+      }
+      const root = activeScope;
+      const task = (async () => {
+        try {
+          assertValidRevokeSessionInput(input, traceId);
+          return await atomicFinalWriteCallbackStorage.run(
+            Object.freeze({
+              kind: "nested_revoke" as const,
+              root,
+              storeToken,
+            }),
+            () => revokeByWithClient(
+              root.client,
+              "id",
+              input.sessionId,
+              input.reasonCode,
+              traceId,
+            ),
+          );
+        } catch (error) {
+          root.nestedRevokeFailed = true;
+          root.firstNestedRevokeFailure ??= error;
+          throw error;
+        }
+      })();
+      root.nestedRevokeTasks.push(task);
+      void task.catch(() => undefined);
+      return task;
+    }
+    ensureOpen("revokeSession", traceId);
+    assertValidRevokeSessionInput(input, traceId);
     return revokeBy("id", input.sessionId, input.reasonCode, traceId);
   };
 
@@ -1558,7 +1697,162 @@ export const createPostgresWalletAuthenticationStore = ({
     });
   };
 
+  const commitIfCurrent = async <TValue>(
+    input: Readonly<WalletAuthenticationFinalWriteCommitInput<TValue>>,
+  ): Promise<WalletAuthenticationFinalWriteCommitResult<TValue>> => {
+    const traceId = safeTraceId(input?.traceId);
+    ensureOpen("assertFence", traceId);
+    const fence = input?.fence;
+    if (
+      !isPlainRecord(input)
+      || !isWalletAuthenticationDigest(input.credentialDigest)
+      || !isPlainRecord(fence)
+      || !isWalletAuthenticationDigest(fence.capabilityDigest)
+      || !safeId(fence.membershipRevision)
+      || !safeId(fence.sessionId)
+      || !isWalletAuthenticationDigest(fence.subjectKey)
+      || !Number.isSafeInteger(fence.version)
+      || fence.version < 1
+      || !isAbortSignal(input.signal)
+      || typeof input.write !== "function"
+    ) {
+      throw storeError("WALLET_AUTH_STORE_ARGUMENT_INVALID", "input", "assertFence", traceId);
+    }
+    // Validate the port contract only; authorization time is read from the store clock after lock.
+    normalizeDate(input.now, "assertFence", traceId);
+    if (input.signal.aborted) {
+      return Object.freeze({ status: "stale" as const });
+    }
+
+    return withTransaction("assertFence", traceId, async (client) => {
+      const rows = await queryWith(
+        client,
+        "assertFence",
+        `
+          SELECT
+            id,
+            credential_digest,
+            subject_key,
+            status,
+            version,
+            membership_revision,
+            capabilities,
+            idle_expires_at,
+            absolute_expires_at
+          FROM campaign_os.wallet_sessions
+          WHERE credential_digest = $1
+          FOR UPDATE
+        `,
+        [input.credentialDigest],
+        traceId,
+      );
+      const row = rows[0];
+      if (!row || input.signal.aborted) {
+        return Object.freeze({ status: "stale" as const });
+      }
+
+      const lockedNow = readClock(clock, "assertFence", traceId);
+      const sessionId = readString(row, "id");
+      const credentialDigest = readString(row, "credential_digest");
+      const subjectKey = readString(row, "subject_key");
+      const status = readString(row, "status");
+      const version = readInteger(row, "version");
+      const membershipRevision = readString(row, "membership_revision");
+      const capabilities = readStringArray(row, "capabilities");
+      const idleExpiresAt = Date.parse(readInstant(row, "idle_expires_at"));
+      const absoluteExpiresAt = Date.parse(readInstant(row, "absolute_expires_at"));
+      const expired = idleExpiresAt <= lockedNow.getTime()
+        || absoluteExpiresAt <= lockedNow.getTime();
+
+      if (status === "active" && expired) {
+        await queryWith(
+          client,
+          "assertFence",
+          `
+            UPDATE campaign_os.wallet_sessions
+            SET
+              status = 'expired',
+              version = version + 1,
+              revoked_at = $2,
+              revocation_code = 'SESSION_EXPIRED',
+              last_trace_id = $3,
+              updated_at = $2
+            WHERE id = $1 AND status = 'active' AND version = $4
+          `,
+          [sessionId, lockedNow.toISOString(), traceId, version],
+          traceId,
+        );
+        return Object.freeze({ status: "stale" as const });
+      }
+
+      if (
+        status !== "active"
+        || credentialDigest !== input.credentialDigest
+        || sessionId !== fence.sessionId
+        || version !== fence.version
+        || membershipRevision !== fence.membershipRevision
+        || subjectKey !== fence.subjectKey
+        || sessionCapabilityDigest(capabilities) !== fence.capabilityDigest
+        || input.signal.aborted
+      ) {
+        return Object.freeze({ status: "stale" as const });
+      }
+
+      const callbackScope: AtomicFinalWriteCallbackScope = {
+        acceptingNestedRevoke: true,
+        client,
+        kind: "callback",
+        nestedRevokeFailed: false,
+        nestedRevokeTasks: [],
+        reenteredAuthenticationStore: false,
+        storeToken,
+        traceId,
+      };
+      let callbackOutcome!:
+        | Readonly<{ status: "returned"; value: TValue }>
+        | Readonly<{ error: unknown; status: "threw" }>;
+      try {
+        callbackOutcome = Object.freeze({
+          status: "returned" as const,
+          value: await atomicFinalWriteCallbackStorage.run(callbackScope, input.write),
+        });
+      } catch (error) {
+        callbackOutcome = Object.freeze({ error, status: "threw" as const });
+      } finally {
+        callbackScope.acceptingNestedRevoke = false;
+      }
+      await Promise.allSettled(callbackScope.nestedRevokeTasks);
+      if (callbackOutcome.status === "threw") {
+        throw callbackOutcome.error;
+      }
+      if (callbackScope.nestedRevokeFailed) {
+        throw callbackScope.firstNestedRevokeFailure ?? storeError(
+          "WALLET_AUTH_STORE_UNAVAILABLE",
+          "transaction",
+          "revokeSession",
+          traceId,
+          true,
+        );
+      }
+      if (callbackScope.reenteredAuthenticationStore) {
+        throw callbackScope.reentryFailure ?? storeError(
+          "WALLET_AUTH_STORE_CONFLICT",
+          "finalWriteCallback",
+          "assertFence",
+          traceId,
+        );
+      }
+      return Object.freeze({ status: "committed" as const, value: callbackOutcome.value });
+    });
+  };
+
+  const atomicFinalWritePort: WalletAuthenticationAtomicFinalWritePort = Object.freeze({
+    commitIfCurrent,
+    kind: "wallet_auth_atomic_final_write" as const,
+  });
+
   const close = (): Promise<void> => {
+    rejectAtomicFinalWriteReentry();
     if (closePromise) {
       return closePromise;
     }
@@ -1618,6 +1912,7 @@ export const createPostgresWalletAuthenticationStore = ({
   };
 
   return Object.freeze({
+    atomicFinalWritePort,
     assertActiveAuthorizationFence,
     close,
     consumeChallengeAndCreateSession,
@@ -1643,7 +1938,7 @@ export const createRequiredPostgresWalletAuthenticationStore = ({
   env = typeof process === "undefined" ? {} : process.env,
   poolFactory,
   ...options
-}: CreateRequiredPostgresWalletAuthenticationStoreOptions): DurableWalletAuthenticationStore => {
+}: CreateRequiredPostgresWalletAuthenticationStoreOptions): PostgresWalletAuthenticationStore => {
   const value = env.CAMPAIGN_OS_DATABASE_URL?.trim();
   if (!value) {
     throw storeError(

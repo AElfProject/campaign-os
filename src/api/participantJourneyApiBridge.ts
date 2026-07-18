@@ -10,8 +10,10 @@ import type {
   WalletSource,
 } from "../domain/types";
 import {
-  createWalletSessionAuthHeaders,
-  mergeWalletSessionAuthHeaders,
+  createDeprecatedPreviewWalletSessionAuthHeaders,
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  isCallerControlledWalletAuthorityHeaderName,
+  mergeDeprecatedPreviewWalletSessionAuthHeaders,
 } from "./walletSessionAuthHeaders";
 
 export type ParticipantJourneyMode = "durable" | "seeded_preview";
@@ -45,11 +47,34 @@ export type ParticipantJourneyBridgeCode =
 export type ParticipantJourneyErrorCode = ParticipantJourneyBridgeCode | (string & {});
 
 export interface ParticipantJourneyApiConfig {
+  authorityMode?: "deprecated_non_live_preview" | "durable_cookie";
   baseUrl?: string;
   headers?: HeadersInit;
   maxResponseBytes?: number;
   timeoutMs?: number;
   tracePrefix?: string;
+}
+
+/** Safe authority projected by the durable current-session endpoint. */
+export interface ParticipantJourneyDurableSession {
+  absoluteExpiresAt: string;
+  accountType: AccountType;
+  capabilities: readonly string[];
+  chainId: string;
+  idleExpiresAt: string;
+  issuedAt: string;
+  network: "mainnet" | "testnet";
+  roles: readonly string[];
+  sessionId: string;
+  status: "active";
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+/** Bounded browser-readable material returned alongside an HttpOnly session cookie. */
+export interface ParticipantJourneyDurableSessionHydration {
+  csrfToken: string;
+  session: ParticipantJourneyDurableSession;
 }
 
 export interface ParticipantJourneyContext {
@@ -301,6 +326,7 @@ export interface ParticipantJourneyApiBridgeFactoryOptions {
 }
 
 interface NormalizedConfig {
+  authorityMode: "deprecated_non_live_preview" | "durable_cookie";
   baseUrl?: URL;
   configCode?: Extract<ParticipantJourneyBridgeCode, "BRIDGE_BASE_URL_INVALID" | "BRIDGE_BASE_URL_MISSING">;
   headers?: HeadersInit;
@@ -320,8 +346,19 @@ interface RequestInput {
 interface RequestSuccess {
   body: Record<string, unknown>;
   httpStatus: number;
+  identity: ParticipantJourneyIdentityContext;
   ok: true;
   traceId: string;
+}
+
+interface ParticipantJourneyIdentityContext {
+  accountType: AccountType;
+  walletAddress: string;
+  walletSource: WalletSource;
+}
+
+interface TaskVerificationRequestBody {
+  campaignId: string;
 }
 
 type RequestResult = ParticipantJourneyFailure | RequestSuccess;
@@ -339,6 +376,9 @@ const maxTextLength = 4_096;
 const maxCollectionLength = 500;
 const maxVerificationDiagnostics = 32;
 const maxVerificationRetryAfterMs = 600_000;
+const minCsrfTokenLength = 32;
+const maxCsrfTokenLength = 512;
+const safeCsrfTokenPattern = /^[A-Za-z0-9._-]+$/u;
 const safeCodePattern = /^[A-Z][A-Z0-9_]{1,127}$/u;
 const unsafeCodeFragmentPattern = /(?:^|_)(?:API_?KEY|PASSWORD|PRIVATE_?KEY|RAW_?SIGNATURE|SECRET|STACK|TOKEN)(?:_|$)/u;
 const safeTracePattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -736,6 +776,9 @@ const normalizedPositiveConfig = (value: unknown, fallback: number, maximum: num
     : fallback;
 
 const normalizeConfig = (config: ParticipantJourneyApiConfig | undefined): NormalizedConfig => {
+  const authorityMode = config?.authorityMode === "deprecated_non_live_preview"
+    ? "deprecated_non_live_preview" as const
+    : "durable_cookie" as const;
   const timeoutMs = normalizedPositiveConfig(config?.timeoutMs, defaultTimeoutMs, maxConfiguredTimeoutMs);
   const maxResponseBytes = normalizedPositiveConfig(
     config?.maxResponseBytes,
@@ -748,6 +791,7 @@ const normalizeConfig = (config: ParticipantJourneyApiConfig | undefined): Norma
 
   if (!rawBaseUrl) {
     return {
+      authorityMode,
       configCode: "BRIDGE_BASE_URL_MISSING",
       headers: config?.headers,
       maxResponseBytes,
@@ -763,8 +807,16 @@ const normalizeConfig = (config: ParticipantJourneyApiConfig | undefined): Norma
       (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:")
       || baseUrl.username
       || baseUrl.password
+      || (
+        authorityMode === "deprecated_non_live_preview"
+        && baseUrl.hostname !== "localhost"
+        && baseUrl.hostname !== "127.0.0.1"
+        && baseUrl.hostname !== "[::1]"
+        && baseUrl.hostname !== "::1"
+      )
     ) {
       return {
+        authorityMode,
         configCode: "BRIDGE_BASE_URL_INVALID",
         headers: config?.headers,
         maxResponseBytes,
@@ -776,9 +828,10 @@ const normalizeConfig = (config: ParticipantJourneyApiConfig | undefined): Norma
     baseUrl.search = "";
     baseUrl.hash = "";
 
-    return { baseUrl, headers: config?.headers, maxResponseBytes, timeoutMs, tracePrefix };
+    return { authorityMode, baseUrl, headers: config?.headers, maxResponseBytes, timeoutMs, tracePrefix };
   } catch {
     return {
+      authorityMode,
       configCode: "BRIDGE_BASE_URL_INVALID",
       headers: config?.headers,
       maxResponseBytes,
@@ -1084,6 +1137,157 @@ const createManagedAbort = (externalSignal: AbortSignal | undefined, timeoutMs: 
   };
 };
 
+const boundedStringList = (
+  value: unknown,
+  maximumItems = 32,
+  maximumLength = 80,
+): readonly string[] | undefined => {
+  if (!Array.isArray(value) || value.length > maximumItems) {
+    return undefined;
+  }
+  const normalized = value.map((item) => text(item, maximumLength));
+  if (normalized.some((item) => !item) || new Set(normalized).size !== normalized.length) {
+    return undefined;
+  }
+  return normalized as string[];
+};
+
+const normalizeDurableSessionHydration = (
+  body: Record<string, unknown>,
+): ParticipantJourneyDurableSessionHydration | undefined => {
+  const data = isRecord(body.data) ? body.data : undefined;
+  const session = data && isRecord(data.session) ? data.session : undefined;
+  const csrfToken = data?.csrfToken;
+  if (
+    body.ok !== true
+    || !session
+    || typeof csrfToken !== "string"
+    || csrfToken !== csrfToken.trim()
+    || csrfToken.length < minCsrfTokenLength
+    || csrfToken.length > maxCsrfTokenLength
+    || !safeCsrfTokenPattern.test(csrfToken)
+  ) {
+    return undefined;
+  }
+
+  const accountType = enumValue(session.accountType, accountTypes);
+  const capabilities = boundedStringList(session.capabilities);
+  const roles = boundedStringList(session.roles);
+  const walletSource = enumValue(session.walletSource, walletSources);
+  const absoluteExpiresAt = text(session.absoluteExpiresAt, 64);
+  const chainId = identity(session.chainId);
+  const idleExpiresAt = text(session.idleExpiresAt, 64);
+  const issuedAt = text(session.issuedAt, 64);
+  const network = enumValue(session.network, new Set(["mainnet", "testnet"] as const));
+  const sessionId = identity(session.sessionId);
+  const walletAddress = identity(session.walletAddress);
+  if (
+    !accountType
+    || !capabilities
+    || !roles?.includes("participant")
+    || !walletSource
+    || !absoluteExpiresAt
+    || !chainId
+    || !idleExpiresAt
+    || !issuedAt
+    || !network
+    || !sessionId
+    || session.status !== "active"
+    || !walletAddress
+  ) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    csrfToken,
+    session: Object.freeze({
+      absoluteExpiresAt,
+      accountType,
+      capabilities: Object.freeze([...capabilities]),
+      chainId,
+      idleExpiresAt,
+      issuedAt,
+      network,
+      roles: Object.freeze([...roles]),
+      sessionId,
+      status: "active" as const,
+      walletAddress,
+      walletSource,
+    }),
+  });
+};
+
+const identityFromPreviewSession = (
+  session: NormalizedWalletSession | null,
+): ParticipantJourneyIdentityContext | undefined => {
+  const accountType = enumValue(session?.accountType, accountTypes);
+  const walletAddress = identity(session?.address);
+  const walletSource = enumValue(session?.walletSource, walletSources);
+  return accountType && walletAddress && walletSource
+    ? { accountType, walletAddress, walletSource }
+    : undefined;
+};
+
+const identityFromDurableSession = (
+  session: ParticipantJourneyDurableSession,
+): ParticipantJourneyIdentityContext => ({
+  accountType: session.accountType,
+  walletAddress: session.walletAddress,
+  walletSource: session.walletSource,
+});
+
+const conflictingDurableHeader = (headers: Headers): string | undefined => {
+  for (const name of headers.keys()) {
+    if (isCallerControlledWalletAuthorityHeaderName(name)) {
+      return name;
+    }
+  }
+  return undefined;
+};
+
+const hydrateDurableSession = async (
+  config: NormalizedConfig,
+  fetchImpl: ParticipantJourneyApiFetch,
+  headers: Readonly<Record<string, string>>,
+  signal: AbortSignal,
+  traceId: string,
+): Promise<ParticipantJourneyDurableSessionHydration | ParticipantJourneyFailure> => {
+  const response = await raceWithAbort(Promise.resolve(fetchImpl(
+    endpointUrl(config.baseUrl!, "/api/wallet/auth/session"),
+    {
+      credentials: "include",
+      headers,
+      method: "GET",
+      signal,
+    },
+  )), signal);
+  const responseFailureTraceId = responseTraceHeaderState(response).value ?? traceId;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = await parseBoundedResponse(response, config.maxResponseBytes, signal);
+  } catch (error) {
+    const code = error instanceof ResponseReadFailure ? error.code : "BRIDGE_RESPONSE_NON_JSON";
+    return bridgeFailure(code, "response", responseFailureTraceId, { httpStatus: response.status });
+  }
+  const resolvedTraceId = responseTraceId(response, parsed, traceId);
+  if (!response.ok || response.status < 200 || response.status >= 300) {
+    const safeDetails = safeErrorDetails(parsed);
+    return failure({
+      code: safeErrorCode(parsed, response.status),
+      httpStatus: response.status,
+      phase: "auth",
+      ...(typeof safeDetails.retryable === "boolean" ? { retryable: safeDetails.retryable } : {}),
+      safeDetails,
+      traceId: resolvedTraceId,
+    });
+  }
+  return normalizeDurableSessionHydration(parsed)
+    ?? bridgeFailure("BRIDGE_SESSION_INVALID", "auth", resolvedTraceId, {
+      httpStatus: response.status,
+      safeDetails: Object.freeze({ field: "currentSession" }),
+    });
+};
+
 const executeRequest = async (
   input: RequestInput,
   config: NormalizedConfig,
@@ -1108,22 +1312,31 @@ const executeRequest = async (
     });
   }
 
-  const auth = createWalletSessionAuthHeaders(input.context.session);
-  if (!auth.ok) {
+  const previewAuth = config.authorityMode === "deprecated_non_live_preview"
+    ? createDeprecatedPreviewWalletSessionAuthHeaders(
+      input.context.session,
+      deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+    )
+    : undefined;
+  if (previewAuth && !previewAuth.ok) {
     return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId, {
-      safeDetails: Object.freeze({ field: auth.field }),
+      safeDetails: Object.freeze({ field: previewAuth.field }),
     });
   }
-  try {
-    const session = input.context.session;
-    const usableIssuedSession = session?.issuer?.valid === true
-      && auth.headers["x-campaign-os-proof-status"] === "verified"
-      && auth.headers["x-campaign-os-credential-boundary"] === "ordinary_user_wallet";
-    if (!usableIssuedSession) {
+  let previewIdentity: ParticipantJourneyIdentityContext | undefined;
+  if (previewAuth?.ok) {
+    try {
+      const session = input.context.session;
+      const usableIssuedSession = session?.issuer?.valid === true
+        && previewAuth.headers["x-campaign-os-proof-status"] === "verified"
+        && previewAuth.headers["x-campaign-os-credential-boundary"] === "ordinary_user_wallet";
+      previewIdentity = identityFromPreviewSession(session);
+      if (!usableIssuedSession || !previewIdentity) {
+        return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId);
+      }
+    } catch {
       return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId);
     }
-  } catch {
-    return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId);
   }
 
   let body: string | undefined;
@@ -1134,6 +1347,14 @@ const executeRequest = async (
     body = input.body === undefined ? undefined : JSON.stringify(input.body);
     url = endpointUrl(config.baseUrl, input.path);
     customHeaders = new Headers(config.headers);
+    const durableConflict = config.authorityMode === "durable_cookie"
+      ? conflictingDurableHeader(customHeaders)
+      : undefined;
+    if (durableConflict) {
+      return bridgeFailure("BRIDGE_AUTH_HEADER_CONFLICT", "auth", traceId, {
+        safeDetails: Object.freeze({ field: durableConflict }),
+      });
+    }
     customHeaders.set("accept", "application/json");
     if (body !== undefined) {
       customHeaders.set("content-type", "application/json");
@@ -1143,7 +1364,13 @@ const executeRequest = async (
     return bridgeFailure("BRIDGE_INVALID_INPUT", "request", traceId);
   }
 
-  const mergedHeaders = mergeWalletSessionAuthHeaders(auth.headers, customHeaders);
+  const mergedHeaders = previewAuth?.ok
+    ? mergeDeprecatedPreviewWalletSessionAuthHeaders(
+      previewAuth.headers,
+      deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+      customHeaders,
+    )
+    : { headers: Object.freeze(Object.fromEntries(customHeaders.entries())), ok: true as const };
   if (!mergedHeaders.ok) {
     return bridgeFailure("BRIDGE_AUTH_HEADER_CONFLICT", "auth", traceId, {
       safeDetails: Object.freeze({ field: mergedHeaders.field }),
@@ -1157,9 +1384,34 @@ const executeRequest = async (
   const managedAbort = createManagedAbort(contextSignal.signal, config.timeoutMs);
 
   try {
+    let identityContext = previewIdentity;
+    const requestHeaders = new Headers(mergedHeaders.headers);
+    if (config.authorityMode === "durable_cookie") {
+      const hydrationHeaders = new Headers(requestHeaders);
+      hydrationHeaders.delete("content-type");
+      const hydration = await hydrateDurableSession(
+        config,
+        fetchImpl,
+        Object.freeze(Object.fromEntries(hydrationHeaders.entries())),
+        managedAbort.controller.signal,
+        traceId,
+      );
+      if ("ok" in hydration) {
+        return hydration;
+      }
+      identityContext = identityFromDurableSession(hydration.session);
+      if (input.operation === "verifyTask") {
+        requestHeaders.set("x-campaign-os-csrf", hydration.csrfToken);
+      }
+    }
+    if (!identityContext) {
+      return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId);
+    }
+
     const response = await raceWithAbort(Promise.resolve(fetchImpl(url, {
       ...(body === undefined ? {} : { body }),
-      headers: mergedHeaders.headers,
+      ...(config.authorityMode === "durable_cookie" ? { credentials: "include" as const } : {}),
+      headers: Object.freeze(Object.fromEntries(requestHeaders.entries())),
       method: input.method,
       signal: managedAbort.controller.signal,
     })), managedAbort.controller.signal);
@@ -1244,6 +1496,7 @@ const executeRequest = async (
     return {
       body: parsed,
       httpStatus: response.status,
+      identity: identityContext,
       ok: true,
       traceId: resolvedTraceId,
     };
@@ -1540,7 +1793,7 @@ const normalizeDiagnostics = (value: unknown): readonly ParticipantJourneyDiagno
 const normalizeJourney = (
   body: Record<string, unknown>,
   campaignId: string,
-  session: NormalizedWalletSession,
+  session: ParticipantJourneyIdentityContext,
 ): NormalizationResult<ParticipantJourneyProjection> => {
   const payload = payloadValue(body);
   const payloadRecord = isRecord(payload) ? payload : undefined;
@@ -1586,9 +1839,9 @@ const normalizeJourney = (
     return { ok: false, reason: "invalid" };
   }
 
-  const issuedAddress = session.address.trim();
-  const issuedAccountType = session.accountType.trim();
-  const issuedWalletSource = session.walletSource.trim();
+  const issuedAddress = session.walletAddress;
+  const issuedAccountType = session.accountType;
+  const issuedWalletSource = session.walletSource;
   const identityMismatch = campaign.campaignId !== campaignId
     || participant.campaignId !== campaignId
     || ranking.campaignId !== campaignId
@@ -1876,7 +2129,7 @@ interface NormalizedVerificationIdentity {
 const verificationIdentity = (
   value: Record<string, unknown>,
   fallback: Record<string, unknown>,
-  session: NormalizedWalletSession,
+  session: ParticipantJourneyIdentityContext,
 ): NormalizedVerificationIdentity | undefined => {
   const accountType = enumValue(
     value.accountType ?? fallback.accountType ?? session.accountType,
@@ -1896,12 +2149,12 @@ const verificationIdentityMatches = (
   value: NormalizedVerificationIdentity,
   campaignId: string,
   taskId: string,
-  session: NormalizedWalletSession,
+  session: ParticipantJourneyIdentityContext,
 ): boolean => value.campaignId === campaignId
   && value.taskId === taskId
-  && value.walletAddress === session.address.trim()
-  && value.accountType === session.accountType.trim()
-  && value.walletSource === session.walletSource.trim();
+  && value.walletAddress === session.walletAddress
+  && value.accountType === session.accountType
+  && value.walletSource === session.walletSource;
 
 type ConsistentValueResult<T> =
   | { ok: true; value: T | undefined }
@@ -2025,7 +2278,7 @@ const normalizeVerificationParticipant = (
   payload: Record<string, unknown>,
   campaignId: string,
   taskId: string,
-  session: NormalizedWalletSession,
+  session: ParticipantJourneyIdentityContext,
 ): NormalizationResult<ParticipantVerificationParticipant | undefined> => {
   if (value === undefined) {
     return { ok: true, value: undefined };
@@ -2060,7 +2313,7 @@ const normalizeVerification = (
   httpStatus: number,
   campaignId: string,
   taskId: string,
-  session: NormalizedWalletSession,
+  session: ParticipantJourneyIdentityContext,
 ): NormalizationResult<ParticipantVerificationProjection> => {
   const data = dataRecord(body);
   const payload = data?.payload;
@@ -2440,6 +2693,10 @@ const normalizationFailure = (
 
 const normalizedContextId = (value: unknown): string | undefined => identity(value);
 
+const taskVerificationRequestBody = (campaignId: string): TaskVerificationRequestBody => ({
+  campaignId,
+});
+
 const seededPreviewFailure = (
   operation: ParticipantJourneyOperation,
   context: ParticipantJourneyContext,
@@ -2496,7 +2753,7 @@ export const createParticipantJourneyApiBridge = (
         return request;
       }
 
-      const normalized = normalizeJourney(request.body, campaignId, context.session as NormalizedWalletSession);
+      const normalized = normalizeJourney(request.body, campaignId, request.identity);
       return normalized.ok
         ? {
             httpStatus: request.httpStatus,
@@ -2554,7 +2811,7 @@ export const createParticipantJourneyApiBridge = (
       }
 
       const request = await executeRequest({
-        body: { campaignId },
+        body: taskVerificationRequestBody(campaignId),
         context,
         method: "POST",
         operation: "verifyTask",
@@ -2569,7 +2826,7 @@ export const createParticipantJourneyApiBridge = (
         request.httpStatus,
         campaignId,
         taskId,
-        context.session as NormalizedWalletSession,
+        request.identity,
       );
       return normalized.ok
         ? {

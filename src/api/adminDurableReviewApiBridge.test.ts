@@ -240,6 +240,7 @@ const createBridge = (
   config: Record<string, unknown> = {},
 ) => createAdminDurableReviewApiBridge({
   config: {
+    authorityMode: "deprecated_non_live_preview",
     baseUrl: "http://127.0.0.1:5174/root?credential=ignored#fragment",
     timeoutMs: 500,
     tracePrefix: "admin-review-test",
@@ -431,6 +432,25 @@ describe("Admin durable review API bridge", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("does not reactivate caller-issued authority without explicit preview mode", async () => {
+    const fetchImpl = vi.fn();
+    const bridge = createAdminDurableReviewApiBridge({
+      config: { baseUrl: "http://127.0.0.1:5174" },
+      fetchImpl: fetchImpl as unknown as AdminDurableReviewApiFetch,
+    });
+
+    const result = await bridge.listCampaigns(context());
+
+    expect(result).toMatchObject({
+      bridgeCode: "BRIDGE_SESSION_INVALID",
+      details: { field: "durableCookieAuthority" },
+      ok: false,
+      phase: "auth",
+      reconnectRequired: true,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("turns hostile config and context getters into typed fail-closed results", async () => {
     const fetchImpl = vi.fn();
     const hostileConfig = Object.defineProperty({}, "baseUrl", {
@@ -557,6 +577,7 @@ describe("Admin durable review API bridge", () => {
     ));
     const bridge = createAdminDurableReviewApiBridge({
       config: {
+        authorityMode: "deprecated_non_live_preview",
         baseUrl: "http://127.0.0.1:5174",
         tracePrefix: " ### ",
       },

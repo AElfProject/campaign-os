@@ -7,7 +7,13 @@ import { analyticsIngestionWarehouseRequiredConfigKeys } from "../domain/analyti
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
-import { runBackendRuntimeSmoke, runBackendRuntimeSmokeCli } from "./backendRuntimeSmoke";
+import { createInMemoryWalletClient } from "../wallet/walletClient";
+import {
+  BackendRuntimeWalletAuthenticationSmokeError,
+  runBackendRuntimeSmoke,
+  runBackendRuntimeSmokeCli,
+  runBackendRuntimeWalletAuthenticationSmoke,
+} from "./backendRuntimeSmoke";
 import { apiRuntimeContractRoutes } from "./routes";
 import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
 
@@ -656,6 +662,731 @@ const expectedProductionDatabaseHandoffReadinessMetadata = {
   valid: true,
 };
 
+const walletAuthenticationSmokeFixture = () => {
+  const adapterId = "backend-smoke-wallet";
+  const audience = "campaign-os-wallet-auth:stage:http://127.0.0.1:5193";
+  const campaignId = "campaign-db-draft-0001";
+  const challengeId = `wac_${"a".repeat(43)}`;
+  const taskId = "campaign-db-task-draft-0001";
+  const origin = "http://127.0.0.1:5193";
+  const walletAddress = "ELF_BACKEND_SMOKE_CANONICAL_WALLET";
+  const nonce = "n".repeat(43);
+  const message = [
+    "aelf Campaign OS Wallet Authentication",
+    "Version: campaign-os-wallet-auth/v1",
+    "Domain: 127.0.0.1:5193",
+    `URI: ${origin}/`,
+    `Audience: ${audience}`,
+    `Wallet Address: ${walletAddress}`,
+    `Adapter: ${adapterId}`,
+    "Chain ID: AELF",
+    "Network: testnet",
+    "CA Hash: -",
+    `Nonce: ${nonce}`,
+    "Issued At: 2026-07-18T08:00:00.000Z",
+    "Expires At: 2026-07-18T08:05:00.000Z",
+    `Request ID: war_${"r".repeat(43)}`,
+  ].join("\n");
+  const csrfToken = "c".repeat(43);
+  const cookieValue = "s".repeat(43);
+  const session = {
+    absoluteExpiresAt: "2026-07-18T16:00:00.000Z",
+    accountType: "EOA",
+    capabilities: ["campaign:read", "task:verify"],
+    chainId: "AELF",
+    idleExpiresAt: "2026-07-18T08:30:00.000Z",
+    issuedAt: "2026-07-18T08:00:00.000Z",
+    network: "testnet",
+    roles: ["participant"],
+    sessionId: "was_backend-smoke-session",
+    status: "active",
+    walletAddress,
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  };
+
+  return {
+    adapterId,
+    audience,
+    campaignId,
+    challengeId,
+    clock: { now: () => new Date("2026-07-18T08:01:00.000Z") },
+    cookieHeader: `campaign_os_session=${cookieValue}`,
+    csrfToken,
+    message,
+    nonce,
+    origin,
+    session,
+    taskId,
+    walletAddress,
+  };
+};
+
+const walletAuthenticationSmokeResponse = (
+  traceId: string,
+  data: unknown,
+  status: number,
+  headers: Record<string, string> = {},
+) => new Response(JSON.stringify({ data, ok: true, traceId }), {
+  headers: {
+    "content-type": "application/json; charset=utf-8",
+    "x-campaign-os-trace-id": traceId,
+    ...headers,
+  },
+  status,
+});
+
+const walletAuthenticationSmokeSessionResponse = (
+  body: string | undefined,
+  fixture: ReturnType<typeof walletAuthenticationSmokeFixture>,
+) => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body ?? "") as unknown;
+  } catch {
+    parsed = undefined;
+  }
+  const record = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : undefined;
+  const adapterProof = record?.adapterProof;
+  const exactFields = [
+    "adapterProof",
+    "challengeId",
+    "message",
+    "nonce",
+    "publicKey",
+    "signature",
+  ];
+  if (
+    !record
+    || Object.keys(record).sort().join("|") !== [...exactFields].sort().join("|")
+    || adapterProof === null
+    || typeof adapterProof !== "object"
+    || Array.isArray(adapterProof)
+  ) {
+    return new Response(JSON.stringify({
+      error: { code: "INVALID_REQUEST", details: { field: "body" } },
+      ok: false,
+      traceId: "campaign-os-smoke-wallet-auth-session",
+    }), {
+      headers: { "content-type": "application/json; charset=utf-8" },
+      status: 400,
+    });
+  }
+
+  return walletAuthenticationSmokeResponse(
+    "campaign-os-smoke-wallet-auth-session",
+    { csrfToken: fixture.csrfToken, session: fixture.session },
+    201,
+    {
+      "set-cookie": `${fixture.cookieHeader}; Path=/; HttpOnly; SameSite=Lax; Max-Age=28800; Expires=Sat, 18 Jul 2026 16:00:00 GMT`,
+    },
+  );
+};
+
+const walletAuthenticationSmokeFailureResponse = (
+  traceId: string,
+  code: "AUTH_SESSION_INVALID" | "AUTH_SESSION_REQUIRED",
+) => new Response(JSON.stringify({
+  error: {
+    code,
+    details: { field: "cookie" },
+    message: code === "AUTH_SESSION_INVALID"
+      ? "The wallet session is invalid or no longer active."
+      : "A wallet session cookie is required.",
+  },
+  ok: false,
+  traceId,
+}), {
+  headers: {
+    "content-type": "application/json; charset=utf-8",
+    "x-campaign-os-trace-id": traceId,
+  },
+  status: 401,
+});
+
+const walletAuthenticationChallengeResponse = (
+  fixture: ReturnType<typeof walletAuthenticationSmokeFixture>,
+  message: string,
+  expiresAt = "2026-07-18T08:05:00.000Z",
+) => walletAuthenticationSmokeResponse(
+  "campaign-os-smoke-wallet-auth-challenge",
+  {
+    adapterId: fixture.adapterId,
+    challengeId: fixture.challengeId,
+    chainId: "AELF",
+    expiresAt,
+    message,
+    network: "testnet",
+    version: "campaign-os-wallet-auth/v1",
+    walletAddress: fixture.walletAddress,
+  },
+  201,
+);
+
+const challengeMessageWithLine = (
+  message: string,
+  lineIndex: number,
+  replacement: string,
+): string => {
+  const lines = message.split("\n");
+  lines[lineIndex] = replacement;
+  return lines.join("\n");
+};
+
+const runRejectedChallengeSmoke = async (
+  message: string,
+  expiresAt?: string,
+) => {
+  const fixture = walletAuthenticationSmokeFixture();
+  let signCalls = 0;
+  const walletHarness = createInMemoryWalletClient({
+    adapters: [{
+      adapterId: fixture.adapterId,
+      enabled: true,
+      label: "Backend smoke wallet",
+      recommended: true,
+      status: "available",
+    }],
+    connect: async () => ({
+      adapterId: fixture.adapterId,
+      chainId: "AELF",
+      network: "testnet",
+      walletAddressHint: fixture.walletAddress,
+    }),
+    generateProof: async () => {
+      signCalls += 1;
+      return { signature: new Uint8Array(65).fill(7) };
+    },
+  });
+
+  const error = await runBackendRuntimeWalletAuthenticationSmoke({
+    adapterId: fixture.adapterId,
+    audience: fixture.audience,
+    baseUrl: "http://127.0.0.1:5194",
+    campaignId: fixture.campaignId,
+    clock: fixture.clock,
+    fetchImpl: async () => walletAuthenticationChallengeResponse(fixture, message, expiresAt),
+    origin: fixture.origin,
+    taskId: fixture.taskId,
+    walletClient: walletHarness.client,
+  }).catch((reason: unknown) => reason);
+
+  expect(error).toMatchObject({
+    code: "BACKEND_RUNTIME_WALLET_AUTH_SMOKE_FAILED",
+    phase: "challenge",
+  });
+  expect(signCalls).toBe(0);
+};
+
+describe("live wallet authentication backend smoke contract", () => {
+  it.each([
+    ["title replacement", 0, "aelf Campaign OS Wallet Approval"],
+    ["version replacement", 1, "Version: campaign-os-wallet-auth/v2"],
+    ["domain mismatch", 2, "Domain: attacker.example"],
+    ["URI mismatch", 3, "URI: https://attacker.example/authorize"],
+    ["audience mismatch", 4, "Audience: attacker-audience"],
+    ["wallet mismatch", 5, "Wallet Address: ELF_DIFFERENT_WALLET"],
+    ["adapter mismatch", 6, "Adapter: attacker-wallet"],
+    ["chain mismatch", 7, "Chain ID: tDVV"],
+    ["network mismatch", 8, "Network: mainnet"],
+    ["CA hash replacement", 9, `CA Hash: ${"a".repeat(64)}`],
+    ["nonce replacement", 10, `Nonce: ${"x".repeat(42)}`],
+    ["future issue time", 11, "Issued At: 2026-07-18T08:02:00.000Z"],
+    ["expired challenge", 12, "Expires At: 2026-07-18T08:00:30.000Z"],
+    ["request ID replacement", 13, "Request ID: war_short"],
+    ["duplicate canonical label", 4, "Domain: 127.0.0.1:5193"],
+  ])("rejects %s before the wallet signs", async (_label, lineIndex, replacement) => {
+    const fixture = walletAuthenticationSmokeFixture();
+
+    await runRejectedChallengeSmoke(
+      challengeMessageWithLine(fixture.message, lineIndex, replacement),
+    );
+  });
+
+  it("rejects a challenge with an extra or missing canonical line before signing", async () => {
+    const fixture = walletAuthenticationSmokeFixture();
+
+    await runRejectedChallengeSmoke(`${fixture.message}\nNonce: ${fixture.nonce}`);
+    await runRejectedChallengeSmoke(fixture.message.split("\n").slice(0, -1).join("\n"));
+  });
+
+  it("rejects a top-level expiry that disagrees with the signed challenge before signing", async () => {
+    const fixture = walletAuthenticationSmokeFixture();
+
+    await runRejectedChallengeSmoke(fixture.message, "2026-07-18T08:04:59.000Z");
+  });
+
+  it("drives challenge, proof, durable cookie verification, current session, and logout", async () => {
+    const fixture = walletAuthenticationSmokeFixture();
+    const requests: Array<{
+      body?: string;
+      headers: Headers;
+      method: string;
+      pathname: string;
+    }> = [];
+    let disconnected = 0;
+    let signedMessage: Uint8Array | undefined;
+    const walletHarness = createInMemoryWalletClient({
+      adapters: [{
+        adapterId: fixture.adapterId,
+        enabled: true,
+        label: "Backend smoke wallet",
+        recommended: true,
+        status: "available",
+      }],
+      connect: async () => ({
+        adapterId: fixture.adapterId,
+        chainId: "AELF",
+        network: "testnet",
+        walletAddressHint: fixture.walletAddress,
+      }),
+      disconnect: async () => {
+        disconnected += 1;
+      },
+      generateProof: async ({ exactMessageBytes }) => {
+        signedMessage = exactMessageBytes;
+        return {
+          adapterProof: { mode: "in_memory", proofRevision: "smoke-v1" },
+          publicKey: new Uint8Array(33).fill(2),
+          signature: new Uint8Array(65).fill(7),
+        };
+      },
+    });
+    let loggedOut = false;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const request = {
+        body: typeof init?.body === "string" ? init.body : undefined,
+        headers: new Headers(init?.headers),
+        method: init?.method ?? "GET",
+        pathname: new URL(url).pathname,
+      };
+      requests.push(request);
+
+      if (request.pathname === "/api/wallet/auth/challenges") {
+        return walletAuthenticationChallengeResponse(fixture, fixture.message);
+      }
+      if (request.pathname === "/api/wallet/auth/sessions") {
+        return walletAuthenticationSmokeSessionResponse(request.body, fixture);
+      }
+      if (request.pathname === `/api/tasks/${fixture.taskId}/verify`) {
+        return walletAuthenticationSmokeResponse(
+          "campaign-os-smoke-wallet-auth-verification",
+          {
+            payload: {
+              outcome: "completed",
+              pointsAwarded: 120,
+              status: "completed",
+              verificationAttemptId: "attempt-backend-smoke-1",
+            },
+          },
+          200,
+        );
+      }
+      if (request.pathname === "/api/wallet/auth/session") {
+        return loggedOut
+          ? walletAuthenticationSmokeFailureResponse(
+            "campaign-os-smoke-wallet-auth-post-logout-session",
+            "AUTH_SESSION_INVALID",
+          )
+          : walletAuthenticationSmokeResponse(
+            "campaign-os-smoke-wallet-auth-current",
+            { csrfToken: fixture.csrfToken, session: fixture.session },
+            200,
+          );
+      }
+      if (request.pathname === "/api/wallet/auth/logout") {
+        loggedOut = true;
+        return walletAuthenticationSmokeResponse(
+          "campaign-os-smoke-wallet-auth-logout",
+          { revoked: true },
+          200,
+          {
+            "set-cookie": "campaign_os_session=; Path=/; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+          },
+        );
+      }
+
+      throw new Error("Unexpected smoke request.");
+    };
+
+    const summary = await runBackendRuntimeWalletAuthenticationSmoke({
+      adapterId: fixture.adapterId,
+      audience: fixture.audience,
+      baseUrl: "http://127.0.0.1:5194",
+      campaignId: fixture.campaignId,
+      clock: fixture.clock,
+      fetchImpl,
+      origin: fixture.origin,
+      taskId: fixture.taskId,
+      walletClient: walletHarness.client,
+    });
+
+    expect(requests.map(({ method, pathname }) => `${method} ${pathname}`)).toEqual([
+      "POST /api/wallet/auth/challenges",
+      "POST /api/wallet/auth/sessions",
+      `POST /api/tasks/${fixture.taskId}/verify`,
+      "GET /api/wallet/auth/session",
+      "POST /api/wallet/auth/logout",
+      "GET /api/wallet/auth/session",
+    ]);
+    expect(new TextDecoder().decode(signedMessage)).toBe(fixture.message);
+    expect(JSON.parse(requests[0]?.body ?? "{}")).toEqual({
+      adapterId: fixture.adapterId,
+      chainId: "AELF",
+      network: "testnet",
+      walletAddress: fixture.walletAddress,
+    });
+    expect(JSON.parse(requests[1]?.body ?? "{}")).toEqual({
+      adapterProof: { mode: "in_memory", proofRevision: "smoke-v1" },
+      challengeId: fixture.challengeId,
+      message: fixture.message,
+      nonce: fixture.nonce,
+      publicKey: "02".repeat(33),
+      signature: "07".repeat(65),
+    });
+    expect(JSON.parse(requests[2]?.body ?? "{}")).toEqual({ campaignId: fixture.campaignId });
+    expect(requests[2]?.headers.get("cookie")).toBe(fixture.cookieHeader);
+    expect(requests[2]?.headers.get("x-campaign-os-csrf")).toBe(fixture.csrfToken);
+    expect([...requests[2]!.headers.keys()]).not.toEqual(expect.arrayContaining([
+      "x-campaign-os-account-type",
+      "x-campaign-os-roles",
+      "x-campaign-os-session-id",
+      "x-campaign-os-wallet-address",
+      "x-campaign-os-wallet-source",
+    ]));
+    expect(requests[3]?.headers.has("x-campaign-os-csrf")).toBe(false);
+    expect(requests[4]?.body).toBeUndefined();
+    expect(requests[5]?.headers.get("cookie")).toBe(fixture.cookieHeader);
+    expect(disconnected).toBe(1);
+    expect(summary).toEqual({
+      canonicalSubjectContinuity: true,
+      credentialAuthority: "durable_cookie",
+      proofPort: "wallet_client",
+      status: "passed",
+      subjectDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      traceIds: {
+        challenge: "campaign-os-smoke-wallet-auth-challenge",
+        currentSession: "campaign-os-smoke-wallet-auth-current",
+        logout: "campaign-os-smoke-wallet-auth-logout",
+        postLogoutSession: "campaign-os-smoke-wallet-auth-post-logout-session",
+        session: "campaign-os-smoke-wallet-auth-session",
+        verification: "campaign-os-smoke-wallet-auth-verification",
+      },
+      verificationBodyFields: ["campaignId"],
+    });
+    const serializedSummary = JSON.stringify(summary);
+    expect(serializedSummary).not.toContain(fixture.cookieHeader);
+    expect(serializedSummary).not.toContain(fixture.csrfToken);
+    expect(serializedSummary).not.toContain(fixture.walletAddress);
+    expect(serializedSummary).not.toContain("07".repeat(65));
+  });
+
+  it.each([
+    [
+      "a different cookie name",
+      "unrelated_cookie=; Path=/; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+    ],
+    [
+      "a non-empty cookie value",
+      `campaign_os_session=${"x".repeat(43)}; Path=/; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`,
+    ],
+    [
+      "a nonzero Max-Age",
+      "campaign_os_session=; Path=/; HttpOnly; Max-Age=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+    ],
+    [
+      "no expired Expires attribute",
+      "campaign_os_session=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax",
+    ],
+    [
+      "a changed cookie scope",
+      "campaign_os_session=; Path=/api; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+    ],
+  ])("rejects logout when it clears %s", async (_label, clearCookie) => {
+    const fixture = walletAuthenticationSmokeFixture();
+    let loggedOut = false;
+    const walletHarness = createInMemoryWalletClient({
+      adapters: [{
+        adapterId: fixture.adapterId,
+        enabled: true,
+        label: "Backend smoke wallet",
+        recommended: true,
+        status: "available",
+      }],
+      connect: async () => ({
+        adapterId: fixture.adapterId,
+        chainId: "AELF",
+        network: "testnet",
+        walletAddressHint: fixture.walletAddress,
+      }),
+      generateProof: async () => ({
+        adapterProof: { mode: "in_memory", proofRevision: "smoke-v1" },
+        publicKey: new Uint8Array(33).fill(2),
+        signature: new Uint8Array(65).fill(7),
+      }),
+    });
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/wallet/auth/challenges") {
+        return walletAuthenticationChallengeResponse(fixture, fixture.message);
+      }
+      if (pathname === "/api/wallet/auth/sessions") {
+        return walletAuthenticationSmokeSessionResponse(
+          typeof init?.body === "string" ? init.body : undefined,
+          fixture,
+        );
+      }
+      if (pathname === `/api/tasks/${fixture.taskId}/verify`) {
+        return walletAuthenticationSmokeResponse(
+          "campaign-os-smoke-wallet-auth-verification",
+          {
+            payload: {
+              outcome: "completed",
+              pointsAwarded: 120,
+              status: "completed",
+              verificationAttemptId: "attempt-backend-smoke-1",
+            },
+          },
+          200,
+        );
+      }
+      if (pathname === "/api/wallet/auth/session") {
+        return loggedOut
+          ? walletAuthenticationSmokeFailureResponse(
+            "campaign-os-smoke-wallet-auth-post-logout-session",
+            "AUTH_SESSION_INVALID",
+          )
+          : walletAuthenticationSmokeResponse(
+            "campaign-os-smoke-wallet-auth-current",
+            { csrfToken: fixture.csrfToken, session: fixture.session },
+            200,
+          );
+      }
+      if (pathname === "/api/wallet/auth/logout") {
+        loggedOut = true;
+        return walletAuthenticationSmokeResponse(
+          "campaign-os-smoke-wallet-auth-logout",
+          { revoked: true },
+          200,
+          { "set-cookie": clearCookie },
+        );
+      }
+      throw new Error("Unexpected smoke request.");
+    };
+
+    const error = await runBackendRuntimeWalletAuthenticationSmoke({
+      adapterId: fixture.adapterId,
+      audience: fixture.audience,
+      baseUrl: "http://127.0.0.1:5194",
+      campaignId: fixture.campaignId,
+      clock: fixture.clock,
+      fetchImpl,
+      origin: fixture.origin,
+      taskId: fixture.taskId,
+      walletClient: walletHarness.client,
+    }).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({
+      code: "BACKEND_RUNTIME_WALLET_AUTH_SMOKE_FAILED",
+      phase: "logout",
+    });
+  });
+
+  it.each([
+    ["a 200 success envelope", 200],
+    ["a forged 401 success envelope", 401],
+  ])("rejects logout when the old session returns %s", async (_label, status) => {
+    const fixture = walletAuthenticationSmokeFixture();
+    let loggedOut = false;
+    const walletHarness = createInMemoryWalletClient({
+      adapters: [{
+        adapterId: fixture.adapterId,
+        enabled: true,
+        label: "Backend smoke wallet",
+        recommended: true,
+        status: "available",
+      }],
+      connect: async () => ({
+        adapterId: fixture.adapterId,
+        chainId: "AELF",
+        network: "testnet",
+        walletAddressHint: fixture.walletAddress,
+      }),
+      generateProof: async () => ({
+        adapterProof: { mode: "in_memory", proofRevision: "smoke-v1" },
+        publicKey: new Uint8Array(33).fill(2),
+        signature: new Uint8Array(65).fill(7),
+      }),
+    });
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/wallet/auth/challenges") {
+        return walletAuthenticationChallengeResponse(fixture, fixture.message);
+      }
+      if (pathname === "/api/wallet/auth/sessions") {
+        return walletAuthenticationSmokeSessionResponse(
+          typeof init?.body === "string" ? init.body : undefined,
+          fixture,
+        );
+      }
+      if (pathname === `/api/tasks/${fixture.taskId}/verify`) {
+        return walletAuthenticationSmokeResponse(
+          "campaign-os-smoke-wallet-auth-verification",
+          {
+            payload: {
+              outcome: "completed",
+              pointsAwarded: 120,
+              status: "completed",
+              verificationAttemptId: "attempt-backend-smoke-1",
+            },
+          },
+          200,
+        );
+      }
+      if (pathname === "/api/wallet/auth/session") {
+        return walletAuthenticationSmokeResponse(
+          loggedOut
+            ? "campaign-os-smoke-wallet-auth-post-logout-session"
+            : "campaign-os-smoke-wallet-auth-current",
+          { csrfToken: fixture.csrfToken, session: fixture.session },
+          loggedOut ? status : 200,
+        );
+      }
+      if (pathname === "/api/wallet/auth/logout") {
+        loggedOut = true;
+        return walletAuthenticationSmokeResponse(
+          "campaign-os-smoke-wallet-auth-logout",
+          { revoked: true },
+          200,
+          {
+            "set-cookie": "campaign_os_session=; Path=/; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+          },
+        );
+      }
+      throw new Error("Unexpected smoke request.");
+    };
+
+    const error = await runBackendRuntimeWalletAuthenticationSmoke({
+      adapterId: fixture.adapterId,
+      audience: fixture.audience,
+      baseUrl: "http://127.0.0.1:5194",
+      campaignId: fixture.campaignId,
+      clock: fixture.clock,
+      fetchImpl,
+      origin: fixture.origin,
+      taskId: fixture.taskId,
+      walletClient: walletHarness.client,
+    }).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({
+      code: "BACKEND_RUNTIME_WALLET_AUTH_SMOKE_FAILED",
+      phase: "post_logout_session",
+    });
+  });
+
+  it("rejects the legacy JSON-string adapter proof at the exact session boundary", async () => {
+    const fixture = walletAuthenticationSmokeFixture();
+    const response = walletAuthenticationSmokeSessionResponse(JSON.stringify({
+      adapterProof: JSON.stringify({ mode: "in_memory", proofRevision: "legacy-v0" }),
+      challengeId: fixture.challengeId,
+      message: fixture.message,
+      nonce: fixture.nonce,
+      publicKey: "02".repeat(33),
+      signature: "07".repeat(65),
+    }), fixture);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "INVALID_REQUEST", details: { field: "body" } },
+      ok: false,
+      traceId: "campaign-os-smoke-wallet-auth-session",
+    });
+  });
+
+  it("fails with a bounded phase and still closes the wallet port", async () => {
+    const fixture = walletAuthenticationSmokeFixture();
+    let disconnected = 0;
+    const walletHarness = createInMemoryWalletClient({
+      adapters: [{
+        adapterId: fixture.adapterId,
+        enabled: true,
+        label: "Backend smoke wallet",
+        recommended: true,
+        status: "available",
+      }],
+      connect: async () => ({
+        adapterId: fixture.adapterId,
+        chainId: "AELF",
+        network: "testnet",
+        walletAddressHint: fixture.walletAddress,
+      }),
+      disconnect: async () => {
+        disconnected += 1;
+      },
+      generateProof: async () => ({ signature: new Uint8Array(65).fill(7) }),
+    });
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (new URL(url).pathname === "/api/wallet/auth/challenges") {
+        return walletAuthenticationChallengeResponse(fixture, fixture.message);
+      }
+
+      return new Response(JSON.stringify({
+        error: { code: "AUTH_DEPENDENCY_UNAVAILABLE" },
+        ok: false,
+        traceId: "campaign-os-smoke-wallet-auth-session",
+      }), { status: 503 });
+    };
+
+    const operation = runBackendRuntimeWalletAuthenticationSmoke({
+      adapterId: fixture.adapterId,
+      audience: fixture.audience,
+      baseUrl: "http://127.0.0.1:5194",
+      campaignId: fixture.campaignId,
+      clock: fixture.clock,
+      fetchImpl,
+      origin: fixture.origin,
+      taskId: fixture.taskId,
+      walletClient: walletHarness.client,
+    });
+
+    const error = await operation.catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(BackendRuntimeWalletAuthenticationSmokeError);
+    expect(error).toMatchObject({
+      code: "BACKEND_RUNTIME_WALLET_AUTH_SMOKE_FAILED",
+      name: "BackendRuntimeWalletAuthenticationSmokeError",
+      phase: "session",
+    } satisfies Partial<BackendRuntimeWalletAuthenticationSmokeError>);
+    expect((error as Error).message).toBe(
+      "Campaign OS live wallet authentication smoke check failed.",
+    );
+    expect((error as Error).stack).toBeUndefined();
+    expect(disconnected).toBe(1);
+  });
+});
+
 describe("backend runtime smoke command", () => {
   it("starts the local API server, checks health/contracts, and stops cleanly", async () => {
     const requests: Array<{
@@ -1130,11 +1861,8 @@ describe("backend runtime smoke command", () => {
     expect(verificationRequest?.headers.get("x-campaign-os-credential-boundary")).toBe("ordinary_user_wallet");
     expect(verificationRequest?.headers.get("x-campaign-os-proof-status")).toBe("verified");
     expect(verificationRequest?.headers.get("x-campaign-os-roles")).toBe("participant");
-    expect(verificationBody).toMatchObject({
-      accountType: verificationRequest?.headers.get("x-campaign-os-account-type"),
-      walletAddress: verificationRequest?.headers.get("x-campaign-os-wallet-address"),
-      walletSource: verificationRequest?.headers.get("x-campaign-os-wallet-source"),
-    });
+    expect(verificationBody).toEqual({ campaignId: expect.any(String) });
+    expect(Object.keys(verificationBody)).toEqual(["campaignId"]);
     expectNoSecretLeak(summary);
   });
 

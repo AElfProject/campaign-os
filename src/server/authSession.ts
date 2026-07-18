@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AccountType,
   WalletCapability,
@@ -6,6 +7,15 @@ import type {
 } from "../domain/types";
 import { sessionIssuerProductionDependencyIds } from "./sessionIssuer";
 import { walletProofProductionDependencyIds } from "./walletProofVerifier";
+import {
+  isResolvedWalletSessionAuthority,
+  type ResolvedWalletSessionAuthority,
+} from "./walletAuthentication";
+import type {
+  WalletAuthenticationAuthorizationFence,
+  ResolveWalletAuthenticationAuthorizationResult,
+} from "./walletAuthenticationRuntime";
+import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
 import type { WalletSessionRecord } from "./walletSessionRepository";
 
 export type AuthSessionAccountType = AccountType;
@@ -110,6 +120,273 @@ export interface NormalizedWalletSessionContract {
   walletSource: AuthSessionWalletSource;
 }
 
+const liveAuthorizationFenceBrand: unique symbol = Symbol("LiveAuthorizationFence");
+const trustedLiveAuthorizationContextBrand: unique symbol = Symbol(
+  "TrustedLiveAuthorizationContext",
+);
+const issuedLiveAuthorizationFences = new WeakSet<object>();
+const issuedTrustedLiveAuthorizationContexts = new WeakSet<object>();
+const runtimeFenceByLiveFence = new WeakMap<
+  object,
+  WalletAuthenticationAuthorizationFence
+>();
+
+export interface LiveAuthorizationFence {
+  readonly capabilityDigest: string;
+  readonly membershipRevision: string;
+  readonly sessionId: string;
+  readonly subjectKey: string;
+  readonly version: number;
+  readonly [liveAuthorizationFenceBrand]: true;
+}
+
+export interface TrustedLiveAuthorizationSubject {
+  readonly accountType: ResolvedWalletSessionAuthority["subject"]["accountType"];
+  readonly chainId: ResolvedWalletSessionAuthority["subject"]["chainId"];
+  readonly network: ResolvedWalletSessionAuthority["subject"]["network"];
+  readonly walletAddress: string;
+  readonly walletSource: ResolvedWalletSessionAuthority["subject"]["walletSource"];
+}
+
+export interface TrustedLiveAuthorizationContext {
+  readonly absoluteExpiresAt: string;
+  readonly capabilities: readonly string[];
+  readonly credentialBoundary: "wallet-auth-cookie/v1";
+  readonly fence: LiveAuthorizationFence;
+  readonly idleExpiresAt: string;
+  readonly membershipRevision: string;
+  readonly proofRoleId: "participant";
+  readonly roleIds: readonly string[];
+  readonly sessionId: string;
+  readonly subject: Readonly<TrustedLiveAuthorizationSubject>;
+  readonly version: number;
+  readonly [trustedLiveAuthorizationContextBrand]: true;
+}
+
+export type TrustedLiveAuthorizationFailureReason =
+  | "authority-invalid"
+  | "credential-boundary-invalid"
+  | "fence-mismatch"
+  | "session-expired"
+  | "session-unavailable";
+
+export type ResolveTrustedLiveAuthorizationContextResult =
+  | Readonly<{
+      context: TrustedLiveAuthorizationContext;
+      fence: LiveAuthorizationFence;
+      status: "resolved";
+    }>
+  | Readonly<{
+      reason: TrustedLiveAuthorizationFailureReason;
+      status: "unauthorized";
+    }>;
+
+export interface ResolveTrustedLiveAuthorizationContextOptions {
+  readonly now: Date;
+}
+
+const liveAuthorizationFailure = (
+  reason: TrustedLiveAuthorizationFailureReason,
+): ResolveTrustedLiveAuthorizationContextResult => Object.freeze({
+  reason,
+  status: "unauthorized",
+});
+
+const isSafeFenceDigest = (value: unknown): value is string =>
+  typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+
+const liveCapabilityDigest = (values: readonly string[]): string => createHash("sha256")
+  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+  .digest("hex");
+
+const readAuthorization = (
+  authorization: ResolveWalletAuthenticationAuthorizationResult,
+): Readonly<{
+  authority: ResolvedWalletSessionAuthority;
+  fence: WalletAuthenticationAuthorizationFence;
+}> | undefined => {
+  try {
+    if (
+      authorization === null
+      || typeof authorization !== "object"
+      || (authorization as { status?: unknown }).status !== "authorized"
+    ) {
+      return undefined;
+    }
+
+    const candidate = authorization as {
+      authority?: unknown;
+      fence?: unknown;
+    };
+
+    if (
+      !isResolvedWalletSessionAuthority(candidate.authority)
+      || candidate.fence === null
+      || typeof candidate.fence !== "object"
+      || !Object.isFrozen(candidate.fence)
+    ) {
+      return undefined;
+    }
+
+    return Object.freeze({
+      authority: candidate.authority,
+      fence: candidate.fence as WalletAuthenticationAuthorizationFence,
+    });
+  } catch {
+    return undefined;
+  }
+};
+
+const issueLiveAuthorizationFence = (
+  runtimeFence: WalletAuthenticationAuthorizationFence,
+): LiveAuthorizationFence => {
+  const fence = {
+    capabilityDigest: runtimeFence.capabilityDigest,
+    membershipRevision: runtimeFence.membershipRevision,
+    sessionId: runtimeFence.sessionId,
+    subjectKey: runtimeFence.subjectKey,
+    version: runtimeFence.version,
+  } as LiveAuthorizationFence;
+  Object.defineProperty(fence, liveAuthorizationFenceBrand, {
+    enumerable: false,
+    value: true,
+  });
+  issuedLiveAuthorizationFences.add(fence);
+  runtimeFenceByLiveFence.set(fence, runtimeFence);
+
+  return Object.freeze(fence);
+};
+
+export const isLiveAuthorizationFence = (
+  value: unknown,
+): value is LiveAuthorizationFence =>
+  typeof value === "object"
+  && value !== null
+  && issuedLiveAuthorizationFences.has(value);
+
+export const unwrapLiveAuthorizationFence = (
+  fence: LiveAuthorizationFence,
+): WalletAuthenticationAuthorizationFence => {
+  const runtimeFence = typeof fence === "object" && fence !== null
+    ? runtimeFenceByLiveFence.get(fence)
+    : undefined;
+
+  if (!runtimeFence || !isLiveAuthorizationFence(fence)) {
+    throw new TypeError("Live authorization fence is invalid.");
+  }
+
+  return runtimeFence;
+};
+
+export const isTrustedLiveAuthorizationContext = (
+  value: unknown,
+): value is TrustedLiveAuthorizationContext =>
+  typeof value === "object"
+  && value !== null
+  && issuedTrustedLiveAuthorizationContexts.has(value);
+
+export const isTrustedLiveAuthorizationContextFresh = (
+  value: unknown,
+  now: Date,
+): value is TrustedLiveAuthorizationContext => {
+  if (!isTrustedLiveAuthorizationContext(value)) {
+    return false;
+  }
+
+  const nowMs = now instanceof Date ? now.getTime() : Number.NaN;
+
+  return Number.isFinite(nowMs)
+    && Date.parse(value.idleExpiresAt) > nowMs
+    && Date.parse(value.absoluteExpiresAt) > nowMs;
+};
+
+export const resolveTrustedLiveAuthorizationContext = (
+  authorization: ResolveWalletAuthenticationAuthorizationResult,
+  options: ResolveTrustedLiveAuthorizationContextOptions,
+): ResolveTrustedLiveAuthorizationContextResult => {
+  const resolved = readAuthorization(authorization);
+
+  if (!resolved) {
+    return liveAuthorizationFailure("session-unavailable");
+  }
+
+  const { authority, fence: runtimeFence } = resolved;
+  const nowMs = options?.now instanceof Date ? options.now.getTime() : Number.NaN;
+  const idleExpiresAtMs = Date.parse(authority.idleExpiresAt);
+  const absoluteExpiresAtMs = Date.parse(authority.absoluteExpiresAt);
+
+  if (
+    !Number.isFinite(nowMs)
+    || !Number.isFinite(idleExpiresAtMs)
+    || !Number.isFinite(absoluteExpiresAtMs)
+  ) {
+    return liveAuthorizationFailure("authority-invalid");
+  }
+
+  if (idleExpiresAtMs <= nowMs || absoluteExpiresAtMs <= nowMs) {
+    return liveAuthorizationFailure("session-expired");
+  }
+
+  if (idleExpiresAtMs > absoluteExpiresAtMs) {
+    return liveAuthorizationFailure("authority-invalid");
+  }
+
+  if (authority.credentialBoundary !== "wallet-auth-cookie/v1") {
+    return liveAuthorizationFailure("credential-boundary-invalid");
+  }
+
+  let expectedSubjectKey: string;
+
+  try {
+    expectedSubjectKey = walletAuthenticationSubjectKey(authority.subject);
+  } catch {
+    return liveAuthorizationFailure("authority-invalid");
+  }
+
+  if (
+    !isSafeFenceDigest(runtimeFence.capabilityDigest)
+    || !isSafeFenceDigest(runtimeFence.subjectKey)
+    || runtimeFence.capabilityDigest !== liveCapabilityDigest(authority.capabilities)
+    || runtimeFence.sessionId !== authority.sessionId
+    || runtimeFence.version !== authority.version
+    || runtimeFence.membershipRevision !== authority.membershipRevision
+    || runtimeFence.subjectKey !== expectedSubjectKey
+  ) {
+    return liveAuthorizationFailure("fence-mismatch");
+  }
+
+  const fence = issueLiveAuthorizationFence(runtimeFence);
+  const subject = Object.freeze({
+    accountType: authority.subject.accountType,
+    chainId: authority.subject.chainId,
+    network: authority.subject.network,
+    walletAddress: authority.subject.walletAddress,
+    walletSource: authority.subject.walletSource,
+  });
+  const context = {
+    absoluteExpiresAt: authority.absoluteExpiresAt,
+    capabilities: Object.freeze([...authority.capabilities]),
+    credentialBoundary: "wallet-auth-cookie/v1" as const,
+    fence,
+    idleExpiresAt: authority.idleExpiresAt,
+    membershipRevision: authority.membershipRevision,
+    proofRoleId: "participant" as const,
+    roleIds: Object.freeze([...authority.roleIds]),
+    sessionId: authority.sessionId,
+    subject,
+    version: authority.version,
+  } as TrustedLiveAuthorizationContext;
+  Object.defineProperty(context, trustedLiveAuthorizationContextBrand, {
+    enumerable: false,
+    value: true,
+  });
+  issuedTrustedLiveAuthorizationContexts.add(context);
+  Object.freeze(context);
+
+  return Object.freeze({ context, fence, status: "resolved" });
+};
+
+/** @deprecated Preview-only issued-session compatibility claims. Never use for live authority. */
 export interface AdminOperatorSessionCompatibilityClaims {
   accountType?: AuthSessionAccountType;
   chainId?: string;
@@ -121,6 +398,7 @@ export interface AdminOperatorSessionCompatibilityClaims {
   walletSource?: AuthSessionWalletSource;
 }
 
+/** @deprecated Preview-only issued-session context. Use TrustedLiveAuthorizationContext. */
 export interface TrustedAdminOperatorSessionContext {
   accountType: AuthSessionAccountType;
   chainId: string;
@@ -147,6 +425,7 @@ export type TrustedAdminOperatorSessionFailureReason =
   | "proof-invalid"
   | "internal-credential";
 
+/** @deprecated Preview-only issued-session result. */
 export type ResolveTrustedAdminOperatorSessionResult =
   | Readonly<{
       context: Readonly<TrustedAdminOperatorSessionContext>;
@@ -181,6 +460,7 @@ const adminProofStatusFromIssuedRecord = (
   return issuedRecord.verificationStatus === "verified" ? "verified" : "signature_unverified";
 };
 
+/** @deprecated Preview-only issued-session resolver. It must not enter live composition. */
 export const resolveTrustedAdminOperatorSession = (
   issuedRecord: WalletSessionRecord,
   claims: AdminOperatorSessionCompatibilityClaims = {},

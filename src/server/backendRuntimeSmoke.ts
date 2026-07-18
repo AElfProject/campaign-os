@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,17 @@ import { campaignDetail } from "../domain/fixtures";
 import { contractWriterRequiredConfigKeys } from "../domain/contractWriterRuntime";
 import { projectOwnerFundingProofRequiredEvidenceKeys } from "../domain/projectOwnerFundingProofReviewBridge";
 import { rewardDistributionHandoffRequiredEvidenceKeys } from "../domain/rewardDistributionHandoffRuntime";
+import type { WalletClient } from "../wallet/walletClient";
+import { createDeprecatedNonLivePreviewAuthorityOption } from "./apiRuntime";
 import { startCampaignOsApiServer, type CampaignOsApiServerHandle } from "./server";
+import {
+  WALLET_AUTHENTICATION_MESSAGE_MAX_BYTES,
+  WALLET_AUTHENTICATION_PROTOCOL_VERSION,
+} from "./walletAuthenticationChallenge";
+import {
+  WALLET_AUTH_CHALLENGE_TTL_SECONDS_MAX,
+  WALLET_AUTH_CHALLENGE_TTL_SECONDS_MIN,
+} from "./walletAuthenticationConfig";
 
 type SmokePayload = {
   data?: unknown;
@@ -23,6 +33,59 @@ export interface BackendRuntimeSmokeOptions {
   port?: number;
   serverFactory?: typeof startCampaignOsApiServer;
   shutdownTimeoutMs?: number;
+}
+
+export interface BackendRuntimeWalletAuthenticationSmokeOptions {
+  adapterId: string;
+  audience: string;
+  baseUrl: string;
+  campaignId: string;
+  clock?: Readonly<{ now: () => Date }>;
+  fetchImpl?: typeof fetch;
+  origin: string;
+  taskId: string;
+  walletClient: Pick<WalletClient, "close" | "connect" | "disconnect" | "signMessage">;
+}
+
+export type BackendRuntimeWalletAuthenticationSmokePhase =
+  | "challenge"
+  | "cleanup"
+  | "connect"
+  | "current_session"
+  | "input"
+  | "logout"
+  | "post_logout_session"
+  | "proof"
+  | "session"
+  | "task_verification";
+
+export class BackendRuntimeWalletAuthenticationSmokeError extends Error {
+  readonly code = "BACKEND_RUNTIME_WALLET_AUTH_SMOKE_FAILED";
+  readonly phase: BackendRuntimeWalletAuthenticationSmokePhase;
+
+  constructor(phase: BackendRuntimeWalletAuthenticationSmokePhase) {
+    super("Campaign OS live wallet authentication smoke check failed.");
+    this.name = "BackendRuntimeWalletAuthenticationSmokeError";
+    this.phase = phase;
+    delete this.stack;
+  }
+}
+
+export interface BackendRuntimeWalletAuthenticationSmokeSummary {
+  canonicalSubjectContinuity: true;
+  credentialAuthority: "durable_cookie";
+  proofPort: "wallet_client";
+  status: "passed";
+  subjectDigest: string;
+  traceIds: {
+    challenge: string;
+    currentSession: string;
+    logout: string;
+    postLogoutSession: string;
+    session: string;
+    verification: string;
+  };
+  verificationBodyFields: readonly ["campaignId"];
 }
 
 export interface BackendRuntimeSmokeCliOptions {
@@ -2382,6 +2445,735 @@ const getStringArray = (
   ? record[key].filter((item): item is string => typeof item === "string")
   : [];
 
+const liveWalletAuthenticationSmokeTraceIds = Object.freeze({
+  challenge: "campaign-os-smoke-wallet-auth-challenge",
+  currentSession: "campaign-os-smoke-wallet-auth-current",
+  logout: "campaign-os-smoke-wallet-auth-logout",
+  postLogoutSession: "campaign-os-smoke-wallet-auth-post-logout-session",
+  session: "campaign-os-smoke-wallet-auth-session",
+  verification: "campaign-os-smoke-wallet-auth-verification",
+});
+
+const liveWalletAuthenticationChallengeFields = Object.freeze([
+  "adapterId",
+  "challengeId",
+  "chainId",
+  "expiresAt",
+  "message",
+  "network",
+  "version",
+  "walletAddress",
+]);
+
+const liveWalletAuthenticationSessionFields = Object.freeze([
+  "absoluteExpiresAt",
+  "accountType",
+  "capabilities",
+  "chainId",
+  "idleExpiresAt",
+  "issuedAt",
+  "network",
+  "roles",
+  "sessionId",
+  "status",
+  "walletAddress",
+  "walletSource",
+]);
+
+const safeLiveWalletAuthenticationSmokeId = (value: unknown, maximum = 160): value is string =>
+  typeof value === "string"
+  && value.length > 0
+  && value.length <= maximum
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+
+const safeLiveWalletAuthenticationAudience = (value: unknown): value is string =>
+  typeof value === "string"
+  && value.length > 0
+  && value.length <= 256
+  && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value);
+
+const liveWalletAuthenticationSmokeBaseUrl = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(value);
+
+    return (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && parsed.username === ""
+      && parsed.password === ""
+      && parsed.pathname === "/"
+      && parsed.search === ""
+      && parsed.hash === ""
+      ? parsed.origin
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const liveWalletAuthenticationSmokeOrigin = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(value);
+
+    return (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && parsed.username === ""
+      && parsed.password === ""
+      && parsed.origin === value
+      ? value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+interface ParsedLiveWalletAuthenticationChallenge {
+  readonly expiresAt: Date;
+  readonly issuedAt: Date;
+  readonly nonce: string;
+}
+
+const canonicalIsoInstant = (value: string): Date | undefined => {
+  const parsed = new Date(value);
+
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value
+    ? parsed
+    : undefined;
+};
+
+const readCanonicalChallengeLine = (
+  lines: readonly string[],
+  index: number,
+  label: string,
+): string | undefined => {
+  const prefix = `${label}: `;
+  const line = lines[index];
+
+  return line?.startsWith(prefix) && line.length > prefix.length
+    ? line.slice(prefix.length)
+    : undefined;
+};
+
+const parseLiveWalletAuthenticationChallenge = ({
+  adapterId,
+  audience,
+  caHash,
+  chainId,
+  expiresAt,
+  message,
+  network,
+  now,
+  origin,
+  walletAddress,
+}: Readonly<{
+  adapterId: string;
+  audience: string;
+  caHash?: string;
+  chainId: string;
+  expiresAt: string;
+  message: string;
+  network: string;
+  now: Date;
+  origin: string;
+  walletAddress: string;
+}>): ParsedLiveWalletAuthenticationChallenge | undefined => {
+  if (
+    message.includes("\r")
+    || Buffer.byteLength(message, "utf8") > WALLET_AUTHENTICATION_MESSAGE_MAX_BYTES
+    || !Number.isFinite(now.getTime())
+  ) {
+    return undefined;
+  }
+  const lines = message.split("\n");
+  if (lines.length !== 14 || lines[0] !== "aelf Campaign OS Wallet Authentication") {
+    return undefined;
+  }
+
+  let parsedOrigin: URL;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    return undefined;
+  }
+  const version = readCanonicalChallengeLine(lines, 1, "Version");
+  const domain = readCanonicalChallengeLine(lines, 2, "Domain");
+  const uri = readCanonicalChallengeLine(lines, 3, "URI");
+  const parsedAudience = readCanonicalChallengeLine(lines, 4, "Audience");
+  const parsedWalletAddress = readCanonicalChallengeLine(lines, 5, "Wallet Address");
+  const parsedAdapterId = readCanonicalChallengeLine(lines, 6, "Adapter");
+  const parsedChainId = readCanonicalChallengeLine(lines, 7, "Chain ID");
+  const parsedNetwork = readCanonicalChallengeLine(lines, 8, "Network");
+  const parsedCaHash = readCanonicalChallengeLine(lines, 9, "CA Hash");
+  const nonce = readCanonicalChallengeLine(lines, 10, "Nonce");
+  const issuedAtText = readCanonicalChallengeLine(lines, 11, "Issued At");
+  const expiresAtText = readCanonicalChallengeLine(lines, 12, "Expires At");
+  const requestId = readCanonicalChallengeLine(lines, 13, "Request ID");
+  const issuedAt = issuedAtText ? canonicalIsoInstant(issuedAtText) : undefined;
+  const parsedExpiresAt = expiresAtText ? canonicalIsoInstant(expiresAtText) : undefined;
+
+  if (
+    version !== WALLET_AUTHENTICATION_PROTOCOL_VERSION
+    || domain !== parsedOrigin.host
+    || uri !== parsedOrigin.href
+    || parsedAudience !== audience
+    || parsedWalletAddress !== walletAddress
+    || parsedAdapterId !== adapterId
+    || parsedChainId !== chainId
+    || parsedNetwork !== network
+    || parsedCaHash !== (caHash ?? "-")
+    || !nonce
+    || !/^[A-Za-z0-9_-]{43}$/.test(nonce)
+    || !requestId
+    || !/^war_[A-Za-z0-9_-]{43}$/.test(requestId)
+    || !issuedAt
+    || !parsedExpiresAt
+    || expiresAtText !== expiresAt
+  ) {
+    return undefined;
+  }
+
+  const ttlMs = parsedExpiresAt.getTime() - issuedAt.getTime();
+  if (
+    issuedAt.getTime() > now.getTime()
+    || parsedExpiresAt.getTime() <= now.getTime()
+    || ttlMs < WALLET_AUTH_CHALLENGE_TTL_SECONDS_MIN * 1_000
+    || ttlMs > WALLET_AUTH_CHALLENGE_TTL_SECONDS_MAX * 1_000
+  ) {
+    return undefined;
+  }
+
+  return Object.freeze({ expiresAt: parsedExpiresAt, issuedAt, nonce });
+};
+
+interface ParsedSetCookie {
+  readonly attributes: ReadonlyMap<string, string | true>;
+  readonly name: string;
+  readonly value: string;
+}
+
+const parseSetCookie = (value: string | null): ParsedSetCookie | undefined => {
+  if (!value || value.length > 8_192 || /[\r\n\0]/.test(value)) {
+    return undefined;
+  }
+  const segments = value.split(";");
+  const cookiePair = segments.shift()?.trim();
+  const separator = cookiePair?.indexOf("=") ?? -1;
+  if (!cookiePair || separator <= 0) {
+    return undefined;
+  }
+  const name = cookiePair.slice(0, separator);
+  const cookieValue = cookiePair.slice(separator + 1);
+  if (
+    !/^[A-Za-z0-9_-]+$/.test(name)
+    || !/^[A-Za-z0-9._~-]*$/.test(cookieValue)
+    || cookiePair.length > 4_096
+  ) {
+    return undefined;
+  }
+
+  const attributes = new Map<string, string | true>();
+  for (const rawSegment of segments) {
+    const segment = rawSegment.trim();
+    if (!segment) {
+      return undefined;
+    }
+    const attributeSeparator = segment.indexOf("=");
+    const rawName = attributeSeparator === -1
+      ? segment
+      : segment.slice(0, attributeSeparator).trim();
+    const rawValue = attributeSeparator === -1
+      ? true
+      : segment.slice(attributeSeparator + 1).trim();
+    const attributeName = rawName.toLowerCase();
+    if (
+      !/^[A-Za-z][A-Za-z0-9-]*$/.test(rawName)
+      || attributes.has(attributeName)
+      || (typeof rawValue === "string" && rawValue.length === 0)
+    ) {
+      return undefined;
+    }
+    attributes.set(attributeName, rawValue);
+  }
+
+  return Object.freeze({ attributes, name, value: cookieValue });
+};
+
+const requestCookieFromSetCookie = (
+  value: string | null,
+): Readonly<{ cookie: string; setCookie: ParsedSetCookie }> | undefined => {
+  const parsed = parseSetCookie(value);
+
+  return parsed && parsed.value.length > 0
+    ? Object.freeze({ cookie: `${parsed.name}=${parsed.value}`, setCookie: parsed })
+    : undefined;
+};
+
+const equivalentCookieScope = (
+  issued: ReadonlyMap<string, string | true>,
+  cleared: ReadonlyMap<string, string | true>,
+): boolean => {
+  const ignored = new Set(["expires", "max-age"]);
+  const issuedScope = [...issued].filter(([key]) => !ignored.has(key));
+  const clearedScope = [...cleared].filter(([key]) => !ignored.has(key));
+
+  return issuedScope.length === clearedScope.length
+    && issuedScope.every(([key, value]) => {
+      const candidate = cleared.get(key);
+      return key === "samesite"
+        ? typeof value === "string"
+          && typeof candidate === "string"
+          && candidate.toLowerCase() === value.toLowerCase()
+        : candidate === value;
+    });
+};
+
+const validSessionClearCookie = (
+  value: string | null,
+  issued: ParsedSetCookie,
+  now: Date,
+): boolean => {
+  const cleared = parseSetCookie(value);
+  const expires = cleared?.attributes.get("expires");
+  const expiresAt = typeof expires === "string" ? new Date(expires) : undefined;
+
+  return Boolean(
+    cleared
+    && cleared.name === issued.name
+    && cleared.value === ""
+    && cleared.attributes.get("max-age") === "0"
+    && expiresAt
+    && Number.isFinite(expiresAt.getTime())
+    && expiresAt.getTime() <= now.getTime()
+    && equivalentCookieScope(issued.attributes, cleared.attributes),
+  );
+};
+
+const liveWalletAuthenticationSubject = (
+  session: Record<string, unknown>,
+): Readonly<{
+  accountType: string;
+  chainId: string;
+  network: string;
+  walletAddress: string;
+  walletSource: string;
+}> | undefined => {
+  const accountType = getString(session, "accountType");
+  const chainId = getString(session, "chainId");
+  const network = getString(session, "network");
+  const walletAddress = getString(session, "walletAddress");
+  const walletSource = getString(session, "walletSource");
+
+  if (
+    (accountType !== "AA" && accountType !== "EOA")
+    || !safeLiveWalletAuthenticationSmokeId(chainId, 32)
+    || (network !== "mainnet" && network !== "testnet")
+    || !safeLiveWalletAuthenticationSmokeId(walletAddress, 256)
+    || !safeLiveWalletAuthenticationSmokeId(walletSource, 64)
+  ) {
+    return undefined;
+  }
+
+  return Object.freeze({ accountType, chainId, network, walletAddress, walletSource });
+};
+
+const liveWalletAuthenticationSubjectDigest = (
+  subject: NonNullable<ReturnType<typeof liveWalletAuthenticationSubject>>,
+): string => createHash("sha256")
+  .update(JSON.stringify([
+    subject.accountType,
+    subject.chainId,
+    subject.network,
+    subject.walletAddress,
+    subject.walletSource,
+  ]))
+  .digest("hex");
+
+const readLiveWalletAuthenticationSuccess = async (
+  response: Response,
+  expectedStatus: number,
+  expectedTraceId: string,
+): Promise<Record<string, unknown> | undefined> => {
+  const payload = await readJson(response);
+
+  return response.status === expectedStatus
+    && payload.ok === true
+    && payload.traceId === expectedTraceId
+    && isRecord(payload.data)
+    ? payload.data
+    : undefined;
+};
+
+const readLiveWalletAuthenticationUnauthorized = async (
+  response: Response,
+  expectedTraceId: string,
+): Promise<boolean> => {
+  const payload = await readJson(response);
+  const error = readNestedRecord(payload, ["error"]);
+
+  return response.status === 401
+    && response.headers.get("x-campaign-os-trace-id") === expectedTraceId
+    && hasExactObjectKeys(payload, ["error", "ok", "traceId"])
+    && payload.ok === false
+    && payload.traceId === expectedTraceId
+    && getString(error, "code") === "AUTH_SESSION_INVALID";
+};
+
+/**
+ * Requires an API server already composed with the WP05 auth runtime/controller,
+ * a ready M243 verification runtime, and a Campaign/task owned by the connected subject.
+ */
+export const runBackendRuntimeWalletAuthenticationSmoke = async ({
+  adapterId,
+  audience,
+  baseUrl,
+  campaignId,
+  clock = { now: () => new Date() },
+  fetchImpl = fetch,
+  origin,
+  taskId,
+  walletClient,
+}: BackendRuntimeWalletAuthenticationSmokeOptions): Promise<
+  BackendRuntimeWalletAuthenticationSmokeSummary
+> => {
+  const resolvedBaseUrl = liveWalletAuthenticationSmokeBaseUrl(baseUrl);
+  const resolvedOrigin = liveWalletAuthenticationSmokeOrigin(origin);
+  if (
+    !resolvedBaseUrl
+    || !resolvedOrigin
+    || !safeLiveWalletAuthenticationSmokeId(adapterId, 64)
+    || !safeLiveWalletAuthenticationAudience(audience)
+    || !safeLiveWalletAuthenticationSmokeId(campaignId)
+    || !safeLiveWalletAuthenticationSmokeId(taskId)
+    || typeof fetchImpl !== "function"
+    || !walletClient
+    || typeof walletClient.connect !== "function"
+    || typeof walletClient.signMessage !== "function"
+    || typeof walletClient.disconnect !== "function"
+    || typeof walletClient.close !== "function"
+    || !clock
+    || typeof clock.now !== "function"
+  ) {
+    throw new BackendRuntimeWalletAuthenticationSmokeError("input");
+  }
+
+  let phase: BackendRuntimeWalletAuthenticationSmokePhase = "connect";
+  let failure: BackendRuntimeWalletAuthenticationSmokeError | undefined;
+  let summary: BackendRuntimeWalletAuthenticationSmokeSummary | undefined;
+
+  try {
+    const connection = await walletClient.connect(adapterId);
+    if (
+      connection.adapterId !== adapterId
+      || !safeLiveWalletAuthenticationSmokeId(connection.walletAddressHint, 256)
+      || !safeLiveWalletAuthenticationSmokeId(connection.chainId, 32)
+      || (connection.network !== "mainnet" && connection.network !== "testnet")
+      || (connection.caHashHint !== undefined
+        && !/^[a-f0-9]{64}$/.test(connection.caHashHint))
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("connect");
+    }
+
+    phase = "challenge";
+    const challengeResponse = await fetchImpl(
+      `${resolvedBaseUrl}/api/wallet/auth/challenges`,
+      {
+        body: JSON.stringify({
+          adapterId: connection.adapterId,
+          ...(connection.caHashHint === undefined ? {} : { caHash: connection.caHashHint }),
+          chainId: connection.chainId,
+          network: connection.network,
+          walletAddress: connection.walletAddressHint,
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: resolvedOrigin,
+          "x-campaign-os-trace-id": liveWalletAuthenticationSmokeTraceIds.challenge,
+        },
+        method: "POST",
+      },
+    );
+    const challenge = await readLiveWalletAuthenticationSuccess(
+      challengeResponse,
+      201,
+      liveWalletAuthenticationSmokeTraceIds.challenge,
+    );
+    const challengeId = getString(challenge, "challengeId");
+    const message = getString(challenge, "message");
+    const challengeExpiresAt = getString(challenge, "expiresAt");
+    let challengeNow: Date;
+    try {
+      challengeNow = clock.now();
+    } catch {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("challenge");
+    }
+    if (
+      !hasExactObjectKeys(challenge, liveWalletAuthenticationChallengeFields)
+      || getString(challenge, "adapterId") !== connection.adapterId
+      || getString(challenge, "chainId") !== connection.chainId
+      || getString(challenge, "network") !== connection.network
+      || getString(challenge, "walletAddress") !== connection.walletAddressHint
+      || getString(challenge, "version") !== WALLET_AUTHENTICATION_PROTOCOL_VERSION
+      || !challengeId
+      || !/^wac_[A-Za-z0-9_-]{43}$/.test(challengeId)
+      || typeof challengeExpiresAt !== "string"
+      || typeof message !== "string"
+      || message.length === 0
+      || !(challengeNow instanceof Date)
+      || !Number.isFinite(challengeNow.getTime())
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("challenge");
+    }
+    const canonicalChallenge = parseLiveWalletAuthenticationChallenge({
+      adapterId: connection.adapterId,
+      audience,
+      ...(connection.caHashHint === undefined ? {} : { caHash: connection.caHashHint }),
+      chainId: connection.chainId,
+      expiresAt: challengeExpiresAt,
+      message,
+      network: connection.network,
+      now: challengeNow,
+      origin: resolvedOrigin,
+      walletAddress: connection.walletAddressHint,
+    });
+    if (!canonicalChallenge) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("challenge");
+    }
+    const { nonce } = canonicalChallenge;
+
+    phase = "proof";
+    const proof = await walletClient.signMessage({
+      exactMessageBytes: Uint8Array.from(Buffer.from(message, "utf8")),
+    });
+    if (
+      !(proof.signature instanceof Uint8Array)
+      || proof.signature.byteLength === 0
+      || (proof.publicKey !== undefined
+        && (!(proof.publicKey instanceof Uint8Array) || proof.publicKey.byteLength === 0))
+      || (proof.adapterProof !== undefined && !isRecord(proof.adapterProof))
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("proof");
+    }
+
+    phase = "session";
+    const sessionResponse = await fetchImpl(
+      `${resolvedBaseUrl}/api/wallet/auth/sessions`,
+      {
+        body: JSON.stringify({
+          ...(proof.adapterProof === undefined
+            ? {}
+            : { adapterProof: proof.adapterProof }),
+          challengeId,
+          message,
+          nonce,
+          ...(proof.publicKey === undefined
+            ? {}
+            : { publicKey: Buffer.from(proof.publicKey).toString("hex") }),
+          signature: Buffer.from(proof.signature).toString("hex"),
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: resolvedOrigin,
+          "x-campaign-os-trace-id": liveWalletAuthenticationSmokeTraceIds.session,
+        },
+        method: "POST",
+      },
+    );
+    const sessionData = await readLiveWalletAuthenticationSuccess(
+      sessionResponse,
+      201,
+      liveWalletAuthenticationSmokeTraceIds.session,
+    );
+    const session = readNestedRecord(sessionData, ["session"]);
+    const csrfToken = getString(sessionData, "csrfToken");
+    const issuedCookie = requestCookieFromSetCookie(sessionResponse.headers.get("set-cookie"));
+    const subject = session ? liveWalletAuthenticationSubject(session) : undefined;
+    const roles = getStringArray(session, "roles");
+    const capabilities = getStringArray(session, "capabilities");
+    const sessionId = getString(session, "sessionId");
+    if (
+      !hasExactObjectKeys(sessionData, ["csrfToken", "session"])
+      || !hasExactObjectKeys(session, liveWalletAuthenticationSessionFields)
+      || !csrfToken
+      || csrfToken.length < 32
+      || csrfToken.length > 512
+      || !issuedCookie
+      || !subject
+      || subject.chainId !== connection.chainId
+      || subject.network !== connection.network
+      || subject.walletAddress !== connection.walletAddressHint
+      || !roles.includes("participant")
+      || !capabilities.includes("task:verify")
+      || !safeLiveWalletAuthenticationSmokeId(sessionId)
+      || session?.status !== "active"
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("session");
+    }
+    const { cookie } = issuedCookie;
+    const subjectDigest = liveWalletAuthenticationSubjectDigest(subject);
+    const protectedHeaders = {
+      cookie,
+      origin: resolvedOrigin,
+      "x-campaign-os-csrf": csrfToken,
+    };
+
+    phase = "task_verification";
+    const verificationResponse = await fetchImpl(
+      `${resolvedBaseUrl}/api/tasks/${encodeURIComponent(taskId)}/verify`,
+      {
+        body: JSON.stringify({ campaignId }),
+        headers: {
+          ...protectedHeaders,
+          "content-type": "application/json",
+          "x-campaign-os-trace-id": liveWalletAuthenticationSmokeTraceIds.verification,
+        },
+        method: "POST",
+      },
+    );
+    const verificationData = await readLiveWalletAuthenticationSuccess(
+      verificationResponse,
+      200,
+      liveWalletAuthenticationSmokeTraceIds.verification,
+    );
+    const verification = readNestedRecord(verificationData, ["payload"]);
+    if (
+      !verification
+      || getString(verification, "outcome") !== "completed"
+      || getString(verification, "status") !== "completed"
+      || !safeLiveWalletAuthenticationSmokeId(
+        getString(verification, "verificationAttemptId"),
+      )
+      || typeof verification.pointsAwarded !== "number"
+      || !Number.isFinite(verification.pointsAwarded)
+      || verification.pointsAwarded < 0
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("task_verification");
+    }
+
+    phase = "current_session";
+    const currentResponse = await fetchImpl(
+      `${resolvedBaseUrl}/api/wallet/auth/session`,
+      {
+        headers: {
+          cookie,
+          origin: resolvedOrigin,
+          "x-campaign-os-trace-id": liveWalletAuthenticationSmokeTraceIds.currentSession,
+        },
+        method: "GET",
+      },
+    );
+    const currentData = await readLiveWalletAuthenticationSuccess(
+      currentResponse,
+      200,
+      liveWalletAuthenticationSmokeTraceIds.currentSession,
+    );
+    const currentSession = readNestedRecord(currentData, ["session"]);
+    const currentSubject = currentSession
+      ? liveWalletAuthenticationSubject(currentSession)
+      : undefined;
+    if (
+      !hasExactObjectKeys(currentData, ["csrfToken", "session"])
+      || !hasExactObjectKeys(currentSession, liveWalletAuthenticationSessionFields)
+      || !currentSubject
+      || liveWalletAuthenticationSubjectDigest(currentSubject) !== subjectDigest
+      || getString(currentSession, "sessionId") !== sessionId
+      || getString(currentData, "csrfToken") !== csrfToken
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("current_session");
+    }
+
+    phase = "logout";
+    const logoutResponse = await fetchImpl(
+      `${resolvedBaseUrl}/api/wallet/auth/logout`,
+      {
+        headers: {
+          ...protectedHeaders,
+          "x-campaign-os-trace-id": liveWalletAuthenticationSmokeTraceIds.logout,
+        },
+        method: "POST",
+      },
+    );
+    const logoutData = await readLiveWalletAuthenticationSuccess(
+      logoutResponse,
+      200,
+      liveWalletAuthenticationSmokeTraceIds.logout,
+    );
+    let logoutNow: Date;
+    try {
+      logoutNow = clock.now();
+    } catch {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("logout");
+    }
+    if (
+      !hasExactObjectKeys(logoutData, ["revoked"])
+      || logoutData?.revoked !== true
+      || !(logoutNow instanceof Date)
+      || !Number.isFinite(logoutNow.getTime())
+      || !validSessionClearCookie(
+        logoutResponse.headers.get("set-cookie"),
+        issuedCookie.setCookie,
+        logoutNow,
+      )
+    ) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("logout");
+    }
+
+    phase = "post_logout_session";
+    const postLogoutResponse = await fetchImpl(
+      `${resolvedBaseUrl}/api/wallet/auth/session`,
+      {
+        headers: {
+          cookie,
+          origin: resolvedOrigin,
+          "x-campaign-os-trace-id": liveWalletAuthenticationSmokeTraceIds.postLogoutSession,
+        },
+        method: "GET",
+      },
+    );
+    if (!await readLiveWalletAuthenticationUnauthorized(
+      postLogoutResponse,
+      liveWalletAuthenticationSmokeTraceIds.postLogoutSession,
+    )) {
+      throw new BackendRuntimeWalletAuthenticationSmokeError("post_logout_session");
+    }
+
+    phase = "cleanup";
+    await walletClient.disconnect();
+    summary = Object.freeze({
+      canonicalSubjectContinuity: true as const,
+      credentialAuthority: "durable_cookie" as const,
+      proofPort: "wallet_client" as const,
+      status: "passed" as const,
+      subjectDigest,
+      traceIds: liveWalletAuthenticationSmokeTraceIds,
+      verificationBodyFields: Object.freeze(["campaignId"] as const),
+    });
+  } catch (error) {
+    failure = error instanceof BackendRuntimeWalletAuthenticationSmokeError
+      ? error
+      : new BackendRuntimeWalletAuthenticationSmokeError(phase);
+  }
+
+  try {
+    await walletClient.close();
+  } catch {
+    failure ??= new BackendRuntimeWalletAuthenticationSmokeError("cleanup");
+  }
+
+  if (failure) {
+    throw failure;
+  }
+  if (!summary) {
+    throw new BackendRuntimeWalletAuthenticationSmokeError("cleanup");
+  }
+
+  return summary;
+};
+
 const productionDatabaseRequiredReferenceKeys = [
   "CAMPAIGN_OS_DATABASE_PACKAGE",
   "CAMPAIGN_OS_DATABASE_PACKAGE_BINDING",
@@ -2430,6 +3222,7 @@ const durableLocalSmokeTraceIds = {
   walletSession: "campaign-os-smoke-durable-wallet-session",
 } as const;
 const durableLocalSmokeCampaignId = "campaign-db-draft-0001";
+const durableLocalPreviewAuthority = createDeprecatedNonLivePreviewAuthorityOption();
 
 interface DurableLocalParticipantSession {
   accountType: string;
@@ -2643,7 +3436,7 @@ const postDurableLocalSmokeRecord = async ({
   return { data, kind };
 };
 
-const assertDurableLocalVerificationRuntimeDisabled = async ({
+const assertDeprecatedDurableLocalVerificationAuthorityRejected = async ({
   baseUrl,
   body,
   fetchImpl,
@@ -2672,13 +3465,14 @@ const assertDurableLocalVerificationRuntimeDisabled = async ({
   const details = readNestedRecord(error, ["details"]);
 
   if (
-    response.status !== 503
+    response.status !== 400
     || payload.ok !== false
     || payload.traceId !== traceId
-    || getString(error, "code") !== "PERSISTENCE_UNAVAILABLE"
-    || getString(details, "operation") !== "taskVerificationRuntime.activate"
+    || getString(error, "code") !== "INVALID_REQUEST"
+    || getString(details, "diagnosticCode") !== "INVALID_REQUEST"
+    || getString(details, "field") !== "headers"
   ) {
-    throw new Error("Campaign OS durable local verification runtime smoke check failed.");
+    throw new Error("Campaign OS deprecated verification authority smoke check failed.");
   }
 };
 
@@ -2817,14 +3611,9 @@ const runDurableLocalPersistenceSmoke = async ({
     throw new Error("Campaign OS durable local Task smoke check failed.");
   }
 
-  await assertDurableLocalVerificationRuntimeDisabled({
+  await assertDeprecatedDurableLocalVerificationAuthorityRejected({
     baseUrl: server.url,
-    body: {
-      accountType: participantSession.accountType,
-      campaignId,
-      walletAddress: participantSession.walletAddress,
-      walletSource: participantSession.walletSource,
-    },
+    body: { campaignId },
     fetchImpl,
     path: `/api/tasks/${taskId}/verify`,
     traceId: durableLocalSmokeTraceIds.verification,
@@ -2859,6 +3648,7 @@ const runDurableLocalPersistenceSmoke = async ({
   await stopAndAssertBackendRuntimeResourcesReleased(server);
 
   const restartedServer = await startCampaignOsApiServer({
+    deprecatedNonLivePreviewAuthority: durableLocalPreviewAuthority,
     env,
     host,
     logger: false,
@@ -3528,6 +4318,7 @@ export const runBackendRuntimeSmoke = async ({
 
   try {
     server = await serverFactory({
+      deprecatedNonLivePreviewAuthority: durableLocalPreviewAuthority,
       env: durableEnv.env,
       host,
       logger: false,

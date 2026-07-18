@@ -1,7 +1,8 @@
 import type { NormalizedWalletSession } from "../domain/types";
 import {
-  createWalletSessionAuthHeaders,
-  mergeWalletSessionAuthHeaders,
+  createDeprecatedPreviewWalletSessionAuthHeaders,
+  deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+  mergeDeprecatedPreviewWalletSessionAuthHeaders,
 } from "./walletSessionAuthHeaders";
 
 export type AdminDurableReviewApiFetch = typeof fetch;
@@ -235,6 +236,7 @@ export interface AdminDownloadArtifactInput {
 }
 
 export interface AdminDurableReviewApiConfig {
+  authorityMode?: "deprecated_non_live_preview" | "durable_cookie";
   baseUrl?: string;
   headers?: HeadersInit;
   maxDownloadBytes?: number;
@@ -365,6 +367,7 @@ export interface AdminDurableReviewApiBridge {
 }
 
 interface NormalizedConfig {
+  readonly authorityMode: "deprecated_non_live_preview" | "durable_cookie";
   readonly baseUrl?: URL;
   readonly configCode?: Extract<
     AdminDurableReviewBridgeCode,
@@ -1512,6 +1515,9 @@ const positiveConfig = (value: unknown, fallback: number, maximum: number): numb
 
 const normalizeConfig = (config: AdminDurableReviewApiConfig | undefined): NormalizedConfig => {
   try {
+    const authorityMode = config?.authorityMode === "deprecated_non_live_preview"
+      ? "deprecated_non_live_preview" as const
+      : "durable_cookie" as const;
     const timeoutMs = positiveConfig(config?.timeoutMs, defaultTimeoutMs, maxTimeoutMs);
     const configuredResponseBytes = positiveConfig(config?.maxResponseBytes, defaultMaxResponseBytes, maxResponseBytes);
     const configuredDownloadBytes = positiveConfig(config?.maxDownloadBytes, defaultMaxDownloadBytes, defaultMaxDownloadBytes);
@@ -1523,6 +1529,7 @@ const normalizeConfig = (config: AdminDurableReviewApiConfig | undefined): Norma
     const rawBaseUrl = text(config?.baseUrl, 2_048);
     if (!rawBaseUrl) {
       return {
+        authorityMode,
         configCode: "BRIDGE_BASE_URL_MISSING",
         headers,
         maxDownloadBytes: configuredDownloadBytes,
@@ -1536,8 +1543,16 @@ const normalizeConfig = (config: AdminDurableReviewApiConfig | undefined): Norma
       (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:")
       || baseUrl.username
       || baseUrl.password
+      || (
+        authorityMode === "deprecated_non_live_preview"
+        && baseUrl.hostname !== "localhost"
+        && baseUrl.hostname !== "127.0.0.1"
+        && baseUrl.hostname !== "[::1]"
+        && baseUrl.hostname !== "::1"
+      )
     ) {
       return {
+        authorityMode,
         configCode: "BRIDGE_BASE_URL_INVALID",
         headers,
         maxDownloadBytes: configuredDownloadBytes,
@@ -1549,6 +1564,7 @@ const normalizeConfig = (config: AdminDurableReviewApiConfig | undefined): Norma
     baseUrl.search = "";
     baseUrl.hash = "";
     return {
+      authorityMode,
       baseUrl,
       headers,
       maxDownloadBytes: configuredDownloadBytes,
@@ -1558,6 +1574,7 @@ const normalizeConfig = (config: AdminDurableReviewApiConfig | undefined): Norma
     };
   } catch {
     return {
+      authorityMode: "durable_cookie",
       configCode: "BRIDGE_BASE_URL_INVALID",
       maxDownloadBytes: defaultMaxDownloadBytes,
       maxResponseBytes: defaultMaxResponseBytes,
@@ -2237,7 +2254,17 @@ const authenticatedRequestAdapter = async <T>(
       details: Object.freeze({ field: "signal" }),
     });
   }
-  const auth = createWalletSessionAuthHeaders(contextSession, "review_operator");
+  if (config.authorityMode !== "deprecated_non_live_preview") {
+    return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId, {
+      details: Object.freeze({ field: "durableCookieAuthority" }),
+      reconnectRequired: true,
+    });
+  }
+  const auth = createDeprecatedPreviewWalletSessionAuthHeaders(
+    contextSession,
+    deprecatedNonLivePreviewWalletSessionAuthConfiguration,
+    "review_operator",
+  );
   if (!auth.ok) {
     return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId, {
       details: Object.freeze({ field: auth.field }),
@@ -2250,8 +2277,9 @@ const authenticatedRequestAdapter = async <T>(
   ) {
     return bridgeFailure("BRIDGE_SESSION_INVALID", "auth", traceId, { reconnectRequired: true });
   }
-  const merged = mergeWalletSessionAuthHeaders(
+  const merged = mergeDeprecatedPreviewWalletSessionAuthHeaders(
     auth.headers,
+    deprecatedNonLivePreviewWalletSessionAuthConfiguration,
     config.headers,
     protectedOperationHeaders,
   );

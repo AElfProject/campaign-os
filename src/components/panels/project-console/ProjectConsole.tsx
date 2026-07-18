@@ -3176,6 +3176,7 @@ export const ProjectConsole = ({
 
     void loadRepositoryCampaignWorkflowBridgeState({
       config: {
+        authorityMode: "deprecated_non_live_preview",
         baseUrl,
         tracePrefix: "project-console-repository-workflow-review",
       },

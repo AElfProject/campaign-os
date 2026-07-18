@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   authSessionRolePolicies,
@@ -7,12 +8,23 @@ import {
   createSessionProofBoundary,
   getProtectedRouteAuth,
   hasAuthRoleRouteAccess,
+  isLiveAuthorizationFence,
+  isTrustedLiveAuthorizationContext,
   isAuthRoleCapabilityForbidden,
   locallyEnforcedAuthRouteIds,
   protectedRouteAuthMap,
+  resolveTrustedLiveAuthorizationContext,
   resolveTrustedAdminOperatorSession,
   summarizeSensitiveAuthSessionInput,
+  unwrapLiveAuthorizationFence,
 } from "./authSession";
+import {
+  issueResolvedWalletSessionAuthority,
+  issueVerifiedWalletSubject,
+  type ResolvedWalletSessionAuthorityInput,
+} from "./walletAuthentication";
+import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
+import type { WalletAuthenticationAuthorizationFence } from "./walletAuthenticationRuntime";
 import type { WalletSessionRecord } from "./walletSessionRepository";
 
 const forbiddenRawFragments = [
@@ -92,7 +104,222 @@ const issuedAdminWalletSession = (
   ...overrides,
 });
 
+const liveAuthorizationNow = "2026-07-18T02:00:00.000Z";
+
+const capabilityDigest = (values: readonly string[]): string => createHash("sha256")
+  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+  .digest("hex");
+
+const authorizedLiveSession = ({
+  authority: authorityOverrides = {},
+  fence: fenceOverrides = {},
+}: {
+  authority?: Partial<ResolvedWalletSessionAuthorityInput>;
+  fence?: Partial<WalletAuthenticationAuthorizationFence>;
+} = {}) => {
+  const subject = issueVerifiedWalletSubject({
+    accountType: "EOA",
+    adapterId: "aelf-eoa-v1",
+    chainId: "AELF",
+    network: "mainnet",
+    proofDigest: "a".repeat(64),
+    proofMethod: "AELF_EOA_RECOVERABLE",
+    signerAddress: "2YVwTrustedSigner",
+    verifiedAt: "2026-07-18T01:55:00.000Z",
+    walletAddress: "2YVwTrustedParticipant",
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  });
+  const authority = issueResolvedWalletSessionAuthority({
+    absoluteExpiresAt: "2026-07-18T04:00:00.000Z",
+    capabilities: ["campaign:read", "task:verify"],
+    credentialBoundary: "wallet-auth-cookie/v1",
+    idleExpiresAt: "2026-07-18T03:00:00.000Z",
+    membershipRevision: "membership-v1",
+    roleIds: ["participant"],
+    sessionId: "sess-live-participant",
+    subject,
+    version: 3,
+    ...authorityOverrides,
+  });
+  const fence = Object.freeze({
+    capabilityDigest: capabilityDigest(authority.capabilities),
+    membershipRevision: authority.membershipRevision,
+    sessionId: authority.sessionId,
+    subjectKey: walletAuthenticationSubjectKey(authority.subject),
+    version: authority.version,
+    ...fenceOverrides,
+  });
+
+  return Object.freeze({ authority, fence, status: "authorized" as const });
+};
+
 describe("auth session boundary", () => {
+  it("constructs an immutable live trusted context and branded fence from WP05 authority", () => {
+    const runtimeAuthorization = authorizedLiveSession({
+      authority: {
+        capabilities: ["campaign:read", "campaign:write", "task:verify"],
+        roleIds: ["participant", "project_owner", "review_operator"],
+      },
+    });
+    const result = resolveTrustedLiveAuthorizationContext(runtimeAuthorization, {
+      now: new Date(liveAuthorizationNow),
+    });
+
+    expect(result).toMatchObject({
+      context: {
+        absoluteExpiresAt: "2026-07-18T04:00:00.000Z",
+        capabilities: ["campaign:read", "campaign:write", "task:verify"],
+        idleExpiresAt: "2026-07-18T03:00:00.000Z",
+        membershipRevision: "membership-v1",
+        proofRoleId: "participant",
+        roleIds: ["participant", "project_owner", "review_operator"],
+        sessionId: "sess-live-participant",
+        subject: {
+          accountType: "EOA",
+          chainId: "AELF",
+          network: "mainnet",
+          walletAddress: "2YVwTrustedParticipant",
+          walletSource: "PORTKEY_EOA_EXTENSION",
+        },
+        version: 3,
+      },
+      status: "resolved",
+    });
+    if (result.status !== "resolved") {
+      throw new Error("Expected a trusted live authorization context.");
+    }
+    expect(isTrustedLiveAuthorizationContext(result.context)).toBe(true);
+    expect(isLiveAuthorizationFence(result.fence)).toBe(true);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.context)).toBe(true);
+    expect(Object.isFrozen(result.context.subject)).toBe(true);
+    expect(Object.isFrozen(result.context.roleIds)).toBe(true);
+    expect(Object.isFrozen(result.context.capabilities)).toBe(true);
+    expect(Object.isFrozen(result.fence)).toBe(true);
+    expect(unwrapLiveAuthorizationFence(result.fence)).toBe(runtimeAuthorization.fence);
+    expect(JSON.stringify(result.context)).not.toContain("2YVwTrustedSigner");
+    expect(JSON.stringify(result.context)).not.toContain("a".repeat(64));
+  });
+
+  it.each(["AA", "EOA"] as const)(
+    "maps %s wallet proof only to the Participant proof role",
+    (accountType) => {
+      const subject = issueVerifiedWalletSubject({
+        accountType,
+        adapterId: accountType === "AA" ? "portkey-aa-v1" : "aelf-eoa-v1",
+        ...(accountType === "AA" ? { caHash: "ca-hash-live" } : {}),
+        chainId: "AELF",
+        network: "mainnet",
+        proofDigest: "f".repeat(64),
+        proofMethod: accountType === "AA"
+          ? "PORTKEY_AA_MANAGER_CA"
+          : "AELF_EOA_RECOVERABLE",
+        signerAddress: "2YVwTrustedSigner",
+        verifiedAt: "2026-07-18T01:55:00.000Z",
+        walletAddress: "2YVwTrustedParticipant",
+        walletSource: accountType === "AA" ? "PORTKEY_AA" : "PORTKEY_EOA_EXTENSION",
+      });
+      const result = resolveTrustedLiveAuthorizationContext(authorizedLiveSession({
+        authority: {
+          capabilities: ["campaign:write", "admin:review"],
+          roleIds: ["project_owner", "review_operator"],
+          subject,
+        },
+      }), { now: new Date(liveAuthorizationNow) });
+
+      expect(result).toMatchObject({
+        context: {
+          proofRoleId: "participant",
+          subject: { accountType },
+        },
+        status: "resolved",
+      });
+    },
+  );
+
+  it.each([
+    [
+      "revoked runtime resolution",
+      {
+        diagnostic: {
+          code: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+          field: "session",
+          retryable: false,
+          traceId: "trace-revoked",
+        },
+        status: "unauthorized",
+      },
+      "session-unavailable",
+    ],
+    [
+      "idle expiry",
+      authorizedLiveSession({ authority: { idleExpiresAt: liveAuthorizationNow } }),
+      "session-expired",
+    ],
+    [
+      "absolute expiry",
+      authorizedLiveSession({ authority: { absoluteExpiresAt: liveAuthorizationNow } }),
+      "session-expired",
+    ],
+    [
+      "credential boundary",
+      authorizedLiveSession({ authority: { credentialBoundary: "internal-agent/v1" } }),
+      "credential-boundary-invalid",
+    ],
+    [
+      "session version",
+      authorizedLiveSession({ fence: { version: 4 } }),
+      "fence-mismatch",
+    ],
+    [
+      "membership revision",
+      authorizedLiveSession({ fence: { membershipRevision: "membership-v2" } }),
+      "fence-mismatch",
+    ],
+    [
+      "capability snapshot",
+      authorizedLiveSession({
+        authority: { capabilities: ["campaign:read"] },
+        fence: { capabilityDigest: capabilityDigest(["campaign:read", "task:verify"]) },
+      }),
+      "fence-mismatch",
+    ],
+    [
+      "session id",
+      authorizedLiveSession({ fence: { sessionId: "sess-other" } }),
+      "fence-mismatch",
+    ],
+    [
+      "subject",
+      authorizedLiveSession({ fence: { subjectKey: "c".repeat(64) } }),
+      "fence-mismatch",
+    ],
+  ] as const)("fails closed for %s", (_case, authorization, reason) => {
+    expect(resolveTrustedLiveAuthorizationContext(authorization, {
+      now: new Date(liveAuthorizationNow),
+    })).toEqual({ reason, status: "unauthorized" });
+  });
+
+  it("does not accept structurally forged or preview authorization objects as live brands", () => {
+    const forgedFence = {
+      capabilityDigest: "b".repeat(64),
+      membershipRevision: "membership-v1",
+      sessionId: "sess-live-participant",
+      subjectKey: "c".repeat(64),
+      version: 3,
+    };
+
+    expect(isLiveAuthorizationFence(forgedFence)).toBe(false);
+    expect(isTrustedLiveAuthorizationContext({
+      credentialBoundary: "ordinary_user_wallet",
+      roleIds: ["participant"],
+      sessionId: "preview-header-session",
+    })).toBe(false);
+    expect(() => unwrapLiveAuthorizationFence(forgedFence as never)).toThrow(
+      "Live authorization fence is invalid.",
+    );
+  });
+
   it("defines seeded normalized wallet sessions for all required wallet sources", () => {
     const sessions = createSeededWalletSessionContracts();
     const bySource = Object.fromEntries(sessions.map((session) => [session.walletSource, session]));

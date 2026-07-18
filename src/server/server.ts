@@ -11,11 +11,15 @@ import {
   type ApiRuntimeHeaders,
   type CampaignOsApiRuntime,
   type CreateCampaignOsApiRuntimeOptions,
+  type DeprecatedNonLivePreviewAuthorityOption,
 } from "./apiRuntime";
 import { createFailureEnvelope, type ApiRuntimeEnvelope } from "./envelope";
-import { internalRuntimeError, persistenceUnavailable } from "./errors";
+import { internalRuntimeError, persistenceUnavailable, routeNotFound } from "./errors";
 import { createBackendServiceReadinessReport } from "./backendService";
-import { apiRuntimeContractRoutes } from "./routes";
+import {
+  apiRuntimeContractRoutes,
+  resolveExactProtectedApiRoute,
+} from "./routes";
 import {
   createAdminFailureEnvelope,
   createServerRequestContext,
@@ -34,6 +38,40 @@ import {
   type ApiServerRuntimeContract,
 } from "./serverRuntime";
 import type { ProviderHttpTransport } from "./providerHttpTransport";
+import {
+  resolveCampaignOsWalletAuthenticationConfig,
+  type WalletAuthenticationConfig,
+} from "./config";
+import type {
+  WalletAuthenticationHttpController,
+  WalletAuthenticationHttpHeaders,
+  WalletAuthenticationHttpRequest,
+  WalletAuthenticationHttpResponse,
+} from "./walletAuthenticationHttp";
+import type {
+  RevalidateWalletAuthenticationFenceInput,
+  RevalidateWalletAuthenticationFenceResult,
+  ResolveWalletAuthenticationAuthorizationResult,
+  WalletAuthenticationMutationRequestInput,
+  WalletAuthenticationRuntimeDiagnostic,
+  WalletAuthenticationRuntimeFailure,
+  WalletAuthenticationRuntimeStopResult,
+} from "./walletAuthenticationRuntime";
+import {
+  createDefaultWalletAuthenticationServerComposition,
+  type WalletAuthenticationLiveAuthorityRuntime,
+  type WalletAuthenticationServerComposition,
+  type WalletAuthenticationServerCompositionDependencies,
+  type WalletAuthenticationServerCompositionFactory,
+} from "./walletAuthenticationServerComposition";
+
+export type {
+  WalletAuthenticationLiveAuthorityRuntime,
+  WalletAuthenticationServerComposition,
+  WalletAuthenticationServerCompositionDependencies,
+  WalletAuthenticationServerCompositionFactory,
+  WalletAuthenticationServerCompositionFactoryInput,
+} from "./walletAuthenticationServerComposition";
 
 export interface CampaignOsApiServerHandle {
   getReadiness(): ServerRuntimeReadiness;
@@ -48,6 +86,8 @@ export interface CampaignOsApiServerHandle {
 
 export interface StartCampaignOsApiServerOptions {
   allowedCorsOrigins?: string[];
+  /** @deprecated Local review compatibility only; never enables live wallet authority. */
+  deprecatedNonLivePreviewAuthority?: DeprecatedNonLivePreviewAuthorityOption;
   env?: Record<string, string | undefined>;
   host?: string;
   logger?: Pick<Console, "error" | "log"> | false;
@@ -58,6 +98,11 @@ export interface StartCampaignOsApiServerOptions {
   shutdownTimeoutMs?: number;
   taskVerificationTransport?: ProviderHttpTransport;
   version?: string;
+  walletAuthenticationAllowedOrigins?: readonly string[];
+  walletAuthenticationCompositionDependencies?: WalletAuthenticationServerCompositionDependencies;
+  walletAuthenticationCompositionFactory?: WalletAuthenticationServerCompositionFactory;
+  walletAuthenticationHttpController?: WalletAuthenticationHttpController;
+  walletAuthenticationRuntime?: WalletAuthenticationLiveAuthorityRuntime;
 }
 
 export type ApiServerShutdownErrorCode =
@@ -82,19 +127,33 @@ interface RequestBodyReadResult {
   bodyBytes: number;
 }
 
-const toRuntimeHeaders = (request: IncomingMessage): ApiRuntimeHeaders =>
-  Object.fromEntries(
-    Object.entries(request.headers).map(([key, value]) => [
-      key,
-      Array.isArray(value) || typeof value === "string" ? value : undefined,
-    ]),
-  ) as ApiRuntimeHeaders;
+const toRuntimeHeaders = (request: IncomingMessage): ApiRuntimeHeaders => {
+  const headers: ApiRuntimeHeaders = {};
+
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    const rawName = request.rawHeaders[index];
+    const rawValue = request.rawHeaders[index + 1];
+    if (typeof rawName !== "string" || typeof rawValue !== "string") {
+      continue;
+    }
+
+    const name = rawName.toLowerCase();
+    const existing = headers[name];
+    headers[name] = existing === undefined
+      ? rawValue
+      : Array.isArray(existing)
+        ? [...existing, rawValue]
+        : [existing, rawValue];
+  }
+
+  return headers;
+};
 
 const toGuardHeaders = (
-  request: IncomingMessage,
+  requestHeaders: ApiRuntimeHeaders,
   traceHeaderName: string,
 ) => {
-  const headers = { ...request.headers };
+  const headers = { ...requestHeaders };
   const traceHeaderKey = Object.keys(headers).find(
     (key) => key.toLowerCase() === traceHeaderName.toLowerCase(),
   );
@@ -111,7 +170,7 @@ const toGuardHeaders = (
     && !/(?:bearer|password|private|raw[_-]?signature|secret|token)/i.test(traceId)
   );
 
-  if (traceHeaderKey && !safe) {
+  if (traceHeaderKey && !safe && !Array.isArray(headers[traceHeaderKey])) {
     delete headers[traceHeaderKey];
   }
 
@@ -207,6 +266,332 @@ const settleWithin = <T>(promise: Promise<T>, timeoutMs: number) =>
     );
   });
 
+const liveWalletAuthenticationRouteIds = new Set([
+  "admin.wallet-session.revoke",
+  "wallet.auth.challenge.create",
+  "wallet.auth.session.create",
+  "wallet.auth.session.current",
+  "wallet.auth.session.logout",
+  "wallet.auth.session.rotate",
+]);
+
+const safeWalletAuthenticationTraceId = (value: unknown): string =>
+  typeof value === "string"
+  && value.length > 0
+  && value.length <= 128
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+  && !/(?:bearer|password|private|raw[_-]?signature|secret|token)/i.test(value)
+    ? value
+    : `wallet-auth-composition-${randomUUID()}`;
+
+const walletAuthenticationTraceIdFromHeaders = (
+  headers: WalletAuthenticationHttpHeaders | undefined,
+): string => {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return safeWalletAuthenticationTraceId(undefined);
+  }
+
+  try {
+    const values = Object.entries(headers)
+      .filter(([name, value]) => name.toLowerCase() === "x-campaign-os-trace-id" && value !== undefined)
+      .map(([, value]) => value);
+
+    return values.length === 1 && typeof values[0] === "string"
+      ? safeWalletAuthenticationTraceId(values[0])
+      : safeWalletAuthenticationTraceId(undefined);
+  } catch {
+    return safeWalletAuthenticationTraceId(undefined);
+  }
+};
+
+const resolveLiveWalletAuthenticationRoute = (requestTarget: string | undefined) => {
+  try {
+    const resolution = resolveExactProtectedApiRoute(requestTarget ?? "/");
+
+    return resolution && liveWalletAuthenticationRouteIds.has(resolution.route.id)
+      ? resolution
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const createWalletAuthenticationUnavailableDiagnostic = (
+  traceId: unknown,
+): WalletAuthenticationRuntimeDiagnostic => Object.freeze({
+  code: "WALLET_AUTH_RUNTIME_CONFIG_INVALID" as const,
+  field: "composition",
+  retryable: false,
+  traceId: safeWalletAuthenticationTraceId(traceId),
+});
+
+const createUnavailableWalletAuthenticationRuntime = (
+): WalletAuthenticationLiveAuthorityRuntime => {
+  let stopPromise: Promise<WalletAuthenticationRuntimeStopResult> | undefined;
+
+  const unavailable = (traceId: unknown): WalletAuthenticationRuntimeFailure => Object.freeze({
+    diagnostic: createWalletAuthenticationUnavailableDiagnostic(traceId),
+    status: "unavailable" as const,
+  });
+  const runtime: WalletAuthenticationLiveAuthorityRuntime = Object.freeze({
+    resolveAuthorization: async (
+      input: WalletAuthenticationMutationRequestInput,
+    ): Promise<ResolveWalletAuthenticationAuthorizationResult> => unavailable(input?.traceId),
+    revalidateFenceBeforeWrite: async <TValue>(
+      input: RevalidateWalletAuthenticationFenceInput<TValue>,
+    ): Promise<RevalidateWalletAuthenticationFenceResult<TValue>> => Object.freeze({
+      diagnostic: createWalletAuthenticationUnavailableDiagnostic(input?.traceId),
+      status: "failed" as const,
+    }),
+    state: () => Object.freeze({
+      accepting: false,
+      activeOperationCount: 0,
+      controllerCount: 0,
+    }),
+    stop: (): Promise<WalletAuthenticationRuntimeStopResult> => {
+      stopPromise ??= Promise.resolve(Object.freeze({
+        diagnosticCodes: Object.freeze([]),
+        diagnostics: Object.freeze([]),
+        status: "drained" as const,
+      }));
+      return stopPromise;
+    },
+  });
+
+  return runtime;
+};
+
+const createUnavailableWalletAuthenticationHttpController = (
+): WalletAuthenticationHttpController => Object.freeze({
+  handle: async (
+    request: WalletAuthenticationHttpRequest,
+  ): Promise<WalletAuthenticationHttpResponse | undefined> => {
+    let route;
+    try {
+      route = resolveLiveWalletAuthenticationRoute(request?.path);
+    } catch {
+      return undefined;
+    }
+    if (!route) {
+      return undefined;
+    }
+
+    const traceId = walletAuthenticationTraceIdFromHeaders(request?.headers);
+    return Object.freeze({
+      body: Object.freeze({
+        error: Object.freeze({
+          code: "AUTH_DEPENDENCY_UNAVAILABLE",
+          details: Object.freeze({
+            diagnosticCode: "WALLET_AUTH_RUNTIME_CONFIG_INVALID",
+            field: "composition",
+            retryable: false,
+          }),
+          message: "Wallet authentication is temporarily unavailable.",
+        }),
+        ok: false as const,
+        traceId,
+      }),
+      headers: Object.freeze({
+        "content-type": "application/json; charset=utf-8",
+        "x-campaign-os-trace-id": traceId,
+      }),
+      status: 503,
+    });
+  },
+});
+
+const validWalletAuthenticationRuntime = (
+  value: unknown,
+): value is WalletAuthenticationLiveAuthorityRuntime => {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  try {
+    return [
+      "resolveAuthorization",
+      "revalidateFenceBeforeWrite",
+      "state",
+      "stop",
+    ].every((method) => typeof (value as Record<string, unknown>)[method] === "function");
+  } catch {
+    return false;
+  }
+};
+
+const validWalletAuthenticationHttpController = (
+  value: unknown,
+): value is WalletAuthenticationHttpController => {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  try {
+    return typeof (value as Partial<WalletAuthenticationHttpController>).handle === "function";
+  } catch {
+    return false;
+  }
+};
+
+type ResolvedWalletAuthenticationServerComposition = Readonly<{
+  mode: "preview";
+  source: "deprecated_preview";
+}> | Readonly<{
+  allowedOrigins: readonly string[];
+  httpController: WalletAuthenticationHttpController;
+  mode: "live";
+  runtime: WalletAuthenticationLiveAuthorityRuntime;
+  runtimeOwnership: "external" | "runtime";
+  serverOwnedRuntime?: WalletAuthenticationLiveAuthorityRuntime;
+  source: "default" | "external" | "factory" | "unavailable";
+}>;
+
+const stopWalletAuthenticationRuntimeForCleanup = async (
+  runtime: WalletAuthenticationLiveAuthorityRuntime,
+  timeoutMs: number,
+  traceId: string,
+): Promise<"fulfilled" | "rejected" | "timeout"> => settleWithin(
+  Promise.resolve()
+    .then(() => runtime.stop(traceId))
+    .then((result) => {
+      if (result.status !== "drained") {
+        throw new Error("Wallet authentication runtime did not drain cleanly.");
+      }
+    }),
+  timeoutMs,
+);
+
+const resolveWalletAuthenticationServerComposition = async ({
+  config,
+  env,
+  explicitAllowedOrigins,
+  explicitHttpController,
+  explicitRuntime,
+  defaultDependencies,
+  factory,
+  fallbackAllowedOrigins,
+  logger,
+  shutdownTimeoutMs,
+}: Readonly<{
+  config: WalletAuthenticationConfig;
+  defaultDependencies: WalletAuthenticationServerCompositionDependencies | undefined;
+  env: Readonly<Record<string, string | undefined>>;
+  explicitAllowedOrigins: readonly string[] | undefined;
+  explicitHttpController: WalletAuthenticationHttpController | undefined;
+  explicitRuntime: WalletAuthenticationLiveAuthorityRuntime | undefined;
+  factory: WalletAuthenticationServerCompositionFactory | undefined;
+  fallbackAllowedOrigins: readonly string[];
+  logger: Pick<Console, "error" | "log"> | false;
+  shutdownTimeoutMs: number;
+}>): Promise<ResolvedWalletAuthenticationServerComposition> => {
+  const traceId = safeWalletAuthenticationTraceId(undefined);
+  const fallbackOrigins = Object.freeze([
+    ...(explicitAllowedOrigins
+      ?? (config.status === "ready" ? config.allowedOrigins : fallbackAllowedOrigins)),
+  ]);
+  const unavailable = (code: string): ResolvedWalletAuthenticationServerComposition => {
+    if (logger) {
+      logger.error(
+        `[campaign-os-api-runtime] wallet_auth_composition_unavailable code=${code} traceId=${traceId}`,
+      );
+    }
+    return Object.freeze({
+      allowedOrigins: fallbackOrigins,
+      httpController: createUnavailableWalletAuthenticationHttpController(),
+      mode: "live" as const,
+      runtime: createUnavailableWalletAuthenticationRuntime(),
+      runtimeOwnership: "runtime" as const,
+      source: "unavailable" as const,
+    });
+  };
+  const rollbackCandidateRuntime = async (candidateRuntime: unknown) => {
+    if (!validWalletAuthenticationRuntime(candidateRuntime)) {
+      return;
+    }
+
+    const cleanup = await stopWalletAuthenticationRuntimeForCleanup(
+      candidateRuntime,
+      shutdownTimeoutMs,
+      traceId,
+    );
+    if (cleanup !== "fulfilled" && logger) {
+      logger.error(
+        `[campaign-os-api-runtime] wallet_auth_composition_rollback_failed code=WALLET_AUTH_COMPOSITION_ROLLBACK_FAILED traceId=${traceId}`,
+      );
+    }
+  };
+  const explicitDependencyCount = Number(explicitRuntime !== undefined)
+    + Number(explicitHttpController !== undefined);
+
+  if (explicitDependencyCount > 0) {
+    if (
+      explicitDependencyCount !== 2
+      || !validWalletAuthenticationRuntime(explicitRuntime)
+      || !validWalletAuthenticationHttpController(explicitHttpController)
+    ) {
+      return unavailable("WALLET_AUTH_EXPLICIT_COMPOSITION_INCOMPLETE");
+    }
+    return Object.freeze({
+      allowedOrigins: fallbackOrigins,
+      httpController: explicitHttpController,
+      mode: "live" as const,
+      runtime: explicitRuntime,
+      runtimeOwnership: "runtime" as const,
+      source: "external" as const,
+    });
+  }
+
+  if (config.status === "disabled") {
+    return Object.freeze({
+      mode: "preview" as const,
+      source: "deprecated_preview" as const,
+    });
+  }
+  if (config.status !== "ready") {
+    return unavailable("WALLET_AUTH_CONFIG_INVALID");
+  }
+  if (config.storeMode !== "postgres") {
+    return unavailable("WALLET_AUTH_POSTGRES_REQUIRED");
+  }
+  let candidate: WalletAuthenticationServerComposition;
+  const selectedFactory: WalletAuthenticationServerCompositionFactory = factory
+    ?? ((input) => createDefaultWalletAuthenticationServerComposition({
+      ...input,
+      ...(defaultDependencies === undefined ? {} : { dependencies: defaultDependencies }),
+    }));
+  try {
+    candidate = await selectedFactory(Object.freeze({ config, env, traceId }));
+  } catch {
+    return unavailable("WALLET_AUTH_COMPOSITION_START_FAILED");
+  }
+  let candidateRuntime: unknown;
+  let candidateHttpController: unknown;
+  try {
+    candidateRuntime = Reflect.get(candidate as unknown as object, "runtime");
+    candidateHttpController = Reflect.get(candidate as unknown as object, "httpController");
+  } catch {
+    await rollbackCandidateRuntime(candidateRuntime);
+    return unavailable("WALLET_AUTH_COMPOSITION_INVALID");
+  }
+  if (
+    !validWalletAuthenticationRuntime(candidateRuntime)
+    || !validWalletAuthenticationHttpController(candidateHttpController)
+  ) {
+    await rollbackCandidateRuntime(candidateRuntime);
+    return unavailable("WALLET_AUTH_COMPOSITION_INVALID");
+  }
+
+  return Object.freeze({
+    allowedOrigins: Object.freeze([...config.allowedOrigins]),
+    httpController: candidateHttpController,
+    mode: "live" as const,
+    runtime: candidateRuntime,
+    runtimeOwnership: "external" as const,
+    serverOwnedRuntime: candidateRuntime,
+    source: factory ? "factory" as const : "default" as const,
+  });
+};
+
 const taskVerificationEnvironmentForProfile = (
   profileId: ApiServerRuntimeContract["profileId"],
 ): "local" | "production" | "stage" => profileId === "production-required"
@@ -217,6 +602,7 @@ const taskVerificationEnvironmentForProfile = (
 
 export const startCampaignOsApiServer = async ({
   allowedCorsOrigins,
+  deprecatedNonLivePreviewAuthority,
   env,
   host,
   logger = console,
@@ -227,9 +613,18 @@ export const startCampaignOsApiServer = async ({
   shutdownTimeoutMs,
   taskVerificationTransport,
   version,
+  walletAuthenticationAllowedOrigins,
+  walletAuthenticationCompositionDependencies,
+  walletAuthenticationCompositionFactory,
+  walletAuthenticationHttpController,
+  walletAuthenticationRuntime,
 }: StartCampaignOsApiServerOptions = {}): Promise<CampaignOsApiServerHandle> => {
   const runtimeEnv = env ?? (typeof process === "undefined" ? {} : process.env);
-  const runtimeContract = resolveApiServerRuntimeContract({
+  const walletAuthenticationConfig = resolveCampaignOsWalletAuthenticationConfig({
+    env: runtimeEnv,
+    traceId: safeWalletAuthenticationTraceId(undefined),
+  });
+  const initialRuntimeContract = resolveApiServerRuntimeContract({
     allowedCorsOrigins,
     env: runtimeEnv,
     host,
@@ -239,6 +634,44 @@ export const startCampaignOsApiServer = async ({
     shutdownTimeoutMs,
     version,
   });
+  const mergeWalletAuthenticationOrigins = allowedCorsOrigins === undefined
+    && walletAuthenticationConfig.status === "ready"
+    && walletAuthenticationConfig.allowedOrigins.some(
+      (origin) => !initialRuntimeContract.corsPolicy.allowedOrigins.includes(origin),
+    );
+  const runtimeContract = mergeWalletAuthenticationOrigins
+    ? resolveApiServerRuntimeContract({
+      allowedCorsOrigins: [...new Set([
+        ...initialRuntimeContract.corsPolicy.allowedOrigins,
+        ...walletAuthenticationConfig.allowedOrigins,
+      ])],
+      env: runtimeEnv,
+      host,
+      maxBodyBytes,
+      port,
+      profileId,
+      shutdownTimeoutMs,
+      startedAt: initialRuntimeContract.startedAt,
+      version,
+    })
+    : initialRuntimeContract;
+  const walletAuthenticationComposition = await resolveWalletAuthenticationServerComposition({
+    config: walletAuthenticationConfig,
+    env: runtimeEnv,
+    explicitAllowedOrigins: walletAuthenticationAllowedOrigins,
+    explicitHttpController: walletAuthenticationHttpController,
+    explicitRuntime: walletAuthenticationRuntime,
+    defaultDependencies: walletAuthenticationCompositionDependencies,
+    factory: walletAuthenticationCompositionFactory,
+    fallbackAllowedOrigins: runtimeContract.corsPolicy.allowedOrigins,
+    logger,
+    shutdownTimeoutMs: runtimeContract.shutdown.shutdownTimeoutMs,
+  });
+  const credentialedAllowedOrigins = Object.freeze([
+    ...(walletAuthenticationComposition.mode === "live"
+      ? walletAuthenticationComposition.allowedOrigins
+      : walletAuthenticationAllowedOrigins ?? runtimeContract.corsPolicy.allowedOrigins),
+  ]);
   const backendServiceReadiness = createBackendServiceReadinessReport({
     configOptions: {
       env: runtimeEnv,
@@ -249,7 +682,7 @@ export const startCampaignOsApiServer = async ({
     },
     providerHttpTransportProvided: Boolean(taskVerificationTransport),
   });
-  const runtime = runtimeFactory({
+  const runtimeOptions: CreateCampaignOsApiRuntimeOptions = {
     backendServiceReadiness: () => backendServiceReadiness,
     logger,
     runtimeConfigOptions: {
@@ -263,9 +696,109 @@ export const startCampaignOsApiServer = async ({
     },
     taskVerificationProviderRuntime:
       backendServiceReadiness.providerClientReadiness.providerHttpRuntime,
+    ...(walletAuthenticationComposition.mode === "preview"
+      && deprecatedNonLivePreviewAuthority
+      ? { deprecatedNonLivePreviewAuthority }
+      : {}),
     ...(taskVerificationTransport ? { taskVerificationTransport } : {}),
     version: runtimeContract.runtimeVersion,
-  });
+    ...(walletAuthenticationComposition.mode === "live"
+      ? {
+        walletAuthenticationHttpController: walletAuthenticationComposition.httpController,
+        walletAuthenticationRuntime: walletAuthenticationComposition.runtime,
+        walletAuthenticationRuntimeOwnership: walletAuthenticationComposition.runtimeOwnership,
+      }
+      : {}),
+  };
+  let runtime: CampaignOsApiRuntime;
+  try {
+    runtime = runtimeFactory(runtimeOptions);
+    if (
+      !runtime
+      || typeof runtime.close !== "function"
+      || typeof runtime.handle !== "function"
+    ) {
+      throw new TypeError("Campaign OS API runtime factory returned an invalid runtime.");
+    }
+  } catch (error) {
+    if (walletAuthenticationComposition.mode === "live"
+      && walletAuthenticationComposition.serverOwnedRuntime) {
+      const cleanupTraceId = safeWalletAuthenticationTraceId(undefined);
+      const cleanup = await stopWalletAuthenticationRuntimeForCleanup(
+        walletAuthenticationComposition.serverOwnedRuntime,
+        runtimeContract.shutdown.shutdownTimeoutMs,
+        cleanupTraceId,
+      );
+      if (cleanup !== "fulfilled" && logger) {
+        logger.error(
+          `[campaign-os-api-runtime] startup_cleanup_failed code=API_SERVER_WALLET_AUTH_CLOSE_FAILED traceId=${cleanupTraceId}`,
+        );
+      }
+    }
+    throw error;
+  }
+  let serverOwnedWalletAuthenticationStopPromise: Promise<void> | undefined;
+  const stopServerOwnedWalletAuthentication = (): Promise<void> => {
+    if (serverOwnedWalletAuthenticationStopPromise) {
+      return serverOwnedWalletAuthenticationStopPromise;
+    }
+    if (
+      walletAuthenticationComposition.mode !== "live"
+      || !walletAuthenticationComposition.serverOwnedRuntime
+    ) {
+      return Promise.resolve();
+    }
+
+    const ownedRuntime = walletAuthenticationComposition.serverOwnedRuntime;
+    const traceId = safeWalletAuthenticationTraceId(undefined);
+    try {
+      serverOwnedWalletAuthenticationStopPromise = Promise.resolve(ownedRuntime.stop(traceId))
+        .then((result) => {
+          if (result.status !== "drained") {
+            throw new Error("Wallet authentication runtime did not drain cleanly.");
+          }
+        });
+    } catch (error) {
+      serverOwnedWalletAuthenticationStopPromise = Promise.reject(error);
+    }
+    return serverOwnedWalletAuthenticationStopPromise;
+  };
+  const closeRuntimeGraph = (): Promise<void> => {
+    if (
+      walletAuthenticationComposition.mode !== "live"
+      || !walletAuthenticationComposition.serverOwnedRuntime
+    ) {
+      try {
+        return Promise.resolve(runtime.close());
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
+
+    return (async () => {
+      const startedAt = Date.now();
+      const walletAuthenticationResult = await settleWithin(
+        stopServerOwnedWalletAuthentication(),
+        Math.max(1, Math.floor(runtimeContract.shutdown.shutdownTimeoutMs / 2)),
+      );
+      let apiRuntimeClose: Promise<void>;
+      try {
+        apiRuntimeClose = Promise.resolve(runtime.close());
+      } catch (error) {
+        apiRuntimeClose = Promise.reject(error);
+      }
+      const apiRuntimeResult = await settleWithin(
+        apiRuntimeClose,
+        Math.max(
+          0,
+          runtimeContract.shutdown.shutdownTimeoutMs - (Date.now() - startedAt),
+        ),
+      );
+      if (walletAuthenticationResult !== "fulfilled" || apiRuntimeResult !== "fulfilled") {
+        throw new Error("Campaign OS API runtime graph did not close cleanly.");
+      }
+    })();
+  };
   const shutdownState: ServerShutdownState = {
     activeRequestCount: 0,
     state: "running",
@@ -277,7 +810,7 @@ export const startCampaignOsApiServer = async ({
     shutdownState,
   });
   const getServiceContract = () => createCampaignOsApiServiceContract({
-    allowedCorsOrigins,
+    allowedCorsOrigins: runtimeContract.corsPolicy.allowedOrigins,
     env: runtimeEnv,
     host: runtimeContract.host,
     maxBodyBytes: runtimeContract.requestGuard.maxBodyBytes,
@@ -293,7 +826,11 @@ export const startCampaignOsApiServer = async ({
   const server = createServer((request, response) => {
     const requestTarget = request.url ?? "/";
     const adminRequest = isAdminRequestTarget(requestTarget);
-    const guardHeaders = toGuardHeaders(request, runtimeContract.requestGuard.traceHeaderName);
+    const runtimeHeaders = toRuntimeHeaders(request);
+    const guardHeaders = toGuardHeaders(
+      runtimeHeaders,
+      runtimeContract.requestGuard.traceHeaderName,
+    );
     const requestContext = createServerRequestContext(guardHeaders, runtimeContract);
 
     if (shutdownState.state !== "running") {
@@ -327,6 +864,41 @@ export const startCampaignOsApiServer = async ({
       return;
     }
 
+    const previewOnlyLiveRoute = walletAuthenticationComposition.mode === "preview"
+      ? resolveLiveWalletAuthenticationRoute(requestTarget)
+      : undefined;
+    if (previewOnlyLiveRoute) {
+      const traceId = requestContext.traceId;
+      const runtimeError = routeNotFound(
+        request.method ?? "GET",
+        previewOnlyLiveRoute.route.path,
+      ).body;
+
+      request.resume();
+      try {
+        writeJsonResponse(
+          response,
+          404,
+          {
+            "content-type": "application/json",
+            "x-campaign-os-trace-id": traceId,
+          },
+          adminRequest
+            ? createAdminFailureEnvelope(runtimeError, traceId)
+            : createFailureEnvelope({
+              error: runtimeError,
+              routeCount: apiRuntimeContractRoutes.length,
+              traceId,
+              version: runtimeContract.runtimeVersion,
+            }),
+        );
+      } catch {
+        response.destroy();
+      }
+
+      return;
+    }
+
     shutdownState.activeRequestCount += 1;
 
     void (async () => {
@@ -338,7 +910,9 @@ export const startCampaignOsApiServer = async ({
           headers: guardHeaders,
           method: request.method ?? "GET",
           path: requestTarget,
-        }, runtimeContract, apiRuntimeContractRoutes.length, requestContext);
+        }, runtimeContract, apiRuntimeContractRoutes.length, requestContext, {
+          credentialedRoutes: { allowedOrigins: credentialedAllowedOrigins },
+        });
 
         if (guardDecision.kind === "preflight") {
           writeJsonResponse(response, guardDecision.status, guardDecision.headers, guardDecision.body);
@@ -352,7 +926,7 @@ export const startCampaignOsApiServer = async ({
 
         const runtimeResponse = await runtime.handle({
           body: guardDecision.body,
-          headers: toRuntimeHeaders(request),
+          headers: runtimeHeaders,
           method: request.method ?? "GET",
           path: request.url ?? "/",
         });
@@ -430,7 +1004,7 @@ export const startCampaignOsApiServer = async ({
   } catch (error) {
     const cleanupTraceId = randomUUID();
     const cleanupResult = await settleWithin(
-      runtime.close(),
+      closeRuntimeGraph(),
       runtimeContract.shutdown.shutdownTimeoutMs,
     );
 
@@ -451,6 +1025,7 @@ export const startCampaignOsApiServer = async ({
       [
         `[campaign-os-api-runtime] listening on ${url}`,
         `entrypoint=${backendServiceReadiness.entrypoint.id}`,
+        `walletAuth=${walletAuthenticationComposition.source}`,
         formatServerStartupLog(runtimeContract),
       ].join(" "),
     );
@@ -469,7 +1044,7 @@ export const startCampaignOsApiServer = async ({
       let failureCode: ApiServerShutdownErrorCode | undefined;
       let runtimeClosePromise: Promise<void>;
       try {
-        runtimeClosePromise = runtime.close();
+        runtimeClosePromise = closeRuntimeGraph();
       } catch (error) {
         runtimeClosePromise = Promise.reject(error);
       }

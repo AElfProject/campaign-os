@@ -412,6 +412,14 @@ const campaignDbTaskDraftInput = (request: AddTaskRequest): CampaignDbAddTaskDra
 });
 
 const issuedParticipantSubject = (context: ApiRuntimeHandlerContext) => {
+  if (context.liveAuthorization) {
+    return {
+      accountType: context.liveAuthorization.subject.accountType,
+      sessionRef: context.liveAuthorization.sessionId,
+      walletAddress: context.liveAuthorization.subject.walletAddress,
+      walletSource: context.liveAuthorization.subject.walletSource,
+    };
+  }
   const session = context.auth?.session;
 
   if (!session) {
@@ -436,12 +444,7 @@ const verifyTaskRequest = (context: ApiRuntimeHandlerContext): VerifyTaskRequest
     }
     throw invalidRequest("body", "Task ID is path-owned and cannot be supplied in the body.");
   }
-  const allowedFields = new Set([
-    "accountType",
-    "campaignId",
-    "walletAddress",
-    "walletSource",
-  ]);
+  const allowedFields = new Set(["campaignId"]);
   if (Object.keys(body).some((field) => !allowedFields.has(field))) {
     throw invalidRequest("body", "Task verification request contains an unknown field.");
   }
@@ -3455,6 +3458,9 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     });
     const runtimeResult = await context.taskVerificationRuntime.execute({
       issuedSubject,
+      ...(context.liveAuthorization
+        ? { liveAuthorization: context.liveAuthorization }
+        : {}),
       task: canonicalTask,
       traceId: context.traceId,
     });

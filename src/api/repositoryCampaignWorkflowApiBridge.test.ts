@@ -5,6 +5,7 @@ import {
   loadRepositoryCampaignWorkflowBridgeState,
   sanitizeRepositoryCampaignWorkflowApiText,
   type RepositoryCampaignWorkflowApiFetch,
+  type RepositoryCampaignWorkflowApiConfig,
 } from "./repositoryCampaignWorkflowApiBridge";
 
 const runtime = {
@@ -19,6 +20,21 @@ const requiredTaskId = "campaign-db-task-draft-0001";
 const optionalTaskId = "campaign-db-task-draft-0002";
 const walletAddress = "2F4RepositoryWorkflowWallet";
 const artifactId = "export-artifact-local-review-001";
+const deprecatedPreviewConfig = (
+  overrides: Omit<RepositoryCampaignWorkflowApiConfig, "authorityMode"> = {},
+): RepositoryCampaignWorkflowApiConfig => ({
+  authorityMode: "deprecated_non_live_preview",
+  ...overrides,
+});
+const legacyVerificationAuthorityFields = [
+  "accountType",
+  "chainId",
+  "network",
+  "role",
+  "sessionId",
+  "walletAddress",
+  "walletSource",
+] as const;
 
 const response = (
   body: unknown,
@@ -468,9 +484,9 @@ describe("repository campaign workflow API bridge", () => {
 
   it("redacts invalid URL details and secret-like fragments", async () => {
     const state = await loadRepositoryCampaignWorkflowBridgeState({
-      config: {
+      config: deprecatedPreviewConfig({
         baseUrl: "ftp://api.invalid/path?token=sample-token&api_key=private-key-sample",
-      },
+      }),
       fetchImpl: vi.fn() as unknown as RepositoryCampaignWorkflowApiFetch,
     });
     const serialized = JSON.stringify(state.diagnostics).toLowerCase();
@@ -486,11 +502,97 @@ describe("repository campaign workflow API bridge", () => {
     }
   });
 
+  it("fails closed without explicit deprecated non-live preview authority and does not fetch", async () => {
+    const fetchImpl = vi.fn() as unknown as RepositoryCampaignWorkflowApiFetch;
+
+    const state = await loadRepositoryCampaignWorkflowBridgeState({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      configured: true,
+      diagnostics: [{ code: "API_PREVIEW_AUTHORITY_REQUIRED", severity: "error" }],
+      source: "error_fallback",
+      status: "error",
+    });
+  });
+
+  it("fails closed when deprecated preview authority is pointed at a non-loopback runtime", async () => {
+    const fetchImpl = vi.fn() as unknown as RepositoryCampaignWorkflowApiFetch;
+
+    const state = await loadRepositoryCampaignWorkflowBridgeState({
+      config: deprecatedPreviewConfig({ baseUrl: "https://campaign.example" }),
+      fetchImpl,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_PREVIEW_AUTHORITY_REQUIRED",
+        safeDetails: { reason: "loopback_runtime_required" },
+        severity: "error",
+      }],
+      source: "error_fallback",
+      status: "error",
+    });
+  });
+
+  it("fails closed when loopback preview URL contains credentials", async () => {
+    const fetchImpl = vi.fn() as unknown as RepositoryCampaignWorkflowApiFetch;
+
+    const state = await loadRepositoryCampaignWorkflowBridgeState({
+      config: deprecatedPreviewConfig({
+        baseUrl: "http://operator:private-value@127.0.0.1:5184",
+      }),
+      fetchImpl,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      diagnostics: [{
+        code: "API_PREVIEW_AUTHORITY_REQUIRED",
+        safeDetails: { reason: "credentialed_url_rejected" },
+        severity: "error",
+      }],
+      source: "error_fallback",
+      status: "error",
+    });
+    expect(JSON.stringify(state)).not.toMatch(/operator|private-value/);
+  });
+
+  it.each(["x-role", "x-auth-session-id", "x-capabilities"])(
+    "fails closed on caller authority header alias %s before fetch",
+    async (headerName) => {
+      const fetchImpl = vi.fn() as unknown as RepositoryCampaignWorkflowApiFetch;
+
+      const state = await loadRepositoryCampaignWorkflowBridgeState({
+        config: deprecatedPreviewConfig({
+          baseUrl: "http://127.0.0.1:5184",
+          headers: { [headerName]: "caller-controlled" },
+        }),
+        fetchImpl,
+      });
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(state).toMatchObject({
+        diagnostics: [{
+          code: "API_PREVIEW_AUTHORITY_CONFLICT",
+          safeDetails: { field: headerName },
+          severity: "error",
+        }],
+        source: "error_fallback",
+        status: "error",
+      });
+    },
+  );
+
   it("loads a full repository campaign workflow through existing API routes", async () => {
     const fetchImpl = fetchFromBodies(workflowResponses());
 
     const state = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184", tracePrefix: "repo-workflow-test" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184", tracePrefix: "repo-workflow-test" }),
       fetchImpl,
     });
 
@@ -626,10 +728,18 @@ describe("repository campaign workflow API bridge", () => {
       "x-campaign-os-wallet-address": "ELF_local_review_project_owner",
       "x-campaign-os-wallet-source": "PORTKEY_AA",
     });
-    expect(JSON.parse(String(calls[6][1]?.body))).toMatchObject({
+    for (const callIndex of [6, 9]) {
+      const verifyBody = JSON.parse(String(calls[callIndex][1]?.body));
+      expect(verifyBody).toEqual({ campaignId });
+      for (const field of legacyVerificationAuthorityFields) {
+        expect(verifyBody).not.toHaveProperty(field);
+      }
+    }
+
+    const eligibilityUrl = new URL(String(calls[5][0]));
+    expect(Object.fromEntries(eligibilityUrl.searchParams)).toEqual({
       accountType: "EOA",
-      campaignId,
-      walletAddress,
+      address: walletAddress,
       walletSource: "PORTKEY_EOA_EXTENSION",
     });
   });
@@ -641,7 +751,7 @@ describe("repository campaign workflow API bridge", () => {
     });
 
     const state = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl: fetchFromBodies(bodies),
     });
     const serialized = JSON.stringify(state).toLowerCase();
@@ -678,7 +788,7 @@ describe("repository campaign workflow API bridge", () => {
     });
 
     const state = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl: fetchFromBodies(bodies),
     });
     const serialized = JSON.stringify(state).toLowerCase();
@@ -713,7 +823,7 @@ describe("repository campaign workflow API bridge", () => {
     });
 
     const missingState = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl: fetchFromBodies(missingBodies),
     });
 
@@ -733,7 +843,7 @@ describe("repository campaign workflow API bridge", () => {
 
   it("keeps list refresh miss as a warning and does not mark the workflow ready", async () => {
     const state = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl: fetchFromBodies(workflowResponses(false)),
     });
 
@@ -753,7 +863,7 @@ describe("repository campaign workflow API bridge", () => {
     }, { ok: false, status: 503, traceId: "trace-health-down" })) as unknown as RepositoryCampaignWorkflowApiFetch;
 
     const state = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl,
     });
 
@@ -768,7 +878,7 @@ describe("repository campaign workflow API bridge", () => {
 
   it("handles invalid response and request timeout without unsafe diagnostics", async () => {
     const invalidState = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl: fetchFromBodies([
         healthEnvelope(),
         { ok: true, data: { payload: { status: "draft" } }, traceId: "trace-invalid-create" },
@@ -786,7 +896,7 @@ describe("repository campaign workflow API bridge", () => {
       throw new DOMException("AbortError stack trace /Users/aelf/workspace/vibecoding/AElf/campaign-os-kitty/private-key", "AbortError");
     }) as unknown as RepositoryCampaignWorkflowApiFetch;
     const timeoutState = await loadRepositoryCampaignWorkflowBridgeState({
-      config: { baseUrl: "http://127.0.0.1:5184" },
+      config: deprecatedPreviewConfig({ baseUrl: "http://127.0.0.1:5184" }),
       fetchImpl: timeoutFetch,
     });
     const serialized = JSON.stringify(timeoutState).toLowerCase();

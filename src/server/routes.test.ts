@@ -30,6 +30,11 @@ import {
   adminApiRuntimeRoutes,
   apiRuntimeRouteCatalog,
   createAdminApiRuntimeRouteInventory,
+  exactProtectedApiRouteContracts,
+  exactProtectedApiRouteContractById,
+  isCallerAuthorityHeaderName,
+  isUnambiguousApiRequestTarget,
+  resolveExactProtectedApiRoute,
   resolveAdminApiRoute,
   validateAdminApiRouteCatalog,
   type AdminApiRuntimeRouteDefinition,
@@ -366,6 +371,180 @@ describe("Admin API route catalog", () => {
 });
 
 describe("API runtime route catalog", () => {
+  it("publishes the seven exact live auth and verification request contracts", () => {
+    expect(exactProtectedApiRouteContracts.map((route) => ({
+      id: route.id,
+      method: route.method,
+      path: route.path,
+    }))).toEqual([
+      {
+        id: "wallet.auth.challenge.create",
+        method: "POST",
+        path: "/api/wallet/auth/challenges",
+      },
+      {
+        id: "wallet.auth.session.create",
+        method: "POST",
+        path: "/api/wallet/auth/sessions",
+      },
+      {
+        id: "wallet.auth.session.current",
+        method: "GET",
+        path: "/api/wallet/auth/session",
+      },
+      {
+        id: "wallet.auth.session.rotate",
+        method: "POST",
+        path: "/api/wallet/auth/session/rotate",
+      },
+      {
+        id: "wallet.auth.session.logout",
+        method: "POST",
+        path: "/api/wallet/auth/logout",
+      },
+      {
+        id: "admin.wallet-session.revoke",
+        method: "POST",
+        path: "/api/admin/wallet-sessions/:sessionId/revoke",
+      },
+      {
+        id: "tasks.verify",
+        method: "POST",
+        path: "/api/tasks/:taskId/verify",
+      },
+    ]);
+
+    expect(new Set(exactProtectedApiRouteContracts.map((route) => route.id)).size).toBe(7);
+    for (const route of exactProtectedApiRouteContracts) {
+      expect(route.credentialedCors).toBe(true);
+      expect(route.request.origin).toBe("required");
+      expect(route.request.query).toEqual({ additionalProperties: false, allowed: [] });
+      expect(route.request.headers.maxCount).toBeGreaterThan(0);
+      expect(route.request.headers.maxTotalBytes).toBeGreaterThan(0);
+      expect(route.request.cors.allowedHeaders).not.toContain("cookie");
+      expect(route.request.cors.allowedHeaders).not.toContain("origin");
+    }
+  });
+
+  it("makes tasks.verify exact {campaignId} and describes every wallet body without extensions", () => {
+    expect(exactProtectedApiRouteContractById["tasks.verify"].request.body).toEqual({
+      additionalProperties: false,
+      contentType: "application/json",
+      maxBytes: 2_048,
+      mode: "json",
+      properties: {
+        campaignId: {
+          maxLength: 160,
+          minLength: 1,
+          pattern: "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          type: "string",
+        },
+      },
+      required: ["campaignId"],
+    });
+
+    expect(exactProtectedApiRouteContractById["wallet.auth.challenge.create"].request.body)
+      .toMatchObject({
+        additionalProperties: false,
+        maxBytes: 2_048,
+        mode: "json",
+        required: ["adapterId", "chainId", "network", "walletAddress"],
+      });
+    expect(exactProtectedApiRouteContractById["wallet.auth.challenge.create"].request.body)
+      .toHaveProperty("properties.caHash");
+    expect(exactProtectedApiRouteContractById["wallet.auth.session.create"].request.body)
+      .toMatchObject({
+        additionalProperties: false,
+        maxBytes: 98_304,
+        mode: "json",
+        properties: {
+          adapterProof: { type: "object" },
+        },
+        required: ["challengeId", "message", "nonce", "signature"],
+      });
+    expect(exactProtectedApiRouteContractById["admin.wallet-session.revoke"].request.body)
+      .toMatchObject({
+        additionalProperties: false,
+        maxBytes: 512,
+        mode: "json",
+        required: ["reasonCode"],
+      });
+
+    for (const routeId of [
+      "wallet.auth.session.current",
+      "wallet.auth.session.rotate",
+      "wallet.auth.session.logout",
+    ] as const) {
+      expect(exactProtectedApiRouteContractById[routeId].request.body).toEqual({ mode: "forbidden" });
+    }
+  });
+
+  it("resolves exact static and bounded dynamic paths independently from method dispatch", () => {
+    expect(resolveExactProtectedApiRoute("/api/wallet/auth/session/rotate")).toMatchObject({
+      params: {},
+      route: { id: "wallet.auth.session.rotate" },
+    });
+    expect(resolveExactProtectedApiRoute(
+      "/api/admin/wallet-sessions/session-safe-1/revoke",
+    )).toMatchObject({
+      params: { sessionId: "session-safe-1" },
+      route: { id: "admin.wallet-session.revoke" },
+    });
+    expect(resolveExactProtectedApiRoute("/api/tasks/task-safe-1/verify")).toMatchObject({
+      params: { taskId: "task-safe-1" },
+      route: { id: "tasks.verify" },
+    });
+    expect(resolveExactProtectedApiRoute("/api/tasks/task-safe-1/verify?role=owner")).toMatchObject({
+      params: { taskId: "task-safe-1" },
+      queryAllowed: false,
+      route: { id: "tasks.verify" },
+    });
+
+    for (const path of [
+      "/api/admin/wallet-sessions/%2F/revoke",
+      `/api/admin/wallet-sessions/${"s".repeat(161)}/revoke`,
+      "/api/tasks/%00/verify",
+      "/api/tasks/task-safe-1/verify/extra",
+      "/api/campaigns",
+    ]) {
+      expect(resolveExactProtectedApiRoute(path)).toBeUndefined();
+    }
+  });
+
+  it("classifies ambiguous API targets and the complete live authority header corpus", () => {
+    for (const path of [
+      "/api/wallet/auth/x/../challenges",
+      "/api/wallet/auth/x/%2e%2e/challenges",
+      "/api/wallet/auth/x/%2E./challenges",
+      "/api/tasks/ignored/../task-safe-1/verify",
+      "/api/tasks/ignored/%2e%2e/task-safe-1/verify",
+      "/api/tasks/ignored\\..\\task-safe-1/verify",
+      "/api/tasks/ignored%5c..%5ctask-safe-1/verify",
+      "/api/tasks/task-safe-1/verify#fragment",
+    ]) {
+      expect(isUnambiguousApiRequestTarget(path), path).toBe(false);
+      expect(resolveExactProtectedApiRoute(path), path).toBeUndefined();
+    }
+
+    for (const name of [
+      "authorization",
+      "x-account-type",
+      "x-auth-session-id",
+      "x-capabilities",
+      "x-capability",
+      "x-chain-id",
+      "x-network",
+      "x-role",
+      "x-roles",
+      "x-session-id",
+      "x-wallet-role",
+      "x-campaign-os-session-id",
+    ]) {
+      expect(isCallerAuthorityHeaderName(name), name).toBe(true);
+    }
+    expect(isCallerAuthorityHeaderName("x-campaign-os-trace-id")).toBe(false);
+  });
+
   it("declares unique local seeded routes with readiness and boundary metadata", () => {
     const routeIds = apiRuntimeRoutes.map((runtimeRoute) => runtimeRoute.id);
 

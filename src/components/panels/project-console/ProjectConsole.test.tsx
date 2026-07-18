@@ -3014,6 +3014,7 @@ describe("Project Console shell", () => {
 
     await waitFor(() => expect(mockedLoadRepositoryCampaignWorkflowBridgeState).toHaveBeenCalledWith({
       config: {
+        authorityMode: "deprecated_non_live_preview",
         baseUrl: "http://127.0.0.1:5184",
         tracePrefix: "project-console-repository-workflow-review",
       },

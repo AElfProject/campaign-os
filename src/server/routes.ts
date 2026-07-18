@@ -5,6 +5,10 @@ import type { AdminOperatorRouteId } from "./authEnforcement";
 import { apiRuntimeServiceGroupById } from "./capabilities";
 import type { CampaignOsAdminOperatorRoleId } from "./config";
 import { runtimeBoundary } from "./envelope";
+import {
+  WALLET_SESSION_MAX_COOKIE_HEADER_BYTES,
+  WALLET_SESSION_MAX_CSRF_HEADER_BYTES,
+} from "./walletSessionRequestSecurity";
 
 const text = (enUS: string, zhCN: string, zhTW = enUS): LocalizedText => ({
   "en-US": enUS,
@@ -29,6 +33,453 @@ const taskVerificationBoundary = text(
 );
 const dependenciesFor = (serviceGroup: ApiRuntimeRouteContract["serviceGroup"]) =>
   apiRuntimeServiceGroupById[serviceGroup].deferredDependencies;
+
+export type ExactProtectedApiRouteId =
+  | "admin.wallet-session.revoke"
+  | "tasks.verify"
+  | "wallet.auth.challenge.create"
+  | "wallet.auth.session.create"
+  | "wallet.auth.session.current"
+  | "wallet.auth.session.logout"
+  | "wallet.auth.session.rotate";
+
+export type ExactRequestCredentialRequirement = "forbidden" | "optional" | "required";
+export type ExactJsonPropertyType = "object" | "string";
+
+export interface ExactJsonPropertyContract {
+  allowedValues?: readonly string[];
+  maxLength?: number;
+  minLength?: number;
+  pattern?: string;
+  type: ExactJsonPropertyType;
+}
+
+export interface ExactJsonBodyContract {
+  additionalProperties: false;
+  contentType: "application/json";
+  maxBytes: number;
+  mode: "json";
+  properties: Readonly<Record<string, ExactJsonPropertyContract>>;
+  required: readonly string[];
+}
+
+export interface ExactForbiddenBodyContract {
+  mode: "forbidden";
+}
+
+export interface ExactProtectedApiRequestContract {
+  body: ExactForbiddenBodyContract | ExactJsonBodyContract;
+  cookie: ExactRequestCredentialRequirement;
+  cors: Readonly<{
+    allowedHeaders: readonly string[];
+    allowedMethods: readonly ("GET" | "POST")[];
+  }>;
+  csrf: ExactRequestCredentialRequirement;
+  headers: Readonly<{
+    controlled: readonly string[];
+    maxBytesByName: Readonly<Record<string, number>>;
+    maxCount: number;
+    maxTotalBytes: number;
+    rejectCallerAuthority: true;
+  }>;
+  origin: "required";
+  pathParameters: Readonly<Record<string, ExactJsonPropertyContract>>;
+  query: Readonly<{
+    additionalProperties: false;
+    allowed: readonly string[];
+  }>;
+}
+
+export interface ExactProtectedApiRouteContract {
+  credentialedCors: true;
+  id: ExactProtectedApiRouteId;
+  method: "GET" | "POST";
+  operationId: string;
+  path: string;
+  request: ExactProtectedApiRequestContract;
+}
+
+const EXACT_PROTECTED_PATH_PARAMETER_MAX_LENGTH = 160;
+const EXACT_MAX_HEADER_COUNT = 64;
+const EXACT_MAX_TOTAL_HEADER_BYTES = 16 * 1_024;
+const EXACT_MAX_ORIGIN_BYTES = 512;
+const EXACT_MAX_TRACE_ID_BYTES = 128;
+const EXACT_MAX_CONTENT_TYPE_BYTES = 128;
+const EXACT_CONTROLLED_HEADERS = Object.freeze([
+  "content-type",
+  "cookie",
+  "origin",
+  "x-campaign-os-csrf",
+  "x-campaign-os-trace-id",
+] as const);
+const EXACT_HEADER_MAX_BYTES = Object.freeze({
+  "content-type": EXACT_MAX_CONTENT_TYPE_BYTES,
+  cookie: WALLET_SESSION_MAX_COOKIE_HEADER_BYTES,
+  origin: EXACT_MAX_ORIGIN_BYTES,
+  "x-campaign-os-csrf": WALLET_SESSION_MAX_CSRF_HEADER_BYTES,
+  "x-campaign-os-trace-id": EXACT_MAX_TRACE_ID_BYTES,
+});
+const EXACT_EMPTY_PATH_PARAMETERS = Object.freeze({});
+const EXACT_NO_QUERY = Object.freeze({
+  additionalProperties: false as const,
+  allowed: Object.freeze([] as const),
+});
+const EXACT_NO_BODY = Object.freeze({ mode: "forbidden" as const });
+const EXACT_CORS_TRACE_HEADER = "x-campaign-os-trace-id";
+const EXACT_CORS_CONTENT_TYPE_HEADER = "content-type";
+const EXACT_CORS_CSRF_HEADER = "x-campaign-os-csrf";
+const EXACT_BOUNDED_ID_PATTERN = "^[^\\u0000-\\u001F\\u007F-\\u009F]+$";
+const EXACT_MALFORMED_PERCENT_ENCODING = /%(?![0-9A-Fa-f]{2})/u;
+const EXACT_ENCODED_BACKSLASH = /%5c/iu;
+const CALLER_AUTHORITY_HEADER_NAMES = new Set([
+  "authorization",
+  "x-account-type",
+  "x-auth-session-id",
+  "x-campaign-os-account-type",
+  "x-campaign-os-capabilities",
+  "x-campaign-os-capability",
+  "x-campaign-os-chain-id",
+  "x-campaign-os-credential-boundary",
+  "x-campaign-os-network",
+  "x-campaign-os-proof-status",
+  "x-campaign-os-role",
+  "x-campaign-os-roles",
+  "x-campaign-os-session-id",
+  "x-campaign-os-wallet-address",
+  "x-campaign-os-wallet-source",
+  "x-capabilities",
+  "x-capability",
+  "x-chain-id",
+  "x-network",
+  "x-role",
+  "x-roles",
+  "x-session-id",
+]);
+
+export const isCallerAuthorityHeaderName = (rawName: string): boolean => {
+  const name = rawName.trim().toLowerCase();
+
+  return name.startsWith("x-wallet-") || CALLER_AUTHORITY_HEADER_NAMES.has(name);
+};
+
+export const isUnambiguousApiRequestTarget = (requestTarget: string): boolean => {
+  if (
+    typeof requestTarget !== "string"
+    || !requestTarget.startsWith("/")
+    || requestTarget.includes("#")
+  ) {
+    return false;
+  }
+
+  const queryIndex = requestTarget.search(/[?#]/u);
+  const rawPathname = queryIndex < 0 ? requestTarget : requestTarget.slice(0, queryIndex);
+  if (
+    rawPathname.includes("\\")
+    || EXACT_MALFORMED_PERCENT_ENCODING.test(rawPathname)
+    || EXACT_ENCODED_BACKSLASH.test(rawPathname)
+  ) {
+    return false;
+  }
+
+  try {
+    return new URL(rawPathname, "http://campaign-os.invalid").pathname === rawPathname;
+  } catch {
+    return false;
+  }
+};
+
+const exactString = (
+  minLength: number,
+  maxLength: number,
+  allowedValues?: readonly string[],
+): ExactJsonPropertyContract => Object.freeze({
+  ...(allowedValues ? { allowedValues: Object.freeze([...allowedValues]) } : {}),
+  maxLength,
+  minLength,
+  type: "string" as const,
+});
+
+const exactBoundedId = (
+  minLength: number,
+  maxLength: number,
+): ExactJsonPropertyContract => Object.freeze({
+  ...exactString(minLength, maxLength),
+  pattern: EXACT_BOUNDED_ID_PATTERN,
+});
+
+const exactJsonBody = (
+  maxBytes: number,
+  properties: Readonly<Record<string, ExactJsonPropertyContract>>,
+  required: readonly string[],
+): ExactJsonBodyContract => Object.freeze({
+  additionalProperties: false as const,
+  contentType: "application/json" as const,
+  maxBytes,
+  mode: "json" as const,
+  properties: Object.freeze({ ...properties }),
+  required: Object.freeze([...required]),
+});
+
+const exactRequestContract = ({
+  body,
+  cookie,
+  csrf,
+  method,
+  pathParameters = EXACT_EMPTY_PATH_PARAMETERS,
+}: {
+  body: ExactProtectedApiRequestContract["body"];
+  cookie: ExactRequestCredentialRequirement;
+  csrf: ExactRequestCredentialRequirement;
+  method: "GET" | "POST";
+  pathParameters?: Readonly<Record<string, ExactJsonPropertyContract>>;
+}): ExactProtectedApiRequestContract => {
+  const allowedHeaders = [
+    ...(body.mode === "json" ? [EXACT_CORS_CONTENT_TYPE_HEADER] : []),
+    ...(csrf === "required" ? [EXACT_CORS_CSRF_HEADER] : []),
+    EXACT_CORS_TRACE_HEADER,
+  ];
+
+  return Object.freeze({
+    body,
+    cookie,
+    cors: Object.freeze({
+      allowedHeaders: Object.freeze(allowedHeaders),
+      allowedMethods: Object.freeze([method]),
+    }),
+    csrf,
+    headers: Object.freeze({
+      controlled: EXACT_CONTROLLED_HEADERS,
+      maxBytesByName: EXACT_HEADER_MAX_BYTES,
+      maxCount: EXACT_MAX_HEADER_COUNT,
+      maxTotalBytes: EXACT_MAX_TOTAL_HEADER_BYTES,
+      rejectCallerAuthority: true as const,
+    }),
+    origin: "required" as const,
+    pathParameters,
+    query: EXACT_NO_QUERY,
+  });
+};
+
+const sessionIdPathParameter = Object.freeze({
+  sessionId: exactString(1, EXACT_PROTECTED_PATH_PARAMETER_MAX_LENGTH),
+});
+const taskIdPathParameter = Object.freeze({
+  taskId: exactString(1, EXACT_PROTECTED_PATH_PARAMETER_MAX_LENGTH),
+});
+
+export const exactProtectedApiRouteContracts = Object.freeze([
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "wallet.auth.challenge.create" as const,
+    method: "POST" as const,
+    operationId: "createWalletAuthenticationChallenge",
+    path: "/api/wallet/auth/challenges",
+    request: exactRequestContract({
+      body: exactJsonBody(2_048, {
+        adapterId: exactString(1, 80),
+        caHash: exactString(1, 128),
+        chainId: exactString(1, 32),
+        network: exactString(1, 7, ["mainnet", "testnet"]),
+        walletAddress: exactString(1, 160),
+      }, ["adapterId", "chainId", "network", "walletAddress"]),
+      cookie: "optional",
+      csrf: "forbidden",
+      method: "POST",
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "wallet.auth.session.create" as const,
+    method: "POST" as const,
+    operationId: "createWalletAuthenticationSession",
+    path: "/api/wallet/auth/sessions",
+    request: exactRequestContract({
+      body: exactJsonBody(96 * 1_024, {
+        adapterProof: Object.freeze({ type: "object" as const }),
+        challengeId: exactString(1, 160),
+        message: exactString(1, 16_384),
+        nonce: exactString(32, 512),
+        publicKey: exactString(1, 4_096),
+        signature: exactString(1, 8_192),
+      }, ["challengeId", "message", "nonce", "signature"]),
+      cookie: "optional",
+      csrf: "forbidden",
+      method: "POST",
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "wallet.auth.session.current" as const,
+    method: "GET" as const,
+    operationId: "getCurrentWalletAuthenticationSession",
+    path: "/api/wallet/auth/session",
+    request: exactRequestContract({
+      body: EXACT_NO_BODY,
+      cookie: "required",
+      csrf: "forbidden",
+      method: "GET",
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "wallet.auth.session.rotate" as const,
+    method: "POST" as const,
+    operationId: "rotateWalletAuthenticationSession",
+    path: "/api/wallet/auth/session/rotate",
+    request: exactRequestContract({
+      body: EXACT_NO_BODY,
+      cookie: "required",
+      csrf: "required",
+      method: "POST",
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "wallet.auth.session.logout" as const,
+    method: "POST" as const,
+    operationId: "logoutWalletAuthenticationSession",
+    path: "/api/wallet/auth/logout",
+    request: exactRequestContract({
+      body: EXACT_NO_BODY,
+      cookie: "required",
+      csrf: "required",
+      method: "POST",
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "admin.wallet-session.revoke" as const,
+    method: "POST" as const,
+    operationId: "revokeWalletAuthenticationSession",
+    path: "/api/admin/wallet-sessions/:sessionId/revoke",
+    request: exactRequestContract({
+      body: exactJsonBody(512, {
+        reasonCode: exactString(1, 64, [
+          "ADMIN_REVOKED",
+          "COMPROMISE_RESPONSE",
+          "MEMBERSHIP_CHANGED",
+        ]),
+      }, ["reasonCode"]),
+      cookie: "required",
+      csrf: "required",
+      method: "POST",
+      pathParameters: sessionIdPathParameter,
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "tasks.verify" as const,
+    method: "POST" as const,
+    operationId: "verifyTask",
+    path: "/api/tasks/:taskId/verify",
+    request: exactRequestContract({
+      body: exactJsonBody(2_048, {
+        campaignId: exactBoundedId(1, EXACT_PROTECTED_PATH_PARAMETER_MAX_LENGTH),
+      }, ["campaignId"]),
+      cookie: "required",
+      csrf: "required",
+      method: "POST",
+      pathParameters: taskIdPathParameter,
+    }),
+  }),
+] as const satisfies readonly ExactProtectedApiRouteContract[]);
+
+export const exactProtectedApiRouteContractById = Object.freeze(Object.fromEntries(
+  exactProtectedApiRouteContracts.map((contract) => [contract.id, contract]),
+)) as Readonly<Record<ExactProtectedApiRouteId, ExactProtectedApiRouteContract>>;
+
+export interface ResolvedExactProtectedApiRoute {
+  params: Readonly<Record<string, string>>;
+  queryAllowed: boolean;
+  route: ExactProtectedApiRouteContract;
+}
+
+const safeExactPathParameter = (
+  rawValue: string,
+  contract: ExactJsonPropertyContract,
+): string | undefined => {
+  let value: string;
+  try {
+    value = decodeURIComponent(rawValue);
+  } catch {
+    return undefined;
+  }
+
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)
+    || (contract.minLength !== undefined && value.length < contract.minLength)
+    || (contract.maxLength !== undefined && value.length > contract.maxLength)
+  ) {
+    return undefined;
+  }
+
+  return value;
+};
+
+const matchExactProtectedPath = (
+  pathname: string,
+  routeContract: ExactProtectedApiRouteContract,
+): Readonly<Record<string, string>> | undefined => {
+  const pathSegments = pathname.split("/");
+  const templateSegments = routeContract.path.split("/");
+  if (pathSegments.length !== templateSegments.length) {
+    return undefined;
+  }
+
+  const params: Record<string, string> = {};
+  for (let index = 0; index < templateSegments.length; index += 1) {
+    const templateSegment = templateSegments[index] ?? "";
+    const pathSegment = pathSegments[index] ?? "";
+    if (!templateSegment.startsWith(":")) {
+      if (templateSegment !== pathSegment) {
+        return undefined;
+      }
+      continue;
+    }
+
+    const name = templateSegment.slice(1);
+    const parameterContract = routeContract.request.pathParameters[name];
+    const value = parameterContract
+      ? safeExactPathParameter(pathSegment, parameterContract)
+      : undefined;
+    if (!value) {
+      return undefined;
+    }
+    params[name] = value;
+  }
+
+  return Object.freeze(params);
+};
+
+export const resolveExactProtectedApiRoute = (
+  requestTarget: string,
+): ResolvedExactProtectedApiRoute | undefined => {
+  if (
+    typeof requestTarget !== "string"
+    || requestTarget.length === 0
+    || !isUnambiguousApiRequestTarget(requestTarget)
+  ) {
+    return undefined;
+  }
+  const hashIndex = requestTarget.indexOf("#");
+  const withoutHash = hashIndex < 0 ? requestTarget : requestTarget.slice(0, hashIndex);
+  const queryIndex = withoutHash.indexOf("?");
+  const pathname = queryIndex < 0 ? withoutHash : withoutHash.slice(0, queryIndex);
+  const query = queryIndex < 0 ? "" : withoutHash.slice(queryIndex + 1);
+
+  for (const routeContract of exactProtectedApiRouteContracts) {
+    const params = matchExactProtectedPath(pathname, routeContract);
+    if (params) {
+      return Object.freeze({
+        params,
+        queryAllowed: query.length === 0,
+        route: routeContract,
+      });
+    }
+  }
+
+  return undefined;
+};
 
 export const apiRuntimeRoutes = [
   route({

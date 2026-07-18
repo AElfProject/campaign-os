@@ -10,6 +10,36 @@ import {
 const campaignId = "campaign-db-preview-CaseA";
 const taskId = "task-db-social-1";
 const walletAddress = "2F4xYZaB9mQCaseExact";
+const legacyVerificationAuthorityFields = [
+  "accountType",
+  "chainId",
+  "network",
+  "role",
+  "sessionId",
+  "walletAddress",
+  "walletSource",
+] as const;
+const legacyAuthorityHeaderNames = [
+  "x-campaign-os-account-type",
+  "x-campaign-os-credential-boundary",
+  "x-campaign-os-proof-status",
+  "x-campaign-os-roles",
+  "x-campaign-os-session-id",
+  "x-campaign-os-wallet-address",
+  "x-campaign-os-wallet-source",
+] as const;
+const callerAuthorityAliasHeaderNames = [
+  "x-account-type",
+  "x-auth-session-id",
+  "x-capabilities",
+  "x-capability",
+  "x-chain-id",
+  "x-network",
+  "x-role",
+  "x-roles",
+  "x-session-id",
+] as const;
+const durableCsrfToken = "c".repeat(43);
 
 const session: NormalizedWalletSession = {
   accountType: "EOA",
@@ -53,6 +83,28 @@ const repository = {
   repositoryId: "campaign-db-repository-runtime",
   storeId: "campaign-db",
 } as const;
+
+const durableSessionEnvelope = (csrfToken = durableCsrfToken) => ({
+  data: {
+    csrfToken,
+    session: {
+      absoluteExpiresAt: "2026-07-18T16:00:00.000Z",
+      accountType: session.accountType,
+      capabilities: ["campaign:read", "task:verify"],
+      chainId: session.chainId,
+      idleExpiresAt: "2026-07-18T08:30:00.000Z",
+      issuedAt: "2026-07-18T08:00:00.000Z",
+      network: session.network,
+      roles: ["participant"],
+      sessionId: "was_participant-durable-session",
+      status: "active",
+      walletAddress,
+      walletSource: session.walletSource,
+    },
+  },
+  ok: true,
+  traceId: "trace-current-session",
+});
 
 const postgresRepository = {
   ...repository,
@@ -470,6 +522,7 @@ const bridge = (
   config: Record<string, unknown> = {},
 ) => createParticipantJourneyApiBridge({
   config: {
+    authorityMode: "deprecated_non_live_preview",
     baseUrl: "http://127.0.0.1:5184/root?token=ignored#fragment",
     maxResponseBytes: 64_000,
     timeoutMs: 500,
@@ -485,6 +538,59 @@ afterEach(() => {
 });
 
 describe("Participant journey API bridge", () => {
+  it("hydrates the default durable cookie session and sends exact credentialed CSRF verify authority", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response(durableSessionEnvelope()))
+      .mockResolvedValueOnce(response(liveCompletedEnvelope("trace-durable-verify")));
+    const durableBridge = createParticipantJourneyApiBridge({
+      config: {
+        baseUrl: "http://127.0.0.1:5184",
+        maxResponseBytes: 64_000,
+        timeoutMs: 500,
+      },
+      fetchImpl: fetchImpl as unknown as ParticipantJourneyApiFetch,
+      traceIdGenerator: (operation) => `trace-durable-${operation}`,
+    });
+
+    const result = await durableBridge.verifyTask(taskId, context({ session: null }));
+
+    expect(result).toMatchObject({ ok: true, status: "completed" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/wallet/auth/session",
+      `/api/tasks/${taskId}/verify`,
+    ]);
+
+    const hydrationInit = fetchImpl.mock.calls[0][1];
+    const hydrationHeaders = new Headers(hydrationInit?.headers);
+    expect(hydrationInit).toMatchObject({ credentials: "include", method: "GET" });
+    expect(hydrationHeaders.has("x-campaign-os-csrf")).toBe(false);
+
+    const verifyInit = fetchImpl.mock.calls[1][1];
+    const verifyHeaders = new Headers(verifyInit?.headers);
+    expect(verifyInit).toMatchObject({ credentials: "include", method: "POST" });
+    expect(verifyHeaders.get("x-campaign-os-csrf")).toBe(durableCsrfToken);
+    expect(JSON.parse(String(verifyInit?.body))).toEqual({ campaignId });
+    for (const headerName of legacyAuthorityHeaderNames) {
+      expect(verifyHeaders.has(headerName)).toBe(false);
+      expect(hydrationHeaders.has(headerName)).toBe(false);
+    }
+  });
+
+  it("rejects an unbounded hydrated CSRF token before the protected durable request", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(durableSessionEnvelope("too-short")));
+    const durableBridge = createParticipantJourneyApiBridge({
+      config: { baseUrl: "http://127.0.0.1:5184" },
+      fetchImpl: fetchImpl as unknown as ParticipantJourneyApiFetch,
+    });
+
+    const result = await durableBridge.verifyTask(taskId, context({ session: null }));
+
+    expect(result).toMatchObject({ code: "BRIDGE_SESSION_INVALID", ok: false, phase: "auth" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("builds exact feed, journey, and verify requests from the issued session", async () => {
     const fetchImpl = vi
       .fn()
@@ -541,11 +647,11 @@ describe("Participant journey API bridge", () => {
         method: "POST",
       }),
     );
-    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).not.toMatchObject({
-      accountType: expect.anything(),
-      walletAddress: expect.anything(),
-      walletSource: expect.anything(),
-    });
+    const verifyBody = JSON.parse(String(fetchImpl.mock.calls[2][1]?.body));
+    expect(verifyBody).toEqual({ campaignId });
+    for (const field of legacyVerificationAuthorityFields) {
+      expect(verifyBody).not.toHaveProperty(field);
+    }
   });
 
   it("normalizes the runtime feed id and flattened verify metadata with repository provenance", async () => {
@@ -1022,6 +1128,47 @@ describe("Participant journey API bridge", () => {
     expect(missingBase).toMatchObject({ code: "BRIDGE_BASE_URL_MISSING", ok: false, status: "blocked" });
     expect(missingSession).toMatchObject({ code: "BRIDGE_SESSION_INVALID", ok: false, status: "blocked" });
     expect(conflict).toMatchObject({ code: "BRIDGE_AUTH_HEADER_CONFLICT", ok: false, status: "blocked" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each(callerAuthorityAliasHeaderNames)(
+    "blocks durable caller authority alias %s before session hydration",
+    async (headerName) => {
+      const fetchImpl = vi.fn();
+      const durableBridge = createParticipantJourneyApiBridge({
+        config: {
+          baseUrl: "https://campaign.example",
+          headers: { [headerName]: "caller-controlled" },
+        },
+        fetchImpl: fetchImpl as unknown as ParticipantJourneyApiFetch,
+      });
+
+      const result = await durableBridge.listCampaigns(context({
+        selectedCampaignId: null,
+        session: null,
+      }));
+
+      expect(result).toMatchObject({
+        code: "BRIDGE_AUTH_HEADER_CONFLICT",
+        ok: false,
+        phase: "auth",
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks deprecated preview authority on a non-loopback runtime before fetch", async () => {
+    const fetchImpl = vi.fn();
+
+    const result = await bridge(fetchImpl, {
+      baseUrl: "https://campaign.example",
+    }).listCampaigns(context({ selectedCampaignId: null }));
+
+    expect(result).toMatchObject({
+      code: "BRIDGE_BASE_URL_INVALID",
+      ok: false,
+      phase: "config",
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
