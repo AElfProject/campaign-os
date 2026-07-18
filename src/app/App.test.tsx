@@ -2707,6 +2707,63 @@ describe("App live Participant wallet authentication", () => {
     },
   );
 
+  it("keeps unavailable AA visible while composing the quickstart EOA provider", async () => {
+    const composition = createDefaultLiveWalletAppComposition({
+      browserGlobal: Object.freeze({
+        Portkey: Object.freeze({
+          isPortkey: true,
+          on: vi.fn(),
+          removeListener: vi.fn(),
+          request: vi.fn(),
+        }),
+      }),
+      env: {
+        VITE_CAMPAIGN_OS_API_BASE_URL: "http://127.0.0.1:5194",
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([
+          {
+            adapterId: "portkey-aa",
+            enabled: true,
+            label: "Portkey AA",
+            recommended: true,
+          },
+          {
+            adapterId,
+            enabled: true,
+            label: "Portkey Discover EOA",
+            recommended: false,
+          },
+        ]),
+      },
+    });
+
+    expect(composition).toMatchObject({
+      mode: "live_local_stage",
+      options: [
+        {
+          accountType: "AA",
+          adapterId: "portkey-aa",
+          label: "Portkey AA",
+          recommended: false,
+          status: "unavailable",
+        },
+        {
+          accountType: "EOA",
+          adapterId,
+          label: "Portkey Discover EOA",
+          recommended: false,
+          status: "available",
+        },
+      ],
+      status: "ready",
+    });
+    if (composition?.status === "ready") {
+      composition.bridge.close();
+      await composition.client.close();
+    }
+  });
+
   it.each([undefined, "", "0", "false"])(
     "keeps canonical disabled enablement %s in explicit preview mode",
     (enablement) => {
@@ -2758,7 +2815,7 @@ describe("App live Participant wallet authentication", () => {
       label: "Portkey EOA",
       recommended: true,
     }]);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
       error: {
         code: "WALLET_AUTH_SESSION_MISSING",
         message: "The request could not be completed.",
@@ -2776,6 +2833,11 @@ describe("App live Participant wallet authentication", () => {
     }));
     const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
     expect(within(dialog).getByRole("status")).toHaveTextContent("Wallet service unavailable");
+    const unavailableOptions = within(dialog).getByRole("region", { name: "Wallet options" });
+    expect(within(unavailableOptions).getByText("Portkey EOA")).toBeInTheDocument();
+    expect(within(unavailableOptions).getByRole("button", {
+      name: "Portkey EOA Unavailable",
+    })).toBeDisabled();
 
     Object.defineProperty(globalThis, "Portkey", {
       configurable: true,
@@ -2786,10 +2848,11 @@ describe("App live Participant wallet authentication", () => {
         request: vi.fn(),
       }),
     });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Try wallet connection again",
-    }));
-
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", {
+        name: "Try wallet connection again",
+      }));
+    });
     await waitFor(() => expect(within(screen.getByRole("region", {
       name: "Wallet options",
     })).getByRole("button", { name: "Connect Portkey EOA" })).toBeEnabled());
@@ -2917,6 +2980,48 @@ describe("App live Participant wallet authentication", () => {
     view.unmount();
     await waitFor(() => expect(client.close).toHaveBeenCalledTimes(1));
     expect(bridge.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores an existing durable session while every browser provider is unavailable", async () => {
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn<LiveWalletAuthenticationApiBridge["getCurrentSession"]>(async () => ({
+        httpStatus: 200,
+        ok: true,
+        session: liveSession,
+        status: "restored",
+        traceId: "trace-app-live-restored-without-provider",
+      })),
+    });
+    const unavailableWallets: readonly WalletClientAdapterAvailability[] = [{
+      adapterId,
+      enabled: false,
+      label: "Portkey EOA",
+      recommended: false,
+      status: "unavailable",
+    }];
+    const client = createLiveClient({
+      listAvailableWallets: vi.fn(async () => unavailableWallets),
+    });
+    const readyComposition = createLiveComposition(bridge, client);
+    if (readyComposition.status !== "ready") {
+      throw new Error("Expected a ready live wallet composition.");
+    }
+    const composition: LiveWalletAppComposition = {
+      ...readyComposition,
+      options: readyComposition.options.map((option) => ({
+        ...option,
+        recommended: false,
+        status: "unavailable",
+      })),
+    };
+
+    render(<App liveWalletAuthentication={composition} />);
+
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    expect(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Verified EOA/,
+    })).toBeInTheDocument();
+    expect(client.connect).not.toHaveBeenCalled();
   });
 
   it("restores a durable cookie session into Participant UI without granting Owner or Admin authority", async () => {

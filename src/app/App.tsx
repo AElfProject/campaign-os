@@ -621,10 +621,16 @@ const mergeLiveWalletAvailability = (
     const runtime = availabilityById.get(option.adapterId);
     return {
       ...option,
+      recommended: runtime?.recommended ?? false,
       status: runtime?.status ?? "unavailable",
     };
   });
 };
+
+const allLiveWalletOptionsUnavailable = (
+  options: readonly LiveWalletOption[],
+): boolean => options.length > 0
+  && options.every(({ status }) => status === "unavailable");
 
 const useLiveWalletAuthentication = (
   composition: LiveWalletAppComposition | undefined,
@@ -1087,6 +1093,20 @@ const useLiveWalletAuthentication = (
     }
     if (
       isReadyLiveWalletComposition(composition)
+      && !stateRef.current.privateParticipant.session
+      && allLiveWalletOptionsUnavailable(options)
+    ) {
+      selectedAdapterIdRef.current = null;
+      onUnavailableRetry?.();
+      const unavailable = createUnavailableLiveWalletAuthenticationState();
+      stateRef.current = unavailable;
+      if (mountedRef.current) {
+        setState(unavailable);
+      }
+      return;
+    }
+    if (
+      isReadyLiveWalletComposition(composition)
       && !walletSubscriptionReadyRef.current
     ) {
       onUnavailableRetry?.();
@@ -1112,7 +1132,7 @@ const useLiveWalletAuthentication = (
         : action === "sign"
           ? { type: "sign_requested" }
           : { type: "retry_requested" });
-  }, [commit, composition, onUnavailableRetry]);
+  }, [commit, composition, onUnavailableRetry, options]);
 
   const logout = useCallback(() => {
     commit({ type: "logout_requested" });
@@ -1161,6 +1181,7 @@ const useLiveWalletAuthentication = (
   }, [commit, composition]);
 
   const session = state.privateParticipant.session;
+  const registryUnavailable = !session && allLiveWalletOptionsUnavailable(options);
   const viewState: LiveWalletAuthenticationViewState = {
     ...(state.privateParticipant.wallet?.adapterId
       ? { activeAdapterId: state.privateParticipant.wallet.adapterId }
@@ -1175,7 +1196,7 @@ const useLiveWalletAuthentication = (
           },
         }
       : {}),
-    status: liveStatusByWorkflowStatus[state.status],
+    status: registryUnavailable ? "unavailable" : liveStatusByWorkflowStatus[state.status],
     ...(session && (session.accountType === "AA" || session.accountType === "EOA")
       ? {
           wallet: {

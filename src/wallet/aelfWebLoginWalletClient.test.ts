@@ -925,8 +925,8 @@ describe("AElf Web Login WalletClient adapter", () => {
   });
 
   it.each([
-    ["missing globals", undefined],
-    ["empty globals", Object.freeze({})],
+    ["missing globals", undefined, "unavailable"],
+    ["empty globals", Object.freeze({}), "unavailable"],
     [
       "partial globals",
       Object.freeze({
@@ -937,6 +937,7 @@ describe("AElf Web Login WalletClient adapter", () => {
           request: vi.fn(),
         }),
       }),
+      "available",
     ],
     [
       "malformed globals",
@@ -944,6 +945,7 @@ describe("AElf Web Login WalletClient adapter", () => {
         NightElf: Object.freeze({ AElf: "not-a-constructor" }),
         Portkey: Object.freeze({ isPortkey: true, request: vi.fn() }),
       }),
+      "unavailable",
     ],
     [
       "throwing globals",
@@ -951,8 +953,13 @@ describe("AElf Web Login WalletClient adapter", () => {
         NightElf: { get: () => { throw new Error("unsafe NightElf getter"); } },
         Portkey: { get: () => { throw new Error("unsafe Portkey getter"); } },
       }),
+      "unavailable",
     ],
-  ])("composes deny-by-default browser availability for %s", async (_label, browserGlobal) => {
+  ] as const)("projects deny-by-default browser availability for %s", async (
+    _label,
+    browserGlobal,
+    discoverStatus,
+  ) => {
     const composition = createDefaultAelfWebLoginBrowserWalletClient({
       browserGlobal,
       env: {
@@ -970,7 +977,116 @@ describe("AElf Web Login WalletClient adapter", () => {
       runtime,
     });
 
-    expect(composition).toEqual({ client: undefined, options: [], status: "unavailable" });
+    expect(composition.status).toBe("ready");
+    expect(composition.options).toEqual([
+      {
+        accountType: "EOA",
+        adapterId: "nightelf",
+        label: "NightElf",
+        recommended: false,
+        status: "unavailable",
+      },
+      {
+        accountType: "EOA",
+        adapterId: "portkey-discover-eoa",
+        label: "Portkey EOA",
+        recommended: discoverStatus === "available",
+        status: discoverStatus,
+      },
+    ]);
+    if (composition.status !== "ready") {
+      throw new Error("Expected projected browser wallet options.");
+    }
+    await expect(composition.client.listAvailableWallets()).resolves.toEqual([
+      {
+        adapterId: "nightelf",
+        enabled: false,
+        label: "NightElf",
+        recommended: false,
+        status: "unavailable",
+      },
+      {
+        adapterId: "portkey-discover-eoa",
+        enabled: discoverStatus === "available",
+        label: "Portkey EOA",
+        recommended: discoverStatus === "available",
+        status: discoverStatus,
+      },
+    ]);
+    await composition.client.close();
+  });
+
+  it("composes the exact AA and EOA quickstart profile with unavailable AA fail closed", async () => {
+    const composition = createDefaultAelfWebLoginBrowserWalletClient({
+      browserGlobal: Object.freeze({
+        Portkey: Object.freeze({
+          isPortkey: true,
+          on: vi.fn(),
+          removeListener: vi.fn(),
+          request: vi.fn(),
+        }),
+      }),
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([
+          {
+            adapterId: "portkey-aa",
+            enabled: true,
+            label: "Portkey AA",
+            recommended: true,
+          },
+          {
+            adapterId: "portkey-discover-eoa",
+            enabled: true,
+            label: "Portkey Discover EOA",
+            recommended: false,
+          },
+        ]),
+      },
+      runtime,
+    });
+
+    expect(composition.status).toBe("ready");
+    expect(composition.options).toEqual([
+      {
+        accountType: "AA",
+        adapterId: "portkey-aa",
+        label: "Portkey AA",
+        recommended: false,
+        status: "unavailable",
+      },
+      {
+        accountType: "EOA",
+        adapterId: "portkey-discover-eoa",
+        label: "Portkey Discover EOA",
+        recommended: false,
+        status: "available",
+      },
+    ]);
+    if (composition.status !== "ready") {
+      throw new Error("Expected ready mixed browser wallet composition.");
+    }
+    await expect(composition.client.listAvailableWallets()).resolves.toEqual([
+      {
+        adapterId: "portkey-aa",
+        enabled: false,
+        label: "Portkey AA",
+        recommended: false,
+        status: "unavailable",
+      },
+      {
+        adapterId: "portkey-discover-eoa",
+        enabled: true,
+        label: "Portkey Discover EOA",
+        recommended: false,
+        status: "available",
+      },
+    ]);
+    await expect(composition.client.connect("portkey-aa")).rejects.toMatchObject({
+      adapterId: "portkey-aa",
+      code: "WALLET_CLIENT_ADAPTER_UNAVAILABLE",
+    });
+    await composition.client.close();
   });
 
   it("composes available default browser providers behind the internal WalletClient API", async () => {

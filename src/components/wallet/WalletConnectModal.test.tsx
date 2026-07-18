@@ -534,4 +534,46 @@ describe("WalletConnectModal locale coverage", () => {
     fireEvent.click(retry);
     expect(authentication.onRetry).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps an unavailable registry visible with one provider re-detection action", () => {
+    const authentication = liveAuthentication({
+      options: [
+        {
+          accountType: "AA",
+          adapterId: "portkey-aa",
+          label: "Portkey AA",
+          recommended: false,
+          status: "unavailable",
+        },
+        {
+          accountType: "EOA",
+          adapterId: "portkey-discover-eoa",
+          label: "Portkey Discover EOA",
+          recommended: false,
+          status: "unavailable",
+        },
+      ],
+      state: { status: "unavailable" },
+    });
+
+    render(
+      <WalletConnectModal
+        liveAuthentication={authentication}
+        locale="en-US"
+        onClose={vi.fn()}
+        options={walletOptions}
+      />,
+    );
+
+    const registry = screen.getByRole("region", { name: "Wallet options" });
+    expect(within(registry).getByText("Portkey AA")).toBeInTheDocument();
+    expect(within(registry).getByText("Portkey Discover EOA")).toBeInTheDocument();
+    expect(within(registry).getByRole("button", { name: "Portkey AA Unavailable" })).toBeDisabled();
+    expect(within(registry).getByRole("button", {
+      name: "Portkey Discover EOA Unavailable",
+    })).toBeDisabled();
+    expect(screen.getAllByRole("button", {
+      name: "Try wallet connection again",
+    })).toHaveLength(1);
+  });
 });

@@ -115,7 +115,7 @@ const tagStyle: CSSProperties = {
 const advancedStyle: CSSProperties = {
   ...tagStyle,
   background: "#f8fafc",
-  borderColor: "#cbd5e1",
+  border: "1px solid #cbd5e1",
   color: "#334155",
 };
 

@@ -32,9 +32,24 @@ const textEncoder = new TextEncoder();
 
 const discoverPackageName = "@aelf-web-login/wallet-adapter-portkey-discover";
 const nightElfPackageName = "@aelf-web-login/wallet-adapter-night-elf";
-const defaultBrowserAdapterIds = Object.freeze(["portkey-discover-eoa", "nightelf"] as const);
 
 export type AelfWebLoginAccountType = "AA" | "EOA";
+
+interface DefaultBrowserAdapterMetadata {
+  readonly accountType: AelfWebLoginAccountType;
+}
+
+const defaultBrowserAdapterMetadataById: Readonly<
+  Record<string, DefaultBrowserAdapterMetadata>
+> = Object.freeze({
+  nightelf: Object.freeze({ accountType: "EOA" }),
+  "portkey-aa": Object.freeze({ accountType: "AA" }),
+  "portkey-discover-eoa": Object.freeze({ accountType: "EOA" }),
+  "portkey-eoa-extension": Object.freeze({ accountType: "EOA" }),
+});
+const defaultBrowserAdapterIds = Object.freeze(
+  Object.keys(defaultBrowserAdapterMetadataById),
+);
 
 export interface AelfWebLoginRuntimeConfig {
   readonly appName: string;
@@ -2185,7 +2200,9 @@ export const createDefaultAelfWebLoginBrowserWalletClient = ({
     env: browserSafeEnv(env),
     runtimeAvailability: Object.freeze({
       nightelf: providerAvailability.nightElf ? "available" : "unavailable",
+      "portkey-aa": "unavailable",
       "portkey-discover-eoa": providerAvailability.discover ? "available" : "unavailable",
+      "portkey-eoa-extension": "unavailable",
     }),
     serverBindingIds: defaultBrowserAdapterIds,
   });
@@ -2200,16 +2217,24 @@ export const createDefaultAelfWebLoginBrowserWalletClient = ({
   const bindingByPackageName = new Map(bindings.map((binding) => [binding.packageName, binding]));
   const options: AelfWebLoginBrowserWalletOptionDescriptor[] = [];
   for (const adapter of adapterConfig.adapters) {
+    const metadata = defaultBrowserAdapterMetadataById[adapter.adapterId];
     const binding = bindingByPackageName.get(adapter.packageName);
-    if (!binding) {
+    if (!metadata) {
       return emptyBrowserWalletComposition("unavailable");
     }
+    const status = adapter.status === "disabled"
+      ? "disabled"
+      : adapter.status === "available"
+        && binding?.approved === true
+        && binding.providerAvailable
+        ? "available"
+        : "unavailable";
     options.push(Object.freeze({
-      accountType: binding.accountType,
+      accountType: metadata.accountType,
       adapterId: adapter.adapterId,
       label: adapter.label,
-      recommended: adapter.recommended,
-      status: adapter.status,
+      recommended: adapter.recommended && status === "available",
+      status,
     }));
   }
 

@@ -748,6 +748,9 @@ export const WalletConnectModal = ({
   const stageReviewConnectionAttempted = Boolean(
     walletSessionBridgeState?.request.proofEvaluatedAt,
   );
+  const showUnavailableLiveRegistry = liveAuthentication?.state.status === "unavailable"
+    && liveAuthentication.options.length > 0
+    && liveAuthentication.options.every(({ status }) => status === "unavailable");
 
   useEffect(() => {
     const previouslyFocusedElement = document.activeElement instanceof HTMLElement
@@ -850,8 +853,9 @@ export const WalletConnectModal = ({
             {liveAuthentication.state.status !== "ready"
               && liveAuthentication.state.status !== "expired"
               && liveAuthentication.state.status !== "revoked"
-              && liveAuthentication.state.status !== "unavailable"
-              && liveAuthentication.state.status !== "failed" ? (
+              && liveAuthentication.state.status !== "failed"
+              && (liveAuthentication.state.status !== "unavailable"
+                || showUnavailableLiveRegistry) ? (
                 <LiveWalletOptionCards
                   activeAdapterId={liveAuthentication.state.activeAdapterId}
                   authenticationStatus={liveAuthentication.state.status}
