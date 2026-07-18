@@ -2500,6 +2500,7 @@ describe("App Owner campaign authority", () => {
 });
 
 describe("App live Participant wallet authentication", () => {
+  const originalPortkeyDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Portkey");
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
   const originalLiveWalletAuthEnabled =
     import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED;
@@ -2655,46 +2656,76 @@ describe("App live Participant wallet authentication", () => {
     import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED = originalLiveWalletAuthEnabled;
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = originalStageReviewEnabled;
     import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON = originalWalletAdaptersJson;
+    if (originalPortkeyDescriptor) {
+      Object.defineProperty(globalThis, "Portkey", originalPortkeyDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "Portkey");
+    }
+    vi.restoreAllMocks();
   });
 
-  it("composes the default browser wallet and live API bridge from browser-safe config", async () => {
-    const composition = createDefaultLiveWalletAppComposition({
-      browserGlobal: Object.freeze({
-        Portkey: Object.freeze({
-          isPortkey: true,
-          on: vi.fn(),
-          removeListener: vi.fn(),
-          request: vi.fn(),
+  it.each(["1", "true"])(
+    "composes the default browser wallet and live API bridge for canonical enablement %s",
+    async (enablement) => {
+      const composition = createDefaultLiveWalletAppComposition({
+        browserGlobal: Object.freeze({
+          Portkey: Object.freeze({
+            isPortkey: true,
+            on: vi.fn(),
+            removeListener: vi.fn(),
+            request: vi.fn(),
+          }),
         }),
-      }),
-      env: {
-        VITE_CAMPAIGN_OS_API_BASE_URL: "http://127.0.0.1:5194",
-        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
-        VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED: "1",
-        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([{
+        env: {
+          VITE_CAMPAIGN_OS_API_BASE_URL: "http://127.0.0.1:5194",
+          VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: enablement,
+          VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED: "1",
+          VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([{
+            adapterId,
+            enabled: true,
+            label: "Portkey EOA",
+            recommended: true,
+          }]),
+        },
+      });
+
+      expect(composition).toMatchObject({
+        mode: "live_local_stage",
+        options: [{
+          accountType: "EOA",
           adapterId,
-          enabled: true,
           label: "Portkey EOA",
           recommended: true,
-        }]),
-      },
-    });
+          status: "available",
+        }],
+        status: "ready",
+      });
+      if (composition?.status === "ready") {
+        composition.bridge.close();
+        await composition.client.close();
+      }
+    },
+  );
 
-    expect(composition).toMatchObject({
-      mode: "live_local_stage",
-      options: [{
-        accountType: "EOA",
-        adapterId,
-        label: "Portkey EOA",
-        recommended: true,
-        status: "available",
-      }],
-      status: "ready",
-    });
-    if (composition?.status === "ready") {
-      composition.bridge.close();
-      await composition.client.close();
-    }
+  it.each([undefined, "", "0", "false"])(
+    "keeps canonical disabled enablement %s in explicit preview mode",
+    (enablement) => {
+      expect(createDefaultLiveWalletAppComposition({
+        browserGlobal: Object.freeze({}),
+        env: {
+          VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: enablement,
+        },
+      })).toBeUndefined();
+    },
+  );
+
+  it("keeps invalid live enablement fail-closed instead of entering preview", () => {
+    expect(createDefaultLiveWalletAppComposition({
+      browserGlobal: Object.freeze({}),
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "enabled",
+      },
+    })).toMatchObject({ status: "unavailable" });
   });
 
   it("keeps default Vite startup in live unavailable mode when adapter config is invalid", () => {
@@ -2715,6 +2746,159 @@ describe("App live Participant wallet authentication", () => {
       name: "Use seeded wallet preview",
     })).not.toBeInTheDocument();
     expect(submitWalletSessionApiPreview).not.toHaveBeenCalled();
+  });
+
+  it("re-detects a browser provider when unavailable live composition is retried", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5194";
+    import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED = "true";
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON = JSON.stringify([{
+      adapterId,
+      enabled: true,
+      label: "Portkey EOA",
+      recommended: true,
+    }]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        code: "WALLET_AUTH_SESSION_MISSING",
+        message: "The request could not be completed.",
+      },
+      ok: false,
+      traceId: "trace-app-live-provider-retry",
+    }), {
+      headers: { "content-type": "application/json; charset=utf-8" },
+      status: 401,
+    }));
+
+    render(<App />);
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Wallet service unavailable");
+
+    Object.defineProperty(globalThis, "Portkey", {
+      configurable: true,
+      value: Object.freeze({
+        isPortkey: true,
+        on: vi.fn(),
+        removeListener: vi.fn(),
+        request: vi.fn(),
+      }),
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Try wallet connection again",
+    }));
+
+    await waitFor(() => expect(within(screen.getByRole("region", {
+      name: "Wallet options",
+    })).getByRole("button", { name: "Connect Portkey EOA" })).toBeEnabled());
+    expect(submitWalletSessionApiPreview).not.toHaveBeenCalled();
+  });
+
+  it("returns a restored revoked session to the wallet chooser before reconnecting", async () => {
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn<LiveWalletAuthenticationApiBridge["getCurrentSession"]>(async () => ({
+        category: "forbidden",
+        code: "WALLET_AUTH_SESSION_REVOKED",
+        httpStatus: 403,
+        ok: false,
+        reconnectRequired: true,
+        retryable: false,
+        traceId: "trace-app-live-revoked",
+      })),
+    });
+    const client = createLiveClient();
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Wallet session revoked");
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Try wallet connection again",
+    }));
+
+    expect(screen.getByRole("region", { name: "Wallet options" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Portkey EOA" })).toBeEnabled();
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("blocks restore and availability when wallet invalidation subscription fails", async () => {
+    const bridge = createLiveBridge();
+    const client = createLiveClient({
+      subscribeAccountAndChain: vi.fn(() => {
+        throw new Error("subscription unavailable");
+      }),
+    });
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Wallet service unavailable");
+    expect(bridge.getCurrentSession).not.toHaveBeenCalled();
+    expect(client.listAvailableWallets).not.toHaveBeenCalled();
+    expect(client.connect).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale availability completion after the live composition changes", async () => {
+    let resolveOldAvailability!: (value: readonly WalletClientAdapterAvailability[]) => void;
+    const oldAvailability = new Promise<readonly WalletClientAdapterAvailability[]>((resolve) => {
+      resolveOldAvailability = resolve;
+    });
+    const oldBridge = createLiveBridge();
+    const oldClient = createLiveClient({
+      listAvailableWallets: vi.fn(async () => oldAvailability),
+    });
+    const oldComposition: LiveWalletAppComposition = {
+      bridge: oldBridge,
+      client: oldClient,
+      mode: "live_local_stage",
+      options: [{
+        accountType: "EOA",
+        adapterId,
+        label: "Old wallet option",
+        recommended: true,
+        status: "available",
+      }],
+      status: "ready",
+    };
+    const currentBridge = createLiveBridge();
+    const currentClient = createLiveClient();
+    const currentComposition: LiveWalletAppComposition = {
+      bridge: currentBridge,
+      client: currentClient,
+      mode: "live_local_stage",
+      options: [{
+        accountType: "EOA",
+        adapterId,
+        label: "Current wallet option",
+        recommended: true,
+        status: "available",
+      }],
+      status: "ready",
+    };
+    const view = render(<App liveWalletAuthentication={oldComposition} />);
+    await waitFor(() => expect(oldClient.listAvailableWallets).toHaveBeenCalledTimes(1));
+
+    view.rerender(<App liveWalletAuthentication={currentComposition} />);
+    await waitFor(() => expect(currentBridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      resolveOldAvailability(availability);
+      await oldAvailability;
+    });
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+
+    expect(screen.getByText("Current wallet option")).toBeInTheDocument();
+    expect(screen.queryByText("Old wallet option")).not.toBeInTheDocument();
   });
 
   it("does not close a live composition during the StrictMode effect replay", async () => {

@@ -443,10 +443,6 @@ export const createDefaultLiveWalletAppComposition = ({
   browserGlobal = globalThis,
   env,
 }: CreateDefaultLiveWalletAppCompositionOptions): LiveWalletAppComposition | undefined => {
-  if (env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED !== "1") {
-    return undefined;
-  }
-
   const mode: ActiveLiveWalletAuthenticationMode =
     env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED === "1"
       ? "live_local_stage"
@@ -460,6 +456,10 @@ export const createDefaultLiveWalletAppComposition = ({
       network: mode === "live_local_stage" ? "testnet" : "mainnet",
     },
   });
+
+  if (wallet.status === "disabled") {
+    return undefined;
+  }
 
   if (wallet.status !== "ready") {
     return Object.freeze({
@@ -628,6 +628,7 @@ const mergeLiveWalletAvailability = (
 
 const useLiveWalletAuthentication = (
   composition: LiveWalletAppComposition | undefined,
+  onUnavailableRetry?: () => void,
 ): LiveWalletAuthenticationController => {
   const [state, setState] = useState<ParticipantAuthenticationWorkflowState>(
     () => composition?.status === "unavailable"
@@ -643,6 +644,7 @@ const useLiveWalletAuthentication = (
   const selectedAdapterIdRef = useRef<string | null>(null);
   const challengeMaterialRef = useRef<LiveWalletChallengeMaterial | null>(null);
   const proofRef = useRef<WalletClientProof | null>(null);
+  const walletSubscriptionReadyRef = useRef(false);
   const pendingResourceCloseRef = useRef<{
     cancelled: boolean;
     composition: ReadyLiveWalletAppComposition;
@@ -696,6 +698,7 @@ const useLiveWalletAuthentication = (
     if (
       !isReadyLiveWalletComposition(composition)
       || !mountedRef.current
+      || !walletSubscriptionReadyRef.current
       || !commandTargetsCurrentEpoch(command)
     ) {
       return null;
@@ -973,6 +976,7 @@ const useLiveWalletAuthentication = (
 
   useEffect(() => {
     mountedRef.current = true;
+    walletSubscriptionReadyRef.current = false;
     if (!composition) {
       const disconnected = createParticipantAuthenticationWorkflowState();
       stateRef.current = disconnected;
@@ -996,6 +1000,7 @@ const useLiveWalletAuthentication = (
     }
 
     const readyComposition = composition;
+    let effectActive = true;
     const pendingClose = pendingResourceCloseRef.current;
     if (pendingClose?.composition === readyComposition) {
       pendingClose.cancelled = true;
@@ -1008,28 +1013,36 @@ const useLiveWalletAuthentication = (
     let unsubscribe: () => void = () => undefined;
     try {
       unsubscribe = readyComposition.client.subscribeAccountAndChain(invalidateWalletContext);
+      walletSubscriptionReadyRef.current = true;
     } catch {
+      const unavailable = createUnavailableLiveWalletAuthenticationState();
+      stateRef.current = unavailable;
+      setState(unavailable);
       setOptions(readyComposition.options.map((option) => ({
         ...option,
         status: "unavailable",
       })));
     }
-    void readyComposition.client.listAvailableWallets().then((availability) => {
-      if (mountedRef.current) {
-        setOptions(mergeLiveWalletAvailability(readyComposition.options, availability));
-      }
-    }).catch(() => {
-      if (mountedRef.current) {
-        setOptions(readyComposition.options.map((option) => ({
-          ...option,
-          status: "unavailable",
-        })));
-      }
-    });
-    commit({ type: "restore_requested" });
+    if (walletSubscriptionReadyRef.current) {
+      void readyComposition.client.listAvailableWallets().then((availability) => {
+        if (effectActive && mountedRef.current) {
+          setOptions(mergeLiveWalletAvailability(readyComposition.options, availability));
+        }
+      }).catch(() => {
+        if (effectActive && mountedRef.current) {
+          setOptions(readyComposition.options.map((option) => ({
+            ...option,
+            status: "unavailable",
+          })));
+        }
+      });
+      commit({ type: "restore_requested" });
+    }
 
     return () => {
+      effectActive = false;
       mountedRef.current = false;
+      walletSubscriptionReadyRef.current = false;
       abortActiveRequest();
       unsubscribe();
       const resourceClose = {
@@ -1064,6 +1077,19 @@ const useLiveWalletAuthentication = (
 
   const retry = useCallback(() => {
     if (composition?.status === "unavailable") {
+      onUnavailableRetry?.();
+      const unavailable = createUnavailableLiveWalletAuthenticationState();
+      stateRef.current = unavailable;
+      if (mountedRef.current) {
+        setState(unavailable);
+      }
+      return;
+    }
+    if (
+      isReadyLiveWalletComposition(composition)
+      && !walletSubscriptionReadyRef.current
+    ) {
+      onUnavailableRetry?.();
       const unavailable = createUnavailableLiveWalletAuthenticationState();
       stateRef.current = unavailable;
       if (mountedRef.current) {
@@ -1072,6 +1098,13 @@ const useLiveWalletAuthentication = (
       return;
     }
     const action = selectParticipantAuthenticationAction(stateRef.current);
+    if (action === "connect" && selectedAdapterIdRef.current === null) {
+      commit({ reason: "role_changed", type: "scope_invalidated" });
+      if (composition?.status === "ready") {
+        composition.bridge.clearLocalSession();
+      }
+      return;
+    }
     commit(action === "connect"
       ? { type: "connect_requested" }
       : action === "restore"
@@ -1079,7 +1112,7 @@ const useLiveWalletAuthentication = (
         : action === "sign"
           ? { type: "sign_requested" }
           : { type: "retry_requested" });
-  }, [commit, composition]);
+  }, [commit, composition, onUnavailableRetry]);
 
   const logout = useCallback(() => {
     commit({ type: "logout_requested" });
@@ -1190,6 +1223,7 @@ export const App = ({
   ownerCampaignBridge,
   participantJourneyBridge,
 }: AppProps = {}) => {
+  const [defaultLiveWalletRetryEpoch, setDefaultLiveWalletRetryEpoch] = useState(0);
   const defaultLiveWalletAuthentication = useMemo(
     () => liveWalletAuthentication ?? createDefaultLiveWalletAppComposition({
       env: {
@@ -1202,8 +1236,15 @@ export const App = ({
           import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON,
       },
     }),
-    [liveWalletAuthentication],
+    [defaultLiveWalletRetryEpoch, liveWalletAuthentication],
   );
+  const retryDefaultLiveWalletComposition = useCallback(() => {
+    if (liveWalletAuthentication !== undefined) {
+      return;
+    }
+    setDefaultLiveWalletRetryEpoch((epoch) =>
+      epoch < Number.MAX_SAFE_INTEGER ? epoch + 1 : 0);
+  }, [liveWalletAuthentication]);
   const stageReviewMode = isStageReviewModeEnabled();
   const routeContext = useMemo(
     () => parseCampaignRoutePath(readBrowserPathname()),
@@ -1234,7 +1275,10 @@ export const App = ({
   const [connectedStageReviewIdentity, setConnectedStageReviewIdentity] =
     useState<StageReviewIdentity | null>(null);
   const [participantLifecycleEpoch, setParticipantLifecycleEpoch] = useState(0);
-  const liveWalletController = useLiveWalletAuthentication(defaultLiveWalletAuthentication);
+  const liveWalletController = useLiveWalletAuthentication(
+    defaultLiveWalletAuthentication,
+    retryDefaultLiveWalletComposition,
+  );
   const liveWalletMode = defaultLiveWalletAuthentication !== undefined;
   const activeHeaderWalletRequestId = useRef(0);
   const latestHeaderWalletProofEvaluatedAt = useRef(0);
