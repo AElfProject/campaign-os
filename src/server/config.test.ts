@@ -20,6 +20,8 @@ import {
   resolveCampaignOsCampaignDbConfig,
   resolveCampaignOsParticipantPreviewConfig,
   resolveCampaignOsRuntimeConfig,
+  resolveCampaignOsWalletAuthenticationConfig,
+  resolveCampaignOsWalletAuthenticationReadiness,
   sanitizeBackendConfigDiagnosticValue,
 } from "./config";
 import { queueProviderAdapterProductionPreconditions } from "./queueProviderAdapter";
@@ -57,6 +59,25 @@ const collectStringValues = (value: unknown, values: string[] = []): string[] =>
 };
 
 describe("backend config contract", () => {
+  it("exports wallet authentication separately from provider and preview flags", () => {
+    const env = {
+      CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "explicitly-enabled",
+      CAMPAIGN_OS_WALLET_AUTH_ENABLED: "0",
+    };
+    const config = resolveCampaignOsWalletAuthenticationConfig({ env });
+    const readiness = resolveCampaignOsWalletAuthenticationReadiness({ env });
+
+    expect(config).toMatchObject({ enabled: false, productionReady: false, status: "disabled" });
+    expect(readiness).toEqual({
+      bindingCount: 0,
+      enabledBindingIds: [],
+      environment: "local",
+      productionReady: false,
+      status: "disabled",
+    });
+    expect(readiness).not.toHaveProperty("taskVerificationEnabled");
+  });
+
   it("resolves a zero-config local review contract", () => {
     const contract = resolveBackendConfigContract({ env: {} });
 

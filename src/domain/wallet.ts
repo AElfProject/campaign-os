@@ -46,6 +46,52 @@ import type {
   WalletVerificationStatus,
 } from "./types";
 
+export type CanonicalLiveWalletAccountType = Exclude<AccountType, "UNKNOWN">;
+export type CanonicalLiveWalletSource = Exclude<WalletSource, "AGENT_SKILL" | "OTHER">;
+export type CanonicalLiveWalletNetwork = "mainnet" | "testnet";
+export type CanonicalLiveWalletChainId = "AELF" | "tDVV" | "tDVW";
+
+export const canonicalLiveWalletAccountTypes = Object.freeze([
+  "AA",
+  "EOA",
+] as const satisfies readonly CanonicalLiveWalletAccountType[]);
+export const canonicalLiveWalletSources = Object.freeze([
+  "PORTKEY_AA",
+  "PORTKEY_EOA_APP",
+  "PORTKEY_EOA_EXTENSION",
+  "NIGHTELF",
+] as const satisfies readonly CanonicalLiveWalletSource[]);
+export const canonicalLiveWalletChainIds = Object.freeze([
+  "AELF",
+  "tDVV",
+  "tDVW",
+] as const satisfies readonly CanonicalLiveWalletChainId[]);
+export const canonicalLiveWalletNetworks = Object.freeze([
+  "mainnet",
+  "testnet",
+] as const satisfies readonly CanonicalLiveWalletNetwork[]);
+
+const canonicalLiveWalletAccountTypeSet = new Set<unknown>(canonicalLiveWalletAccountTypes);
+const canonicalLiveWalletSourceSet = new Set<unknown>(canonicalLiveWalletSources);
+const canonicalLiveWalletChainIdSet = new Set<unknown>(canonicalLiveWalletChainIds);
+const canonicalLiveWalletNetworkSet = new Set<unknown>(canonicalLiveWalletNetworks);
+
+export const isCanonicalLiveWalletAccountType = (
+  value: unknown,
+): value is CanonicalLiveWalletAccountType => canonicalLiveWalletAccountTypeSet.has(value);
+
+export const isCanonicalLiveWalletSource = (
+  value: unknown,
+): value is CanonicalLiveWalletSource => canonicalLiveWalletSourceSet.has(value);
+
+export const isCanonicalLiveWalletChainId = (
+  value: unknown,
+): value is CanonicalLiveWalletChainId => canonicalLiveWalletChainIdSet.has(value);
+
+export const isCanonicalLiveWalletNetwork = (
+  value: unknown,
+): value is CanonicalLiveWalletNetwork => canonicalLiveWalletNetworkSet.has(value);
+
 export const walletSourceLabels: Record<WalletSource, string> = {
   PORTKEY_AA: "Portkey",
   PORTKEY_EOA_APP: "Portkey App",

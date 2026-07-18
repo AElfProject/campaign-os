@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import packageJson from "../../package.json";
+import { isWalletAdapterInstallCandidatePackageName } from "../wallet/walletAdapterConfig";
 import { apiRuntimeRoutes, createBackendServiceReadinessReport } from "./index";
 import { createProviderHttpDownstreamLiveFlags } from "./providerHttpRuntimeRegistry";
 
@@ -343,6 +344,10 @@ describe("backend scaffold public guardrails", () => {
 
     expect(dependencyNames).toEqual(expect.arrayContaining(["bullmq", "vite", "vitest"]));
     for (const dependencyName of dependencyNames) {
+      if (isWalletAdapterInstallCandidatePackageName(dependencyName)) {
+        continue;
+      }
+
       for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
         expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
       }
@@ -498,6 +503,10 @@ describe("backend scaffold public guardrails", () => {
     expectHistoricalAiOpsRouteScopeWhenTouched(missionChangedFiles);
     expectNoRenderedUiRuntimeChangesWhenBackendScopeTouched(missionChangedFiles);
     for (const dependencyName of dependencyNames) {
+      if (isWalletAdapterInstallCandidatePackageName(dependencyName)) {
+        continue;
+      }
+
       for (const forbiddenFragment of forbiddenRuntimeDependencyFragments) {
         expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
       }

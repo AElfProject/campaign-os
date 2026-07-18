@@ -1,16 +1,55 @@
 import { describe, expect, it } from "vitest";
 import {
   createAelfWebLoginAdapterReadiness,
+  canonicalLiveWalletAccountTypes,
+  canonicalLiveWalletChainIds,
+  canonicalLiveWalletNetworks,
+  canonicalLiveWalletSources,
   createLiveWalletConnectorBoundary,
   createWalletConnectionDiagnostics,
   createWalletProviderQaReadinessGate,
   deriveEligibilityWalletStatus,
   mapLiveWalletInfoToSessionCandidate,
   normalizeWalletSessions,
+  isCanonicalLiveWalletAccountType,
+  isCanonicalLiveWalletChainId,
+  isCanonicalLiveWalletNetwork,
+  isCanonicalLiveWalletSource,
   walletAdapterFixtures,
 } from "./index";
 
 describe("wallet locale coverage", () => {
+  it("exports exhaustive canonical live-wallet guards without server credential models", () => {
+    expect(canonicalLiveWalletAccountTypes).toEqual(["AA", "EOA"]);
+    expect(canonicalLiveWalletSources).toEqual([
+      "PORTKEY_AA",
+      "PORTKEY_EOA_APP",
+      "PORTKEY_EOA_EXTENSION",
+      "NIGHTELF",
+    ]);
+    expect(canonicalLiveWalletChainIds).toEqual(["AELF", "tDVV", "tDVW"]);
+    expect(canonicalLiveWalletNetworks).toEqual(["mainnet", "testnet"]);
+
+    expect(isCanonicalLiveWalletAccountType("AA")).toBe(true);
+    expect(isCanonicalLiveWalletAccountType("EOA")).toBe(true);
+    expect(isCanonicalLiveWalletAccountType("UNKNOWN")).toBe(false);
+    expect(isCanonicalLiveWalletSource("PORTKEY_AA")).toBe(true);
+    expect(isCanonicalLiveWalletSource("AGENT_SKILL")).toBe(false);
+    expect(isCanonicalLiveWalletSource("OTHER")).toBe(false);
+    expect(isCanonicalLiveWalletChainId("AELF")).toBe(true);
+    expect(isCanonicalLiveWalletChainId("ETH")).toBe(false);
+    expect(isCanonicalLiveWalletNetwork("testnet")).toBe(true);
+    expect(isCanonicalLiveWalletNetwork("unknown")).toBe(false);
+
+    const exportedGuards = JSON.stringify({
+      canonicalLiveWalletAccountTypes,
+      canonicalLiveWalletChainIds,
+      canonicalLiveWalletNetworks,
+      canonicalLiveWalletSources,
+    });
+    expect(exportedGuards).not.toMatch(/credential|session|signature|package/i);
+  });
+
   it("preserves documented public identity metadata for seeded AA and EOA sessions", () => {
     const sessions = normalizeWalletSessions(walletAdapterFixtures);
     const sessionsById = Object.fromEntries(sessions.map((session) => [session.id, session]));

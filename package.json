@@ -11,12 +11,20 @@
     "server:provider-stage": "vite-node --script src/server/providerVerificationStageRuntime.ts --listen",
     "server:smoke": "vite-node src/server/backendRuntimeSmoke.ts --run",
     "server:start": "vite-node src/server/server.ts --listen",
+    "server:wallet-auth-stage": "vite-node --script src/server/walletAuthenticationStageRuntime.ts --listen",
+    "server:wallet-ca-sandbox": "vite-node --script src/server/portkeyCaRelationSandbox.ts --listen",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "test:postgres": "vitest run src/server/postgresMigration.test.ts src/server/postgresCampaignDurableStore.test.ts src/server/postgresCampaignRuntime.integration.test.ts src/server/postgresAdminReviewStore.test.ts src/server/adminHttpPostgresAcceptance.test.ts"
+    "test:postgres": "vitest run src/server/postgresMigration.test.ts src/server/postgresCampaignDurableStore.test.ts src/server/postgresCampaignRuntime.integration.test.ts src/server/postgresAdminReviewStore.test.ts src/server/adminHttpPostgresAcceptance.test.ts",
+    "test:postgres:required": "vitest run src/server/postgresMigration.test.ts src/server/postgresWalletAuthenticationStore.test.ts",
+    "test:server:smoke": "npm run server:smoke"
   },
   "dependencies": {
+    "@aelf-web-login/wallet-adapter-base": "0.4.0-alpha.21",
+    "@aelf-web-login/wallet-adapter-night-elf": "0.4.0-alpha.21",
+    "@aelf-web-login/wallet-adapter-portkey-discover": "0.4.0-alpha.21",
+    "aelf-sdk": "3.5.1-beta.0",
     "bullmq": "^5.79.3",
     "lucide-react": "^0.468.0",
     "pg": "^8.22.0",

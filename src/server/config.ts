@@ -19,6 +19,28 @@ import { workerLeaseStoreProductionPreconditions } from "./workerLeaseStore";
 import { workerIdempotencyStoreProductionPreconditions } from "./workerIdempotencyStore";
 import { observabilityExporterProductionPreconditions } from "./observabilityExporter";
 import { participantCampaignPreviewAllDraftsSentinel } from "./participantCampaignAccess";
+import {
+  resolveWalletAuthenticationConfig,
+  summarizeWalletAuthenticationConfig,
+  type ResolveWalletAuthenticationConfigOptions,
+  type WalletAuthenticationConfig,
+  type WalletAuthenticationConfigSummary,
+} from "./walletAuthenticationConfig";
+
+export type {
+  ResolveWalletAuthenticationConfigOptions,
+  WalletAuthenticationConfig,
+  WalletAuthenticationConfigSummary,
+};
+
+export const resolveCampaignOsWalletAuthenticationConfig = (
+  options: ResolveWalletAuthenticationConfigOptions,
+): WalletAuthenticationConfig => resolveWalletAuthenticationConfig(options);
+
+export const resolveCampaignOsWalletAuthenticationReadiness = (
+  options: ResolveWalletAuthenticationConfigOptions,
+): WalletAuthenticationConfigSummary =>
+  summarizeWalletAuthenticationConfig(resolveWalletAuthenticationConfig(options));
 
 export type CampaignOsPersistenceMode = "memory" | "local_json";
 

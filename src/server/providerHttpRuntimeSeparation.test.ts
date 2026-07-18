@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import packageJson from "../../package.json";
+import { isWalletAdapterInstallCandidatePackageName } from "../wallet/walletAdapterConfig";
 import { createBackendServiceReadinessReport } from "./backendService";
 import { executeProviderHttpRequest } from "./providerHttpClientRuntime";
 import { planProviderHttpRequest, type ProviderHttpVerificationRequestInput } from "./providerHttpRequestPlanner";
@@ -399,6 +400,10 @@ describe("provider HTTP runtime separation boundaries", () => {
     expect(JSON.stringify(plan)).not.toContain("secret");
 
     for (const dependencyName of dependencyNames) {
+      if (isWalletAdapterInstallCandidatePackageName(dependencyName)) {
+        continue;
+      }
+
       for (const forbiddenFragment of forbiddenSdkFragments) {
         expect(dependencyName.toLowerCase()).not.toContain(forbiddenFragment);
       }
