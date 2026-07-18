@@ -8,7 +8,18 @@ import {
   createServerStartupDiagnostics,
   formatServerStartupLog,
   resolveApiServerRuntimeContract,
+  startServerWalletAuthenticationRuntime,
+  type ServerWalletAuthenticationRuntimeLifecycle,
 } from "./serverRuntime";
+import {
+  createMemoryWalletAuthenticationStoreForTests,
+  type DurableWalletAuthenticationStore,
+} from "./walletAuthenticationStore";
+import type {
+  WalletAuthenticationCredentialPort,
+  WalletAuthenticationRuntimeResource,
+  WalletAuthenticationRuntimeStopResult,
+} from "./walletAuthenticationRuntime";
 
 const secretFragments = [
   "bearer sample-token",
@@ -242,6 +253,233 @@ describe("API server runtime contract", () => {
     expect(log).toContain("no live operations");
     expectNoSecretLeak(diagnostics);
     expectNoSecretLeak(log);
+  });
+});
+
+describe("wallet authentication runtime composition ownership", () => {
+  const walletRuntimeLimits = (overrides: Readonly<Record<string, number>> = {}) => ({
+    maxActiveChallenges: 5,
+    maxSessionsPerSubject: 5,
+    maxVerificationAttempts: 20,
+    sessionTouchIntervalSeconds: 60,
+    ...overrides,
+  });
+
+  const store = (closed: string[]): DurableWalletAuthenticationStore => {
+    const runtimeStore = createMemoryWalletAuthenticationStoreForTests({
+      clock: { now: () => new Date("2026-07-18T08:00:00.000Z") },
+      mode: "unit_test",
+    });
+    return {
+      ...runtimeStore,
+      close: vi.fn(async () => {
+        closed.push("store");
+        await runtimeStore.close();
+      }),
+    };
+  };
+
+  const credentialPort = (closed: string[]): WalletAuthenticationCredentialPort => ({
+    close: vi.fn(() => {
+      closed.push("credential");
+    }),
+    deriveCsrf: vi.fn(),
+    digestCredential: vi.fn(),
+    issueSessionSecrets: vi.fn(),
+    kind: "session_credential",
+    matchesDigest: vi.fn(),
+    verifyCsrf: vi.fn(),
+  } as WalletAuthenticationCredentialPort);
+
+  const resource = (
+    kind: string,
+    closed: string[],
+  ): WalletAuthenticationRuntimeResource => ({
+    close: vi.fn(async () => {
+      closed.push(kind);
+    }),
+    kind,
+  });
+
+  it("transfers sole lifecycle ownership to the started wallet auth runtime", async () => {
+    const closed: string[] = [];
+    const runtimeStopResult: WalletAuthenticationRuntimeStopResult = {
+      diagnosticCodes: [],
+      diagnostics: [],
+      status: "drained",
+    };
+    const runtime = {
+      state: () => ({ accepting: true, activeOperationCount: 0, controllerCount: 0 }),
+      stop: vi.fn(async () => runtimeStopResult),
+    };
+    const createRuntime = vi.fn(({
+      resources,
+    }: {
+      resources: readonly WalletAuthenticationRuntimeResource[];
+    }) => {
+      expect(resources.map(({ kind }) => kind)).toEqual(["provider", "listener"]);
+      return runtime;
+    });
+    const createStore = vi.fn(async () => store(closed));
+
+    const result = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => credentialPort(closed),
+      createRuntime,
+      createStore,
+      limits: walletRuntimeLimits({
+        maxSessionsPerSubject: 1,
+        sessionTouchIntervalSeconds: 7,
+      }),
+      resourceFactories: [
+        { create: async () => resource("listener", closed), kind: "listener" },
+        { create: async () => resource("provider", closed), kind: "provider" },
+      ],
+      traceId: "trace-wallet-runtime-start",
+    });
+
+    expect(result).toMatchObject({ ownership: "wallet_auth_runtime", status: "started" });
+    expect(closed).toEqual([]);
+    expect(createRuntime).toHaveBeenCalledOnce();
+    expect(createStore).toHaveBeenCalledWith({
+      policy: {
+        maxActiveChallengesPerSubject: 5,
+        maxActiveSessionsPerSubject: 1,
+        maxVerificationAttemptsPerWindow: 20,
+        touchIntervalMs: 7_000,
+      },
+    });
+    if (result.status !== "started") {
+      throw new Error("Expected wallet authentication runtime startup.");
+    }
+    expect(await result.runtime.stop()).toBe(runtimeStopResult);
+    expect(runtime.stop).toHaveBeenCalledOnce();
+  });
+
+  it("rolls partial construction back in reverse dependency order with safe diagnostics", async () => {
+    const closed: string[] = [];
+    const hostile = "opaque-sensitive-startup-cause";
+
+    const result = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => credentialPort(closed),
+      createRuntime: () => {
+        throw new Error(hostile);
+      },
+      createStore: async () => store(closed),
+      limits: walletRuntimeLimits(),
+      resourceFactories: [
+        { create: async () => resource("listener", closed), kind: "listener" },
+        { create: async () => resource("provider", closed), kind: "provider" },
+      ],
+      traceId: "trace-wallet-runtime-rollback",
+    });
+
+    expect(result).toMatchObject({ status: "failed" });
+    expect(closed).toEqual(["provider", "listener", "credential", "store"]);
+    expect(JSON.stringify(result)).not.toContain(hostile);
+    expect(JSON.stringify(result)).not.toContain("sensitive-startup-cause");
+    if (result.status !== "failed") {
+      throw new Error("Expected wallet authentication runtime startup failure.");
+    }
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "SERVER_WALLET_AUTH_RUNTIME_START_FAILED",
+        field: "runtime",
+        traceId: "trace-wallet-runtime-rollback",
+      }),
+    ]));
+  });
+
+  it("closes already-created dependencies when a later resource factory fails", async () => {
+    const closed: string[] = [];
+    const createRuntime = vi.fn();
+
+    const result = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => credentialPort(closed),
+      createRuntime,
+      createStore: async () => store(closed),
+      limits: walletRuntimeLimits(),
+      resourceFactories: [
+        { create: async () => resource("listener", closed), kind: "listener" },
+        { create: async () => { throw new Error("private-provider-endpoint"); }, kind: "provider" },
+      ],
+      traceId: "trace-wallet-runtime-resource-failure",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(createRuntime).not.toHaveBeenCalled();
+    expect(closed).toEqual(["listener", "credential", "store"]);
+    expect(JSON.stringify(result)).not.toContain("private-provider-endpoint");
+  });
+
+  it("rolls back invalid-but-closable candidates at every construction stage", async () => {
+    const invalidStoreClosed: string[] = [];
+    const invalidStore = {
+      close: vi.fn(async () => { invalidStoreClosed.push("invalid-store"); }),
+      kind: "postgresql",
+    } as unknown as DurableWalletAuthenticationStore;
+    const storeResult = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => credentialPort(invalidStoreClosed),
+      createRuntime: vi.fn(),
+      createStore: async () => invalidStore,
+      limits: walletRuntimeLimits(),
+      traceId: "trace-invalid-store",
+    });
+    expect(storeResult.status).toBe("failed");
+    expect(invalidStoreClosed).toEqual(["invalid-store"]);
+
+    const invalidCredentialClosed: string[] = [];
+    const invalidCredential = {
+      close: vi.fn(async () => { invalidCredentialClosed.push("invalid-credential"); }),
+      kind: "session_credential",
+    } as unknown as WalletAuthenticationCredentialPort;
+    const credentialResult = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => invalidCredential,
+      createRuntime: vi.fn(),
+      createStore: async () => store(invalidCredentialClosed),
+      limits: walletRuntimeLimits(),
+      traceId: "trace-invalid-credential",
+    });
+    expect(credentialResult.status).toBe("failed");
+    expect(invalidCredentialClosed).toEqual(["invalid-credential", "store"]);
+
+    const invalidResourceClosed: string[] = [];
+    const invalidResourceResult = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => credentialPort(invalidResourceClosed),
+      createRuntime: vi.fn(),
+      createStore: async () => store(invalidResourceClosed),
+      limits: walletRuntimeLimits(),
+      resourceFactories: [{
+        create: async () => resource("unexpected-kind", invalidResourceClosed),
+        kind: "provider",
+      }],
+      traceId: "trace-invalid-resource",
+    });
+    expect(invalidResourceResult.status).toBe("failed");
+    expect(invalidResourceClosed).toEqual(["unexpected-kind", "credential", "store"]);
+
+    const invalidRuntimeClosed: string[] = [];
+    const invalidRuntime = {
+      close: vi.fn(async () => { invalidRuntimeClosed.push("invalid-runtime"); }),
+    } as unknown as ServerWalletAuthenticationRuntimeLifecycle;
+    const runtimeResult = await startServerWalletAuthenticationRuntime({
+      createCredentialPort: async () => credentialPort(invalidRuntimeClosed),
+      createRuntime: async () => invalidRuntime,
+      createStore: async () => store(invalidRuntimeClosed),
+      limits: walletRuntimeLimits(),
+      resourceFactories: [
+        { create: async () => resource("listener", invalidRuntimeClosed), kind: "listener" },
+        { create: async () => resource("provider", invalidRuntimeClosed), kind: "provider" },
+      ],
+      traceId: "trace-invalid-runtime",
+    });
+    expect(runtimeResult.status).toBe("failed");
+    expect(invalidRuntimeClosed).toEqual([
+      "invalid-runtime",
+      "provider",
+      "listener",
+      "credential",
+      "store",
+    ]);
   });
 });
 
