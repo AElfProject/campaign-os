@@ -113,15 +113,22 @@ const provider = ({
 } = {}) => {
   const execute = transportImplementation
     ?? vi.fn<PortkeyCaRelationTransport["execute"]>(async () => jsonResponse(body));
-  const transport: PortkeyCaRelationTransport = {
+  const testTransport: PortkeyCaRelationTransport = {
     close: vi.fn(async () => undefined),
     execute,
   };
+  const productionHosts = approvedProductionHosts
+    ?? (environment === "production" ? ["provider.example"] : undefined);
+  const transport = environment === "production"
+    && providerConfig.productionApproved
+    && productionHosts !== undefined
+    && productionHosts.length > 0
+    ? createNodePortkeyCaRelationTransport()
+    : testTransport;
   const dnsResolver = vi.fn<PortkeyCaRelationDnsResolver>(async () => dnsAddresses);
   const endpointResolver = vi.fn<PortkeyCaRelationEndpointResolver>(async () => endpoint);
   const adapter = createPortkeyCaRelationProvider({
-    approvedProductionHosts: approvedProductionHosts
-      ?? (environment === "production" ? ["provider.example"] : undefined),
+    approvedProductionHosts: productionHosts,
     clock: { now: () => new Date(NOW) },
     config: providerConfig,
     dnsResolver,
@@ -382,7 +389,6 @@ describe("Portkey CA relation provider", () => {
       expect(await rejectedEndpoint.adapter.verifyRelation(request(value)))
         .toMatchObject({ status: "unavailable" });
       expect(rejectedEndpoint.dnsResolver).not.toHaveBeenCalled();
-      expect(rejectedEndpoint.transport.execute).not.toHaveBeenCalled();
       await rejectedEndpoint.adapter.close();
     }
 
@@ -415,7 +421,6 @@ describe("Portkey CA relation provider", () => {
       expect(await rejectedAddress.adapter.verifyRelation(request(value)))
         .toMatchObject({ status: "unavailable" });
       expect(rejectedAddress.dnsResolver).toHaveBeenCalledTimes(1);
-      expect(rejectedAddress.transport.execute).not.toHaveBeenCalled();
       await rejectedAddress.adapter.close();
     }
 
@@ -431,37 +436,48 @@ describe("Portkey CA relation provider", () => {
     });
     expect(await mixedResolution.adapter.verifyRelation(request(value)))
       .toMatchObject({ status: "unavailable" });
-    expect(mixedResolution.transport.execute).not.toHaveBeenCalled();
     await mixedResolution.adapter.close();
 
     const production = provider({
-      body: currentBody(value),
       endpoint: "https://provider.example/relation",
       environment: "production",
       providerConfig: config({ productionApproved: true }),
     });
-    expect(await production.adapter.verifyRelation(request(value))).toMatchObject({ status: "verified" });
-    expect(production.dnsResolver).toHaveBeenCalledTimes(1);
-    expect(production.transport.execute).toHaveBeenCalledWith(expect.objectContaining({
-      endpoint: "https://provider.example/relation",
-      pinnedAddress: { address: "93.184.216.34", family: 4 },
-    }));
     expect(production.adapter.state().productionApproved).toBe(true);
+    expect(resolvePortkeyCaRelationProviderAuthority(production.adapter)?.productionApproved)
+      .toBe(true);
+    expect(production.endpointResolver).not.toHaveBeenCalled();
+    expect(production.dnsResolver).not.toHaveBeenCalled();
     await production.adapter.close();
+  });
 
-    const productionIpv6 = provider({
-      body: currentBody(value),
-      dnsAddresses: [{ address: "2606:4700:4700::1111", family: 6 }],
-      endpoint: "https://provider.example/relation",
-      environment: "production",
-      providerConfig: config({ productionApproved: true }),
-    });
-    expect(await productionIpv6.adapter.verifyRelation(request(value)))
-      .toMatchObject({ status: "verified" });
-    expect(productionIpv6.transport.execute).toHaveBeenCalledWith(expect.objectContaining({
-      pinnedAddress: { address: "2606:4700:4700::1111", family: 6 },
-    }));
-    await productionIpv6.adapter.close();
+  it("rejects unbranded and spread-forged transports for production authority", async () => {
+    const createProductionAdapter = (transport: PortkeyCaRelationTransport) =>
+      createPortkeyCaRelationProvider({
+        approvedProductionHosts: ["provider.example"],
+        clock: { now: () => new Date(NOW) },
+        config: config({ productionApproved: true }),
+        dnsResolver: vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]),
+        endpointResolver: vi.fn(async () => "https://provider.example/relation"),
+        environment: "production",
+        transport,
+      });
+    const unbrandedTransport: PortkeyCaRelationTransport = {
+      close: vi.fn(async () => undefined),
+      execute: vi.fn(async () => jsonResponse({ status: "unknown" })),
+    };
+    const canonicalTransport = createNodePortkeyCaRelationTransport();
+    const spreadForgedTransport = { ...canonicalTransport };
+
+    expect(() => createProductionAdapter(unbrandedTransport))
+      .toThrowError(PortkeyCaRelationProviderConfigurationError);
+    expect(() => createProductionAdapter(spreadForgedTransport))
+      .toThrowError(PortkeyCaRelationProviderConfigurationError);
+
+    const adapter = createProductionAdapter(canonicalTransport);
+    expect(adapter.state().productionApproved).toBe(true);
+    expect(resolvePortkeyCaRelationProviderAuthority(adapter)?.productionApproved).toBe(true);
+    await adapter.close();
   });
 
   it("resolves endpoint material by config-owned env key without retaining it", async () => {

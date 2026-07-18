@@ -13,6 +13,7 @@ import {
   verifyCanonicalWalletAuthenticationChallenge,
 } from "./walletAuthenticationChallenge";
 import {
+  createNodePortkeyCaRelationTransport,
   createPortkeyCaRelationProvider,
   type PortkeyCaRelationProviderAdapter,
   type PortkeyCaRelationTransport,
@@ -153,12 +154,14 @@ const concreteRelationProvider = (
     ? "https://provider.example/relation"
     : "http://127.0.0.1:5195/relation",
   environment,
-  transport: {
-    close: vi.fn(async () => undefined),
-    execute: vi.fn<PortkeyCaRelationTransport["execute"]>(async () => {
-      throw new Error("Readiness test transport must not execute.");
-    }),
-  },
+  transport: environment === "production"
+    ? createNodePortkeyCaRelationTransport()
+    : {
+      close: vi.fn(async () => undefined),
+      execute: vi.fn<PortkeyCaRelationTransport["execute"]>(async () => {
+        throw new Error("Readiness test transport must not execute.");
+      }),
+    },
 });
 
 describe("Portkey AA manager and CA relation verifier", () => {

@@ -51,6 +51,7 @@ const MAX_FUTURE_SKEW_MS = 60_000;
 const MAX_RETRY_AFTER_MS = 24 * 60 * 60_000;
 const MAX_APPROVED_PRODUCTION_HOSTS = 32;
 const MAX_DNS_ADDRESSES = 16;
+const productionTransportAuthorities = new WeakSet<PortkeyCaRelationTransport>();
 
 export type PortkeyCaRelationProviderConfigurationErrorCode =
   | "PORTKEY_CA_PROVIDER_CONFIG_INVALID"
@@ -657,7 +658,7 @@ function normalizeOptions(options: CreatePortkeyCaRelationProviderOptions) {
     10_000,
     "shutdownTimeoutMs",
   );
-  const transport = normalizeTransport(options.transport);
+  const transport = normalizeTransport(options.transport, options.environment);
 
   return Object.freeze({
     approvedProductionHosts,
@@ -733,6 +734,7 @@ function isCanonicalProductionHostname(value: string): boolean {
 
 function normalizeTransport(
   value: PortkeyCaRelationTransport | undefined,
+  environment: WalletAuthenticationEnvironment,
 ): PortkeyCaRelationTransport {
   const transport = value ?? createNodePortkeyCaRelationTransport();
   if (
@@ -741,6 +743,9 @@ function normalizeTransport(
     || typeof transport.execute !== "function"
   ) {
     return failConfiguration("PORTKEY_CA_PROVIDER_CONFIG_INVALID", "transport");
+  }
+  if (environment === "production" && !productionTransportAuthorities.has(transport)) {
+    return failConfiguration("PORTKEY_CA_PROVIDER_PRODUCTION_APPROVAL_REQUIRED", "transport");
   }
   return Object.freeze({
     close: transport.close.bind(transport),
@@ -845,7 +850,9 @@ export function createNodePortkeyCaRelationTransport(): PortkeyCaRelationTranspo
     return closePromise;
   };
 
-  return Object.freeze({ close, execute });
+  const transport = Object.freeze({ close, execute });
+  productionTransportAuthorities.add(transport);
+  return transport;
 }
 
 function createPinnedLookup(
