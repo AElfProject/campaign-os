@@ -66,6 +66,124 @@ export interface CreateMigrationManifestOptions {
   stores?: readonly BackendStorePort[];
 }
 
+export interface PostgresMigrationManifestEntry {
+  readonly checksum: string;
+  readonly downPath: string;
+  readonly id: string;
+  readonly upPath: string;
+}
+
+export type PostgresMigrationManifestIssueCode =
+  | "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT"
+  | "POSTGRES_MIGRATION_MANIFEST_DUPLICATE_ID"
+  | "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY"
+  | "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT"
+  | "POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT";
+
+export interface PostgresMigrationManifestIssue {
+  readonly code: PostgresMigrationManifestIssueCode;
+  readonly field: string;
+}
+
+const postgresMigrationEntry = (
+  entry: PostgresMigrationManifestEntry,
+): Readonly<PostgresMigrationManifestEntry> => Object.freeze(entry);
+
+export const postgresMigrationFileManifest = Object.freeze([
+  postgresMigrationEntry({
+    checksum: "f8987b38a916e3c53d533f6fdcd75bfe95e2ea766346b5786c998529435c75a4",
+    downPath: "db/migrations/0001_campaign_runtime.down.sql",
+    id: "0001_campaign_runtime",
+    upPath: "db/migrations/0001_campaign_runtime.up.sql",
+  }),
+  postgresMigrationEntry({
+    checksum: "4f8eb20ac83b52bc9bc3e842416ff09fce369ec64412b7d67b974f2c900e6af5",
+    downPath: "db/migrations/0002_admin_review_export.down.sql",
+    id: "0002_admin_review_export",
+    upPath: "db/migrations/0002_admin_review_export.up.sql",
+  }),
+  postgresMigrationEntry({
+    checksum: "c9236184b25820b36540942de86c2342c9098002a023db8da1f706cf287dd7e8",
+    downPath: "db/migrations/0003_admin_review_rank_projection.down.sql",
+    id: "0003_admin_review_rank_projection",
+    upPath: "db/migrations/0003_admin_review_rank_projection.up.sql",
+  }),
+  postgresMigrationEntry({
+    checksum: "8e772b6427b4e41f9fe0f13c0c355c2cfd94eb302ab4fd6bb036188f78130d63",
+    downPath: "db/migrations/0004_live_provider_task_verification.down.sql",
+    id: "0004_live_provider_task_verification",
+    upPath: "db/migrations/0004_live_provider_task_verification.up.sql",
+  }),
+  postgresMigrationEntry({
+    checksum: "724b928cbfb8dc8162663589db1bb0d136498f414223f64fdafa1d0da7470324",
+    downPath: "db/migrations/0005_participant_wallet_authentication.down.sql",
+    id: "0005_participant_wallet_authentication",
+    upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
+  }),
+] as const);
+
+export const participantWalletAuthenticationMigration =
+  postgresMigrationFileManifest[postgresMigrationFileManifest.length - 1];
+
+export const validatePostgresMigrationFileManifest = (
+  entries: readonly PostgresMigrationManifestEntry[],
+): PostgresMigrationManifestIssue[] => {
+  const issues: PostgresMigrationManifestIssue[] = [];
+  const observedIds = new Set<string>();
+
+  for (const entry of entries) {
+    if (observedIds.has(entry.id)) {
+      issues.push({
+        code: "POSTGRES_MIGRATION_MANIFEST_DUPLICATE_ID",
+        field: entry.id,
+      });
+    }
+    observedIds.add(entry.id);
+  }
+
+  for (const [index, expected] of postgresMigrationFileManifest.entries()) {
+    const observed = entries[index];
+
+    if (!observed) {
+      issues.push({
+        code: "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY",
+        field: expected.id,
+      });
+      continue;
+    }
+    if (observed.id !== expected.id) {
+      issues.push({
+        code: "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT",
+        field: expected.id,
+      });
+      continue;
+    }
+    if (observed.upPath !== expected.upPath || observed.downPath !== expected.downPath) {
+      issues.push({
+        code: "POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT",
+        field: expected.id,
+      });
+    }
+    if (observed.checksum !== expected.checksum) {
+      issues.push({
+        code: "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT",
+        field: expected.id,
+      });
+    }
+  }
+
+  if (entries.length > postgresMigrationFileManifest.length) {
+    for (const extra of entries.slice(postgresMigrationFileManifest.length)) {
+      issues.push({
+        code: "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT",
+        field: extra.id,
+      });
+    }
+  }
+
+  return issues;
+};
+
 const migrationStoreReadiness = (store: BackendStorePort): MigrationStoreReadiness => {
   if (store.currentMode === "deferred") {
     return "deferred";

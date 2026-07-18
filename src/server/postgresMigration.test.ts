@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pg, { type PoolClient } from "pg";
@@ -150,11 +150,13 @@ describe("PostgreSQL migration runtime", () => {
       "0002_admin_review_export",
       "0003_admin_review_rank_projection",
       "0004_live_provider_task_verification",
+      "0005_participant_wallet_authentication",
     ]);
     const campaignRuntime = first[0];
     const adminReviewExport = first[1];
     const adminReviewRankProjection = first[2];
     const liveProviderTaskVerification = first[3];
+    const participantWalletAuthentication = first[4];
 
     for (const table of [
       "campaigns",
@@ -345,6 +347,43 @@ describe("PostgreSQL migration runtime", () => {
       "8e772b6427b4e41f9fe0f13c0c355c2cfd94eb302ab4fd6bb036188f78130d63",
     );
 
+    for (const contractFragment of [
+      "CREATE TABLE campaign_os.wallet_auth_challenges",
+      "CREATE TABLE campaign_os.wallet_sessions",
+      "campaign_os_wallet_auth_challenges_message_digest_key",
+      "campaign_os_wallet_auth_challenges_nonce_digest_key",
+      "campaign_os_wallet_sessions_credential_digest_key",
+      "campaign_os_wallet_sessions_csrf_token_digest_key",
+      "campaign_os_wallet_sessions_challenge_key",
+      "FOREIGN KEY (challenge_id) REFERENCES campaign_os.wallet_auth_challenges (id) ON DELETE RESTRICT",
+      "campaign_os_wallet_auth_challenges_state_expiry_idx",
+      "campaign_os_wallet_sessions_subject_inventory_idx",
+      "campaign_os_wallet_sessions_expiry_idx",
+    ]) {
+      expect(participantWalletAuthentication?.upSql).toContain(contractFragment);
+    }
+    for (const forbiddenColumn of [
+      "raw_credential",
+      "raw_csrf",
+      "canonical_message",
+      "nonce text",
+      "signature",
+      "public_key",
+      "provider_payload",
+    ]) {
+      expect(participantWalletAuthentication?.upSql).not.toContain(forbiddenColumn);
+    }
+    expect(participantWalletAuthentication?.upSql).not.toMatch(
+      /\b(?:ALTER|UPDATE|DELETE\s+FROM|TRUNCATE|DROP)\b/i,
+    );
+    expect(participantWalletAuthentication?.downSql).toContain(
+      "PARTICIPANT WALLET AUTHENTICATION DATA EXISTS",
+    );
+    expect(participantWalletAuthentication?.downSql).not.toMatch(/\bCASCADE\b/i);
+    expect(participantWalletAuthentication?.checksum).toBe(
+      "724b928cbfb8dc8162663589db1bb0d136498f414223f64fdafa1d0da7470324",
+    );
+
     const factTables = [
       "campaigns",
       "campaign_tasks",
@@ -405,6 +444,24 @@ describe("PostgreSQL migration runtime", () => {
       expect(definition.checksum).toMatch(/^[a-f0-9]{64}$/);
     }
     expect(second).toEqual(first);
+  });
+
+  it("keeps every historical migration byte-for-byte invariant", async () => {
+    const expectedByteChecksums = {
+      "0001_campaign_runtime.down.sql": "08df0fbad60af8d0187499ff5ed586b6187fbc91acfd30d7678aa3ae99dcba15",
+      "0001_campaign_runtime.up.sql": "f8987b38a916e3c53d533f6fdcd75bfe95e2ea766346b5786c998529435c75a4",
+      "0002_admin_review_export.down.sql": "2a5b90913cec0ffb8c314d1145587ee897fe6303314b2962b558f4c191e7c6dd",
+      "0002_admin_review_export.up.sql": "4f8eb20ac83b52bc9bc3e842416ff09fce369ec64412b7d67b974f2c900e6af5",
+      "0003_admin_review_rank_projection.down.sql": "b668da49231bb443fe8618816ce68323f83ca9ea15fd4969db49f230538e5fc9",
+      "0003_admin_review_rank_projection.up.sql": "c9236184b25820b36540942de86c2342c9098002a023db8da1f706cf287dd7e8",
+      "0004_live_provider_task_verification.down.sql": "87c9ab26a7e37fb1800324a4179415d98128684e3ca78cfed520a82e2b55e58d",
+      "0004_live_provider_task_verification.up.sql": "8e772b6427b4e41f9fe0f13c0c355c2cfd94eb302ab4fd6bb036188f78130d63",
+    } as const;
+
+    for (const [fileName, expectedChecksum] of Object.entries(expectedByteChecksums)) {
+      const bytes = await readFile(resolve(process.cwd(), "db/migrations", fileName));
+      expect(createHash("sha256").update(bytes).digest("hex"), fileName).toBe(expectedChecksum);
+    }
   });
 
   it("propagates a caller Trace ID when migration discovery fails", async () => {
@@ -844,7 +901,7 @@ describe("PostgreSQL migration runtime", () => {
   });
 });
 
-postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
+postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", () => {
   const TASK_REVISION_DIGEST = "a".repeat(64);
   const EVIDENCE_RULE_DIGEST = "b".repeat(64);
   const LEASE_TOKEN_HASH = "c".repeat(64);
@@ -862,6 +919,7 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
   let databasePool: pg.Pool | undefined;
   let client: PoolClient | undefined;
   let liveProviderMigration: PostgresMigrationDefinition | undefined;
+  let walletAuthenticationMigration: PostgresMigrationDefinition | undefined;
   let savepointSequence = 0;
 
   const requiredClient = () => {
@@ -878,6 +936,14 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
     }
 
     return liveProviderMigration;
+  };
+
+  const requiredWalletAuthenticationMigration = () => {
+    if (!walletAuthenticationMigration) {
+      throw new Error("Migration 0005 was not loaded for SQL acceptance.");
+    }
+
+    return walletAuthenticationMigration;
   };
 
   const expectSqlError = async (
@@ -1021,6 +1087,9 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
     const migrations = await loadPostgresMigrations();
     liveProviderMigration = migrations.find(
       ({ id }) => id === "0004_live_provider_task_verification",
+    );
+    walletAuthenticationMigration = migrations.find(
+      ({ id }) => id === "0005_participant_wallet_authentication",
     );
 
     for (const definition of migrations) {
@@ -1443,6 +1512,204 @@ postgresMigrationSqlSuite("PostgreSQL 0004 migration SQL invariants", () => {
     expect(normalizeSql(restoredConstraint.rows[0]?.definition ?? "")).toContain(
       "CHECK ((live_provider_executed = false))",
     );
+  });
+
+  it("creates the exact wallet authentication columns, constraints, and hot-path indexes", async () => {
+    const sqlClient = requiredClient();
+    const columns = await sqlClient.query(
+      `SELECT table_name, column_name, data_type, is_nullable
+       FROM information_schema.columns
+       WHERE table_schema = 'campaign_os'
+         AND table_name IN ('wallet_auth_challenges', 'wallet_sessions')
+       ORDER BY table_name, ordinal_position`,
+    );
+    const columnKeys = columns.rows.map((row) => [
+      row.table_name,
+      row.column_name,
+      row.data_type,
+      row.is_nullable,
+    ].join(":"));
+    expect(columnKeys).toEqual(expect.arrayContaining([
+      "wallet_auth_challenges:id:text:NO",
+      "wallet_auth_challenges:message_digest:text:NO",
+      "wallet_auth_challenges:nonce_digest:text:NO",
+      "wallet_auth_challenges:expires_at:timestamp with time zone:NO",
+      "wallet_sessions:id:text:NO",
+      "wallet_sessions:challenge_id:text:NO",
+      "wallet_sessions:credential_digest:text:NO",
+      "wallet_sessions:csrf_token_digest:text:NO",
+      "wallet_sessions:role_ids:jsonb:NO",
+      "wallet_sessions:capabilities:jsonb:NO",
+      "wallet_sessions:idle_expires_at:timestamp with time zone:NO",
+      "wallet_sessions:absolute_expires_at:timestamp with time zone:NO",
+    ]));
+
+    const constraints = await sqlClient.query(
+      `SELECT conname, contype, pg_get_constraintdef(oid) AS definition
+       FROM pg_constraint
+       WHERE connamespace = 'campaign_os'::regnamespace
+         AND conrelid IN (
+           'campaign_os.wallet_auth_challenges'::regclass,
+           'campaign_os.wallet_sessions'::regclass
+         )
+       ORDER BY conname`,
+    );
+    const constraintDefinitions = constraints.rows.map((row) =>
+      `${String(row.conname)}:${String(row.contype)}:${normalizeSql(String(row.definition))}`,
+    ).join("\n");
+    for (const requiredConstraint of [
+      "campaign_os_wallet_auth_challenges_message_digest_key:u",
+      "campaign_os_wallet_auth_challenges_nonce_digest_key:u",
+      "campaign_os_wallet_sessions_challenge_fk:f",
+      "campaign_os_wallet_sessions_challenge_key:u",
+      "campaign_os_wallet_sessions_credential_digest_key:u",
+      "campaign_os_wallet_sessions_csrf_token_digest_key:u",
+      "octet_length(message_digest) = 64",
+      "octet_length(credential_digest) = 64",
+      "idle_expires_at <= absolute_expires_at",
+      "ON DELETE RESTRICT",
+    ]) {
+      expect(constraintDefinitions).toContain(requiredConstraint);
+    }
+
+    const indexes = await sqlClient.query(
+      `SELECT indexname, indexdef
+       FROM pg_indexes
+       WHERE schemaname = 'campaign_os'
+         AND tablename IN ('wallet_auth_challenges', 'wallet_sessions')
+       ORDER BY indexname`,
+    );
+    const indexDefinitions = indexes.rows.map((row) =>
+      `${String(row.indexname)}:${normalizeSql(String(row.indexdef))}`,
+    ).join("\n");
+    for (const requiredIndex of [
+      "campaign_os_wallet_auth_challenges_state_expiry_idx",
+      "campaign_os_wallet_sessions_credential_digest_key",
+      "campaign_os_wallet_sessions_pkey",
+      "campaign_os_wallet_sessions_subject_inventory_idx",
+      "campaign_os_wallet_sessions_expiry_idx",
+    ]) {
+      expect(indexDefinitions).toContain(requiredIndex);
+    }
+  });
+
+  it("rejects invalid digest, state, version, identity, and expiry values", async () => {
+    const sqlClient = requiredClient();
+    await sqlClient.query(
+      `INSERT INTO campaign_os.wallet_auth_challenges (
+         id, protocol_version, adapter_id, requested_wallet_address, ca_hash,
+         chain_id, network, message_digest, nonce_digest, rate_key_digest,
+         status, verification_attempts, max_verification_attempts, rate_attempts,
+         rate_limit, rate_window_started_at, rate_window_expires_at, trace_id,
+         issued_at, expires_at, terminal_at, terminal_reason, updated_at
+       ) VALUES (
+         'challenge-valid', 'campaign-os-wallet-auth/v1', 'portkey-eoa', 'wallet-safe', NULL,
+         'AELF', 'mainnet', $1, $2, $3, 'issued', 0, 5, 0, 10,
+         '2026-07-18T00:00:00.000Z', '2026-07-18T00:05:00.000Z', 'trace-auth-migration',
+         '2026-07-18T00:00:00.000Z', '2026-07-18T00:10:00.000Z', NULL, NULL,
+         '2026-07-18T00:00:00.000Z'
+       )`,
+      ["1".repeat(64), "2".repeat(64), "3".repeat(64)],
+    );
+
+    await expectSqlError(
+      "UPDATE campaign_os.wallet_auth_challenges SET message_digest = 'ABC' WHERE id = 'challenge-valid'",
+      [],
+      "23514",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.wallet_auth_challenges SET status = 'consumed' WHERE id = 'challenge-valid'",
+      [],
+      "23514",
+    );
+    await expectSqlError(
+      "UPDATE campaign_os.wallet_auth_challenges SET expires_at = issued_at WHERE id = 'challenge-valid'",
+      [],
+      "23514",
+    );
+
+    await sqlClient.query(
+      `INSERT INTO campaign_os.wallet_sessions (
+         id, challenge_id, credential_digest, csrf_token_digest, credential_boundary,
+         account_type, adapter_id, ca_hash, chain_id, network, proof_digest, proof_method,
+         signer_address, verified_at, wallet_address, wallet_source, role_ids, capabilities,
+         membership_revision, status, version, issued_at, last_seen_at, idle_expires_at,
+         absolute_expires_at, terminal_at, terminal_reason, updated_at
+       ) VALUES (
+         'session-valid', 'challenge-valid', $1, $2, 'credential/v1', 'EOA', 'portkey-eoa',
+         NULL, 'AELF', 'mainnet', $3, 'AELF_EOA_RECOVERABLE', 'signer-safe',
+         '2026-07-18T00:00:01.000Z', 'wallet-safe', 'PORTKEY_EOA_EXTENSION',
+         '["participant"]'::jsonb, '["campaign:read"]'::jsonb, 'membership-1',
+         'active', 1, '2026-07-18T00:00:02.000Z', '2026-07-18T00:00:02.000Z',
+         '2026-07-18T00:30:00.000Z', '2026-07-18T08:00:00.000Z', NULL, NULL,
+         '2026-07-18T00:00:02.000Z'
+       )`,
+      ["4".repeat(64), "5".repeat(64), "6".repeat(64)],
+    );
+
+    for (const statement of [
+      "UPDATE campaign_os.wallet_sessions SET version = 0 WHERE id = 'session-valid'",
+      "UPDATE campaign_os.wallet_sessions SET csrf_token_digest = 'short' WHERE id = 'session-valid'",
+      "UPDATE campaign_os.wallet_sessions SET status = 'revoked' WHERE id = 'session-valid'",
+      "UPDATE campaign_os.wallet_sessions SET idle_expires_at = absolute_expires_at + interval '1 second' WHERE id = 'session-valid'",
+      "UPDATE campaign_os.wallet_sessions SET proof_method = 'PORTKEY_AA_MANAGER_CA' WHERE id = 'session-valid'",
+    ]) {
+      await expectSqlError(statement, [], "23514");
+    }
+  });
+
+  it("applies additively over historical rows without changing their byte projection", async () => {
+    const sqlClient = requiredClient();
+    const migration0005 = requiredWalletAuthenticationMigration();
+    await sqlClient.query(migration0005.downSql);
+    await seedCampaignTask();
+    const before = await sqlClient.query(
+      `SELECT jsonb_build_object(
+         'campaigns', (SELECT jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id) FROM campaign_os.campaigns AS row_value),
+         'tasks', (SELECT jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id) FROM campaign_os.campaign_tasks AS row_value),
+         'revisions', (SELECT jsonb_agg(to_jsonb(row_value) ORDER BY row_value.task_id, row_value.revision) FROM campaign_os.campaign_task_revisions AS row_value)
+       ) AS projection`,
+    );
+
+    await sqlClient.query(migration0005.upSql);
+    const after = await sqlClient.query(
+      `SELECT jsonb_build_object(
+         'campaigns', (SELECT jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id) FROM campaign_os.campaigns AS row_value),
+         'tasks', (SELECT jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id) FROM campaign_os.campaign_tasks AS row_value),
+         'revisions', (SELECT jsonb_agg(to_jsonb(row_value) ORDER BY row_value.task_id, row_value.revision) FROM campaign_os.campaign_task_revisions AS row_value)
+       ) AS projection`,
+    );
+    expect(after.rows[0]?.projection).toEqual(before.rows[0]?.projection);
+  });
+
+  it("refuses 0005 down when authentication rows exist and preserves historical rows", async () => {
+    const sqlClient = requiredClient();
+    const migration0005 = requiredWalletAuthenticationMigration();
+    await seedCampaignTask();
+    await sqlClient.query(
+      `INSERT INTO campaign_os.wallet_auth_challenges (
+         id, protocol_version, adapter_id, requested_wallet_address, chain_id, network,
+         message_digest, nonce_digest, rate_key_digest, status, verification_attempts,
+         max_verification_attempts, rate_attempts, rate_limit, rate_window_started_at,
+         rate_window_expires_at, trace_id, issued_at, expires_at, updated_at
+       ) VALUES (
+         'challenge-down-guard', 'campaign-os-wallet-auth/v1', 'nightelf', 'wallet-down-guard',
+         'AELF', 'testnet', $1, $2, $3, 'issued', 0, 5, 0, 10,
+         '2026-07-18T00:00:00.000Z', '2026-07-18T00:05:00.000Z', 'trace-down-guard',
+         '2026-07-18T00:00:00.000Z', '2026-07-18T00:10:00.000Z',
+         '2026-07-18T00:00:00.000Z'
+       )`,
+      ["7".repeat(64), "8".repeat(64), "9".repeat(64)],
+    );
+
+    await expectSqlError(migration0005.downSql, [], "55000");
+    await expect(sqlClient.query(
+      "SELECT COUNT(*)::integer AS count FROM campaign_os.campaign_tasks WHERE id = $1",
+      [taskId],
+    )).resolves.toMatchObject({ rows: [{ count: 1 }] });
+    await expect(sqlClient.query(
+      "SELECT COUNT(*)::integer AS count FROM campaign_os.wallet_auth_challenges",
+    )).resolves.toMatchObject({ rows: [{ count: 1 }] });
   });
 });
 

@@ -1,12 +1,67 @@
 import { describe, expect, it } from "vitest";
 import {
   createMigrationManifest,
+  participantWalletAuthenticationMigration,
+  postgresMigrationFileManifest,
   validateMigrationManifestStores,
+  validatePostgresMigrationFileManifest,
   type MigrationStoreManifest,
 } from "./migrationManifest";
 import { defaultSchemaMigrations } from "./migrationRunner";
 
 describe("migration manifest", () => {
+  it("locks the participant wallet authentication migration identity, paths, and checksum", () => {
+    expect(participantWalletAuthenticationMigration).toEqual({
+      checksum: "724b928cbfb8dc8162663589db1bb0d136498f414223f64fdafa1d0da7470324",
+      downPath: "db/migrations/0005_participant_wallet_authentication.down.sql",
+      id: "0005_participant_wallet_authentication",
+      upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
+    });
+    expect(Object.isFrozen(participantWalletAuthenticationMigration)).toBe(true);
+    expect(postgresMigrationFileManifest.map(({ id }) => id)).toEqual([
+      "0001_campaign_runtime",
+      "0002_admin_review_export",
+      "0003_admin_review_rank_projection",
+      "0004_live_provider_task_verification",
+      "0005_participant_wallet_authentication",
+    ]);
+    expect(validatePostgresMigrationFileManifest(postgresMigrationFileManifest)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "missing",
+      postgresMigrationFileManifest.slice(0, -1),
+      "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY",
+    ],
+    [
+      "duplicate",
+      [...postgresMigrationFileManifest.slice(0, -1), postgresMigrationFileManifest[0]],
+      "POSTGRES_MIGRATION_MANIFEST_DUPLICATE_ID",
+    ],
+    [
+      "reordered",
+      [
+        postgresMigrationFileManifest[1],
+        postgresMigrationFileManifest[0],
+        ...postgresMigrationFileManifest.slice(2),
+      ],
+      "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT",
+    ],
+    [
+      "checksum drift",
+      [
+        ...postgresMigrationFileManifest.slice(0, -1),
+        { ...participantWalletAuthenticationMigration, checksum: "0".repeat(64) },
+      ],
+      "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT",
+    ],
+  ] as const)("rejects %s deterministically", (_label, entries, expectedCode) => {
+    expect(validatePostgresMigrationFileManifest(entries)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: expectedCode })]),
+    );
+  });
+
   it("creates a manifest-only local review readiness surface", () => {
     const manifest = createMigrationManifest();
 
