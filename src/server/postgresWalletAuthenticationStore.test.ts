@@ -216,6 +216,85 @@ describe("required PostgreSQL wallet authentication configuration", () => {
     });
   });
 
+  it("uses one deadline when a forced transaction abort does not settle", async () => {
+    let rejectBlockedQuery: (reason?: unknown) => void = () => undefined;
+    const blockedQuery = new Promise<never>((_resolve, reject) => {
+      rejectBlockedQuery = reject;
+    });
+    let resolvePoolEnd: () => void = () => undefined;
+    const poolEnd = new Promise<void>((resolve) => {
+      resolvePoolEnd = resolve;
+    });
+    const client: PostgresWalletAuthenticationClient = {
+      query: vi.fn(async (text) => text.includes("pg_advisory_xact_lock")
+        ? blockedQuery
+        : { rows: [] }),
+      release: vi.fn(),
+    };
+    const pool: PostgresWalletAuthenticationPool = {
+      connect: vi.fn(async () => client),
+      end: vi.fn(() => poolEnd),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      pool,
+      shutdownTimeoutMs: 20,
+    });
+    const operation = authStore.issueChallenge(challenge());
+    const operationFailure = operation.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => {
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining("pg_advisory_xact_lock"),
+        expect.any(Array),
+      );
+    });
+
+    const startedAt = Date.now();
+    await expect(authStore.close()).rejects.toMatchObject({
+      code: "WALLET_AUTH_STORE_UNAVAILABLE",
+      field: "transaction",
+      operation: "close",
+    });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+    expect(client.release).toHaveBeenCalledWith(true);
+    expect(pool.end).toHaveBeenCalledOnce();
+
+    resolvePoolEnd();
+    rejectBlockedQuery(Object.assign(new Error("connection closed"), { code: "57P01" }));
+    expect(await operationFailure).toMatchObject({ code: "WALLET_AUTH_STORE_UNAVAILABLE" });
+  }, 2_000);
+
+  it("bounds an owned pool close that never settles", async () => {
+    let resolvePoolEnd: () => void = () => undefined;
+    const poolEnd = new Promise<void>((resolve) => {
+      resolvePoolEnd = resolve;
+    });
+    const pool: PostgresWalletAuthenticationPool = {
+      connect: vi.fn(),
+      end: vi.fn(() => poolEnd),
+      query: vi.fn(async () => ({ rows: [] })),
+    };
+    const authStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(START) },
+      pool,
+      shutdownTimeoutMs: 20,
+    });
+
+    const startedAt = Date.now();
+    await expect(authStore.close()).rejects.toMatchObject({
+      code: "WALLET_AUTH_STORE_UNAVAILABLE",
+      field: "pool",
+      operation: "close",
+    });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+    expect(pool.end).toHaveBeenCalledOnce();
+    resolvePoolEnd();
+  }, 2_000);
+
   it.each(["40001", "40P01"])(
     "maps retryable transaction error %s without blind retry",
     async (driverCode) => {
@@ -340,7 +419,7 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
       challengeId: value.id,
       terminalCode: "INVALID_PROOF",
       traceId: "trace-postgres-failure-2",
-    })).toMatchObject({ status: "rate_limited" });
+    })).toMatchObject({ status: "terminal" });
     expect(await authStore.loadChallenge(value.id)).toMatchObject({
       status: "rejected",
       verificationAttempts: 2,
@@ -385,23 +464,66 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
       challengeId: "postgres-wallet-challenge-2",
       terminalCode: "INVALID_PROOF",
       traceId: "trace-postgres-rate-failure-2",
+    })).toMatchObject({ status: "recorded" });
+    expect(await authStore.recordChallengeFailureWithPolicy({
+      challengeId: "postgres-wallet-challenge-1",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-postgres-rate-limit-plus-one",
     })).toMatchObject({ status: "rate_limited" });
 
     now = new Date(START.getTime() + 61_000);
     expect(await authStore.recordChallengeFailureWithPolicy({
-      challengeId: "postgres-wallet-challenge-1",
+      challengeId: "postgres-wallet-challenge-2",
       terminalCode: "INVALID_PROOF",
       traceId: "trace-postgres-rate-reset",
     })).toMatchObject({ status: "recorded" });
     const reset = await requiredPool().query(
       `SELECT rate_attempt_count, rate_window_started_at
        FROM campaign_os.wallet_auth_challenges WHERE id = $1`,
-      ["postgres-wallet-challenge-1"],
+      ["postgres-wallet-challenge-2"],
     );
     expect(reset.rows[0]).toMatchObject({
       rate_attempt_count: 1,
       rate_window_started_at: now,
     });
+    await authStore.close();
+  });
+
+  it("allows N fingerprint attempts and limits N plus one across different subjects", async () => {
+    const authStore = store({
+      ownsPool: false,
+      policy: {
+        maxVerificationAttemptsPerChallenge: 10,
+        maxVerificationAttemptsPerWindow: 2,
+      },
+    });
+    const fingerprint = digest("f");
+    await authStore.issueChallengeWithPolicy({
+      challenge: challenge(1),
+      clientFingerprintDigest: fingerprint,
+      traceId: "trace-postgres-fingerprint-rate-1",
+    });
+    await authStore.issueChallengeWithPolicy({
+      challenge: challenge(2, { requestedWalletAddress: "ELF_other_postgres_participant" }),
+      clientFingerprintDigest: fingerprint,
+      traceId: "trace-postgres-fingerprint-rate-2",
+    });
+
+    expect(await authStore.recordChallengeFailureWithPolicy({
+      challengeId: "postgres-wallet-challenge-1",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-postgres-fingerprint-attempt-1",
+    })).toMatchObject({ status: "recorded" });
+    expect(await authStore.recordChallengeFailureWithPolicy({
+      challengeId: "postgres-wallet-challenge-2",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-postgres-fingerprint-attempt-2",
+    })).toMatchObject({ status: "recorded" });
+    expect(await authStore.recordChallengeFailureWithPolicy({
+      challengeId: "postgres-wallet-challenge-2",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-postgres-fingerprint-attempt-3",
+    })).toMatchObject({ status: "rate_limited" });
     await authStore.close();
   });
 
@@ -474,6 +596,100 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
       { count: 1, status: "issued" },
     ]);
     await authStore.close();
+  }, 30_000);
+
+  it("linearizes subject revoke after an already-waiting consume across two instances", async () => {
+    const setupStore = store({ ownsPool: false });
+    await setupStore.issueChallenge(challenge());
+    await setupStore.close();
+    const subjectKey = walletAuthenticationSubjectKey(session().subject);
+    const blocker = await requiredPool().connect();
+    let blockerOpen = false;
+
+    const lockSignal = () => {
+      let notified = false;
+      let notify: () => void = () => undefined;
+      const requested = new Promise<void>((resolve) => {
+        notify = () => {
+          if (!notified) {
+            notified = true;
+            resolve();
+          }
+        };
+      });
+      return { notify, requested };
+    };
+    const consumeSignal = lockSignal();
+    const revokeSignal = lockSignal();
+    const instrumentPool = (notify: () => void): PostgresWalletAuthenticationPool => ({
+      connect: async () => {
+        const client = await requiredPool().connect();
+        return {
+          query: async (text: string, values: unknown[] = []) => {
+            const resultPromise = client.query(text, values);
+            if (text.includes("pg_advisory_xact_lock") && values[0] === subjectKey) {
+              notify();
+            }
+            const result = await resultPromise;
+            return { rows: result.rows };
+          },
+          release: (destroy?: boolean) => client.release(destroy),
+        };
+      },
+      end: async () => undefined,
+      query: async (text, values = []) => {
+        const result = await requiredPool().query(text, values);
+        return { rows: result.rows };
+      },
+    });
+    const consumeStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(now) },
+      ownsPool: false,
+      pool: instrumentPool(consumeSignal.notify),
+    });
+    const revokeStore = createPostgresWalletAuthenticationStore({
+      clock: { now: () => new Date(now) },
+      ownsPool: false,
+      pool: instrumentPool(revokeSignal.notify),
+    });
+
+    try {
+      await blocker.query("BEGIN");
+      blockerOpen = true;
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+        [subjectKey],
+      );
+      const consuming = consumeStore.consumeChallengeAndCreateSession({
+        challengeId: "postgres-wallet-challenge-1",
+        expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+        session: session(),
+        traceId: "trace-postgres-revoke-race-consume",
+      });
+      await consumeSignal.requested;
+      const revoking = revokeStore.revokeSubjectSessions({
+        reasonCode: "MEMBERSHIP_REVOKED",
+        subjectKey,
+        traceId: "trace-postgres-revoke-race-revoke",
+      });
+      await revokeSignal.requested;
+      await blocker.query("COMMIT");
+      blockerOpen = false;
+
+      await expect(consuming).resolves.toEqual({ status: "created" });
+      await expect(revoking).resolves.toBe(1);
+      expect((await requiredPool().query(
+        "SELECT status FROM campaign_os.wallet_sessions WHERE id = $1",
+        ["postgres-wallet-session-1"],
+      )).rows).toEqual([{ status: "revoked" }]);
+    } finally {
+      if (blockerOpen) {
+        await blocker.query("ROLLBACK");
+      }
+      blocker.release();
+      await consumeStore.close();
+      await revokeStore.close();
+    }
   }, 30_000);
 
   it("restores across instances, throttles touch, rotates once and shares terminal state", async () => {
@@ -559,6 +775,10 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
       version: 2,
     })).toEqual({ status: "active" });
     expect(await runtimeA.logoutSession({
+      credentialDigest: digest("1"),
+      traceId: "trace-postgres-logout-stale-credential",
+    })).toEqual({ status: "already_terminal" });
+    expect(await runtimeA.logoutSession({
       credentialDigest: digest("7"),
       traceId: "trace-postgres-logout",
     })).toEqual({ status: "revoked" });
@@ -566,6 +786,20 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
     expect(await runtimeB.logoutSession({
       credentialDigest: digest("7"),
       traceId: "trace-postgres-logout-repeat",
+    })).toEqual({ status: "already_terminal" });
+    expect(await runtimeB.logoutSession({
+      credentialDigest: digest("9"),
+      traceId: "trace-postgres-logout-unknown",
+    })).toEqual({ status: "already_terminal" });
+    expect(await runtimeA.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "postgres-wallet-session-1",
+      traceId: "trace-postgres-revoke-terminal",
+    })).toEqual({ status: "already_terminal" });
+    expect(await runtimeB.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "postgres-wallet-session-missing",
+      traceId: "trace-postgres-revoke-unknown",
     })).toEqual({ status: "already_terminal" });
     await runtimeA.close();
     await runtimeB.close();
@@ -600,6 +834,15 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
       version: 2,
     }]);
     expect(await authStore.resolveActiveSession(digest("1"))).toBeUndefined();
+    expect(await authStore.logoutSession({
+      credentialDigest: digest("1"),
+      traceId: "trace-postgres-expiry-logout",
+    })).toEqual({ status: "already_terminal" });
+    expect(await authStore.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "postgres-wallet-session-1",
+      traceId: "trace-postgres-expiry-revoke",
+    })).toEqual({ status: "already_terminal" });
     await authStore.close();
   });
 

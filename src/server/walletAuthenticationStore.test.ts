@@ -105,7 +105,7 @@ describe("wallet authentication store contract", () => {
       policy: {
         maxActiveChallengesPerSubject: 2,
         maxVerificationAttemptsPerChallenge: 2,
-        maxVerificationAttemptsPerWindow: 2,
+        maxVerificationAttemptsPerWindow: 10,
         verificationRateWindowMs: 5 * 60_000,
       },
     });
@@ -139,7 +139,7 @@ describe("wallet authentication store contract", () => {
       challengeId: "wallet-challenge-1",
       terminalCode: "INVALID_PROOF",
       traceId: "trace-failure-2",
-    })).toMatchObject({ status: "rate_limited" });
+    })).toMatchObject({ status: "terminal" });
     expect(await store.loadChallenge("wallet-challenge-1")).toMatchObject({
       status: "rejected",
       verificationAttempts: 2,
@@ -178,14 +178,58 @@ describe("wallet authentication store contract", () => {
       challengeId: "wallet-challenge-2",
       terminalCode: "INVALID_PROOF",
       traceId: "trace-subject-rate-failure-2",
+    })).toMatchObject({ status: "recorded" });
+    expect(await store.recordChallengeFailureWithPolicy({
+      challengeId: "wallet-challenge-1",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-subject-rate-limit-plus-one",
     })).toMatchObject({ status: "rate_limited" });
 
     now = new Date(START.getTime() + 61_000);
     expect(await store.recordChallengeFailureWithPolicy({
-      challengeId: "wallet-challenge-1",
+      challengeId: "wallet-challenge-2",
       terminalCode: "INVALID_PROOF",
       traceId: "trace-subject-rate-reset",
     })).toMatchObject({ status: "recorded" });
+    await store.close();
+  });
+
+  it("allows N fingerprint attempts and limits N plus one across different subjects", async () => {
+    const store = createMemoryWalletAuthenticationStoreForTests({
+      clock: { now: () => new Date(START) },
+      mode: "unit_test",
+      policy: {
+        maxVerificationAttemptsPerChallenge: 10,
+        maxVerificationAttemptsPerWindow: 2,
+      },
+    });
+    const fingerprint = digest("f");
+    await store.issueChallengeWithPolicy({
+      challenge: challenge(1),
+      clientFingerprintDigest: fingerprint,
+      traceId: "trace-fingerprint-rate-1",
+    });
+    await store.issueChallengeWithPolicy({
+      challenge: challenge(2, { requestedWalletAddress: "ELF_other_wallet" }),
+      clientFingerprintDigest: fingerprint,
+      traceId: "trace-fingerprint-rate-2",
+    });
+
+    expect(await store.recordChallengeFailureWithPolicy({
+      challengeId: "wallet-challenge-1",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-fingerprint-attempt-1",
+    })).toMatchObject({ status: "recorded" });
+    expect(await store.recordChallengeFailureWithPolicy({
+      challengeId: "wallet-challenge-2",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-fingerprint-attempt-2",
+    })).toMatchObject({ status: "recorded" });
+    expect(await store.recordChallengeFailureWithPolicy({
+      challengeId: "wallet-challenge-2",
+      terminalCode: "INVALID_PROOF",
+      traceId: "trace-fingerprint-attempt-3",
+    })).toMatchObject({ status: "rate_limited" });
     await store.close();
   });
 
@@ -295,6 +339,11 @@ describe("wallet authentication store contract", () => {
     })).toEqual({ status: "active" });
 
     expect(await store.logoutSession({
+      credentialDigest: digest("1"),
+      traceId: "trace-logout-stale-credential",
+    })).toEqual({ status: "already_terminal" });
+
+    expect(await store.logoutSession({
       credentialDigest: digest("7"),
       traceId: "trace-logout-1",
     })).toEqual({ status: "revoked" });
@@ -302,7 +351,48 @@ describe("wallet authentication store contract", () => {
       credentialDigest: digest("7"),
       traceId: "trace-logout-2",
     })).toEqual({ status: "already_terminal" });
+    expect(await store.logoutSession({
+      credentialDigest: digest("9"),
+      traceId: "trace-logout-unknown",
+    })).toEqual({ status: "already_terminal" });
+    expect(await store.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "wallet-session-1",
+      traceId: "trace-revoke-terminal",
+    })).toEqual({ status: "already_terminal" });
+    expect(await store.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "wallet-session-missing",
+      traceId: "trace-revoke-unknown",
+    })).toEqual({ status: "already_terminal" });
     expect(await store.resolveActiveSession(digest("7"))).toBeUndefined();
+    await store.close();
+  });
+
+  it("normalizes expired session logout and revoke to the idempotent terminal result", async () => {
+    let now = new Date(START);
+    const store = createMemoryWalletAuthenticationStoreForTests({
+      clock: { now: () => new Date(now) },
+      mode: "unit_test",
+    });
+    await store.issueChallenge(challenge());
+    await store.consumeChallengeAndCreateSession({
+      challengeId: "wallet-challenge-1",
+      expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+      session: session(),
+      traceId: "trace-expired-idempotency-create",
+    });
+    now = new Date(START.getTime() + 31 * 60_000);
+    expect(await store.resolveActiveSession(digest("1"))).toBeUndefined();
+    expect(await store.logoutSession({
+      credentialDigest: digest("1"),
+      traceId: "trace-expired-idempotency-logout",
+    })).toEqual({ status: "already_terminal" });
+    expect(await store.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "wallet-session-1",
+      traceId: "trace-expired-idempotency-revoke",
+    })).toEqual({ status: "already_terminal" });
     await store.close();
   });
 

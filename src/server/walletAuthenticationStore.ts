@@ -772,8 +772,8 @@ export const createMemoryWalletAuthenticationStoreForTests = ({
       verificationAttemptsByFingerprint.set(row.fingerprintDigest, fingerprintAttempts);
     }
     const nextAttempts = row.snapshot.verificationAttempts + 1;
-    const rateLimited = subjectAttempts.length >= policy.maxVerificationAttemptsPerWindow
-      || fingerprintAttempts.length >= policy.maxVerificationAttemptsPerWindow;
+    const rateLimited = subjectAttempts.length > policy.maxVerificationAttemptsPerWindow
+      || fingerprintAttempts.length > policy.maxVerificationAttemptsPerWindow;
     const challengeLimited = nextAttempts >= policy.maxVerificationAttemptsPerChallenge;
     replaceChallengeSnapshot(row, rateLimited || challengeLimited ? "rejected" : "issued", nextAttempts);
     if (rateLimited || challengeLimited) {
@@ -1016,7 +1016,7 @@ export const createMemoryWalletAuthenticationStoreForTests = ({
     }
     const row = sessions.get(input.sessionId);
     if (!row) {
-      return Object.freeze({ status: "not_found" });
+      return Object.freeze({ status: "already_terminal" });
     }
     if (!revokeRow(row, input.reasonCode, readClock(clock, "revokeSession", traceId))) {
       return Object.freeze({ status: "already_terminal" });
@@ -1037,7 +1037,7 @@ export const createMemoryWalletAuthenticationStoreForTests = ({
     }
     const id = sessionIdByCredentialDigest.get(input.credentialDigest);
     if (!id) {
-      return Object.freeze({ status: "not_found" });
+      return Object.freeze({ status: "already_terminal" });
     }
     return revokeSession({ reasonCode: "LOGOUT", sessionId: id, traceId });
   };

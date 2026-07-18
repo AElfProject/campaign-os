@@ -362,6 +362,33 @@ const normalizeShutdownTimeout = (value: number | undefined): number => {
   return resolved;
 };
 
+type DeadlineResult<TValue> =
+  | Readonly<{ status: "settled"; value: TValue }>
+  | Readonly<{ status: "timed_out" }>;
+
+const settleWithin = async <TValue>(
+  promise: Promise<TValue>,
+  timeoutMs: number,
+): Promise<DeadlineResult<TValue>> => {
+  if (timeoutMs <= 0) {
+    void promise.catch(() => undefined);
+    return Object.freeze({ status: "timed_out" });
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then((value) => Object.freeze({ status: "settled" as const, value })),
+      new Promise<Readonly<{ status: "timed_out" }>>((resolve) => {
+        timeout = setTimeout(() => resolve(Object.freeze({ status: "timed_out" })), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+};
+
 export const createPostgresWalletAuthenticationStore = ({
   clock,
   ownsPool = true,
@@ -778,7 +805,7 @@ export const createPostgresWalletAuthenticationStore = ({
         )
         : 0;
       const nextChallengeAttempts = snapshot.verificationAttempts + 1;
-      const rateLimited = aggregateAttempts + 1 >= policy.maxVerificationAttemptsPerWindow;
+      const rateLimited = aggregateAttempts + 1 > policy.maxVerificationAttemptsPerWindow;
       const challengeLimited = nextChallengeAttempts >= policy.maxVerificationAttemptsPerChallenge;
       const existingWindowStart = readInstant(row, "rate_window_started_at");
       const existingRateWindowActive = Date.parse(existingWindowStart)
@@ -1297,7 +1324,7 @@ export const createPostgresWalletAuthenticationStore = ({
       );
       const row = rows[0];
       if (!row) {
-        return Object.freeze({ status: "not_found" as const });
+        return Object.freeze({ status: "already_terminal" as const });
       }
       if (readString(row, "status") !== "active") {
         return Object.freeze({ status: "already_terminal" as const });
@@ -1370,24 +1397,34 @@ export const createPostgresWalletAuthenticationStore = ({
       );
     }
     const now = readClock(clock, "revokeSubjectSessions", traceId);
-    const rows = await query(
-      "revokeSubjectSessions",
-      `
-        UPDATE campaign_os.wallet_sessions
-        SET
-          status = 'revoked',
-          version = version + 1,
-          revoked_at = $2,
-          revocation_code = $3,
-          last_trace_id = $4,
-          updated_at = $2
-        WHERE subject_key = $1 AND status = 'active'
-        RETURNING id
-      `,
-      [input.subjectKey, now.toISOString(), input.reasonCode, traceId],
-      traceId,
-    );
-    return rows.length;
+    return withTransaction("revokeSubjectSessions", traceId, async (client) => {
+      await queryWith(
+        client,
+        "revokeSubjectSessions",
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+        [input.subjectKey],
+        traceId,
+      );
+      const rows = await queryWith(
+        client,
+        "revokeSubjectSessions",
+        `
+          UPDATE campaign_os.wallet_sessions
+          SET
+            status = 'revoked',
+            version = version + 1,
+            revoked_at = $2,
+            revocation_code = $3,
+            last_trace_id = $4,
+            updated_at = $2
+          WHERE subject_key = $1 AND status = 'active'
+          RETURNING id
+        `,
+        [input.subjectKey, now.toISOString(), input.reasonCode, traceId],
+        traceId,
+      );
+      return rows.length;
+    });
   };
 
   const expireSessions: WalletAuthenticationStore["expireSessions"] = async (nowInput) => {
@@ -1503,17 +1540,14 @@ export const createPostgresWalletAuthenticationStore = ({
     }
     closing = true;
     closePromise = (async () => {
+      const startedAt = Date.now();
+      const deadline = startedAt + shutdownTimeoutMs;
+      let failureField: "pool" | "transaction" | undefined;
       if (activeTransactions.size > 0) {
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([
+        await settleWithin(
           Promise.allSettled([...activeTransactions]),
-          new Promise<void>((resolve) => {
-            timeout = setTimeout(resolve, shutdownTimeoutMs);
-          }),
-        ]);
-        if (timeout) {
-          clearTimeout(timeout);
-        }
+          Math.max(1, Math.floor(shutdownTimeoutMs / 2)),
+        );
       }
       if (activeTransactions.size > 0) {
         for (const client of activeClients) {
@@ -1524,15 +1558,36 @@ export const createPostgresWalletAuthenticationStore = ({
             // The connection is already unusable and the store is closing.
           }
         }
-        await Promise.allSettled([...activeTransactions]);
+        const forcedDrain = await settleWithin(
+          Promise.allSettled([...activeTransactions]),
+          Math.max(0, deadline - Date.now()),
+        );
+        if (forcedDrain.status === "timed_out" && activeTransactions.size > 0) {
+          failureField = "transaction";
+        }
       }
       closed = true;
       if (ownsPool) {
         try {
-          await pool.end();
+          const poolClose = await settleWithin(
+            pool.end(),
+            Math.max(0, deadline - Date.now()),
+          );
+          if (poolClose.status === "timed_out" && !failureField) {
+            failureField = "pool";
+          }
         } catch {
-          throw storeError("WALLET_AUTH_STORE_UNAVAILABLE", "pool", "close", DEFAULT_TRACE_ID, true);
+          failureField ??= "pool";
         }
+      }
+      if (failureField) {
+        throw storeError(
+          "WALLET_AUTH_STORE_UNAVAILABLE",
+          failureField,
+          "close",
+          DEFAULT_TRACE_ID,
+          true,
+        );
       }
     })();
     return closePromise;
