@@ -1,10 +1,23 @@
 // @vitest-environment node
 
-import { createHash, randomUUID } from "node:crypto";
+import AElf from "aelf-sdk";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createCampaignOsApiRuntime } from "./apiRuntime";
-import { resolveCampaignOsCampaignDbConfig } from "./config";
+import { extractCanonicalWalletAuthenticationNonce } from "../api/liveWalletAuthenticationApiBridge";
+import {
+  isCanonicalLiveWalletAccountType,
+  isCanonicalLiveWalletSource,
+} from "../domain/wallet";
+import {
+  createCampaignOsApiRuntime,
+  type WalletAuthenticationAuthorityRuntime,
+} from "./apiRuntime";
+import { authSessionRolePolicyById } from "./authSession";
+import {
+  resolveCampaignOsAdminReviewConfig,
+  resolveCampaignOsCampaignDbConfig,
+} from "./config";
 import {
   loadPostgresMigrations,
   runPostgresMigrations,
@@ -33,6 +46,16 @@ import {
   resolveTaskVerificationConfig,
   type TaskVerificationBinding,
 } from "./taskVerificationConfig";
+import {
+  issueResolvedWalletSessionAuthority,
+  issueVerifiedWalletSubject,
+  type ResolvedWalletSessionAuthority,
+} from "./walletAuthentication";
+import type {
+  RevalidateWalletAuthenticationFenceInput,
+  WalletAuthenticationAuthorizationFence,
+} from "./walletAuthenticationRuntime";
+import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
 
 const TEST_DATABASE_URL = process.env.CAMPAIGN_OS_TEST_DATABASE_URL?.trim();
 const REQUIRE_POSTGRES_TESTS = process.env.CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS?.trim() === "1";
@@ -253,6 +276,35 @@ interface WalletSessionData {
       trustLevel?: string;
     };
     sessionId: string;
+    walletSource: string;
+  };
+}
+
+interface LiveWalletAuthenticationChallengeData {
+  adapterId: string;
+  challengeId: string;
+  chainId: string;
+  expiresAt: string;
+  message: string;
+  network: string;
+  version: "campaign-os-wallet-auth/v1";
+  walletAddress: string;
+}
+
+interface LiveWalletAuthenticationSessionData {
+  csrfToken: string;
+  session: {
+    absoluteExpiresAt: string;
+    accountType: string;
+    capabilities: string[];
+    chainId: string;
+    idleExpiresAt: string;
+    issuedAt: string;
+    network: string;
+    roles: string[];
+    sessionId: string;
+    status: "active";
+    walletAddress: string;
     walletSource: string;
   };
 }
@@ -573,7 +625,7 @@ interface ApiResult<T> {
 }
 
 interface NegativeApiContract {
-  diagnosticCode: string;
+  diagnosticCode?: string;
   field: string;
   outerCode: string;
   status: number;
@@ -631,16 +683,206 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
 
   const databaseName = `campaign_os_m239_${process.pid}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const adminOperatorAddress = `2F4PostgresReview${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+  const testScopedAuthOrigin = "http://127.0.0.1:5173";
+  const adminOperatorMembershipsJson = JSON.stringify([{
+    active: true,
+    campaignIds: null,
+    roleIds: ["review_operator"],
+    subjectAddress: adminOperatorAddress,
+  }]);
+  const testAdminMembershipRevision = resolveCampaignOsAdminReviewConfig({
+    env: {
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: adminOperatorMembershipsJson,
+      CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
+    },
+  }).sourceRevision;
   const shutdownTimings: number[] = [];
   const timings: number[] = [];
   const servers = new Set<CampaignOsApiServerHandle>();
   const transports = new Set<ProviderHttpFetchTransport>();
   const transportByServer = new WeakMap<CampaignOsApiServerHandle, ProviderHttpFetchTransport>();
   const transportStats = new WeakMap<ProviderHttpFetchTransport, ProviderTransportStats>();
+  interface TestScopedAuthorization {
+    authority: ResolvedWalletSessionAuthority;
+    cookieHeader: string;
+    csrfToken: string;
+    fence: WalletAuthenticationAuthorizationFence;
+  }
+  const testAuthorizationByCookie = new Map<string, TestScopedAuthorization>();
+  const testAuthorizationBySessionId = new Map<string, TestScopedAuthorization>();
+  const testAuthorizationCookiesByServer = new WeakMap<CampaignOsApiServerHandle, Set<string>>();
   let adminPool: pg.Pool;
   let databaseUrl = "";
   let providerSandbox: ProviderVerificationSandboxHandle | undefined;
   let sslMode = "verify-full";
+
+  const testCapabilityDigest = (values: readonly string[]) => createHash("sha256")
+    .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
+    .digest("hex");
+
+  const testAuthorizationFailure = (traceId: string) => Object.freeze({
+    diagnostic: Object.freeze({
+      code: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED" as const,
+      field: "cookie",
+      message: "Test-scoped wallet authorization is unavailable.",
+      retryable: false,
+      severity: "warning" as const,
+      traceId,
+    }),
+    status: "unauthorized" as const,
+  });
+
+  const testFenceFailure = (traceId: string) => Object.freeze({
+    diagnostic: Object.freeze({
+      code: "WALLET_AUTH_RUNTIME_FENCE_STALE" as const,
+      field: "fence",
+      message: "Test-scoped wallet authorization changed before final write.",
+      retryable: false,
+      severity: "warning" as const,
+      traceId,
+    }),
+    status: "stale" as const,
+  });
+
+  const testScopedWalletAuthenticationRuntime: WalletAuthenticationAuthorityRuntime = {
+    resolveAuthorization: async (input) => {
+      const authorization = input.cookieHeader
+        ? testAuthorizationByCookie.get(input.cookieHeader)
+        : undefined;
+      if (
+        !authorization
+        || input.csrfHeader !== authorization.csrfToken
+        || input.origin !== testScopedAuthOrigin
+      ) {
+        return testAuthorizationFailure(input.traceId);
+      }
+
+      return Object.freeze({
+        authority: authorization.authority,
+        fence: authorization.fence,
+        status: "authorized" as const,
+      });
+    },
+    revalidateFenceBeforeWrite: async <TValue>(
+      input: RevalidateWalletAuthenticationFenceInput<TValue>,
+    ) => {
+      const authorization = testAuthorizationBySessionId.get(input.fence.sessionId);
+      if (
+        !authorization
+        || authorization.fence.capabilityDigest !== input.fence.capabilityDigest
+        || authorization.fence.membershipRevision !== input.fence.membershipRevision
+        || authorization.fence.subjectKey !== input.fence.subjectKey
+        || authorization.fence.version !== input.fence.version
+      ) {
+        return testFenceFailure(input.traceId);
+      }
+      const signal = input.signal ?? new AbortController().signal;
+
+      return Object.freeze({
+        status: "committed" as const,
+        value: await input.write({ authority: authorization.authority, signal }),
+      });
+    },
+    state: () => Object.freeze({
+      accepting: true,
+      activeOperationCount: 0,
+      controllerCount: 0,
+    }),
+    stop: async () => Object.freeze({
+      diagnosticCodes: Object.freeze([]),
+      diagnostics: Object.freeze([]),
+      status: "drained" as const,
+    }),
+  };
+
+  const issueTestScopedAuthorization = (
+    server: CampaignOsApiServerHandle,
+    data: WalletSessionData,
+    role: IssuedSessionRole,
+  ) => {
+    const credential = randomBytes(32).toString("base64url");
+    const cookieHeader = `campaign_os_wallet_session=${credential}`;
+    const csrfToken = randomBytes(32).toString("base64url");
+    const transport = Object.freeze({ cookieHeader, csrfToken });
+    const payload = data.payload;
+    if (
+      payload.issuer?.valid !== true
+      || payload.proof?.status !== "verified"
+      || !isCanonicalLiveWalletAccountType(payload.accountType)
+      || !isCanonicalLiveWalletSource(payload.walletSource)
+    ) {
+      return transport;
+    }
+    const subject = issueVerifiedWalletSubject({
+      accountType: payload.accountType,
+      adapterId: `postgres-regression-${payload.accountType.toLowerCase()}`,
+      ...(payload.accountType === "AA"
+        ? { caHash: createHash("sha256").update(`ca:${payload.sessionId}`).digest("hex") }
+        : {}),
+      chainId: "AELF",
+      network: "mainnet",
+      proofDigest: createHash("sha256").update(`proof:${payload.sessionId}`).digest("hex"),
+      proofMethod: payload.accountType === "AA"
+        ? "PORTKEY_AA_MANAGER_CA"
+        : "AELF_EOA_RECOVERABLE",
+      signerAddress: payload.address,
+      verifiedAt: new Date().toISOString(),
+      walletAddress: payload.address,
+      walletSource: payload.walletSource,
+    });
+    const capabilities = authSessionRolePolicyById[role].allowedCapabilities;
+    const membershipRevision = role === "review_operator"
+      ? testAdminMembershipRevision
+      : createHash("sha256").update(`membership:${payload.sessionId}:${role}`).digest("hex");
+    const authority = issueResolvedWalletSessionAuthority({
+      absoluteExpiresAt: "2099-12-31T23:59:59.000Z",
+      capabilities,
+      credentialBoundary: "wallet-auth-cookie/v1",
+      idleExpiresAt: "2099-12-31T23:59:59.000Z",
+      membershipRevision,
+      roleIds: [role],
+      sessionId: payload.sessionId,
+      subject,
+      version: 1,
+    });
+    const authorization = Object.freeze({
+      authority,
+      cookieHeader,
+      csrfToken,
+      fence: Object.freeze({
+        capabilityDigest: testCapabilityDigest(authority.capabilities),
+        membershipRevision: authority.membershipRevision,
+        sessionId: authority.sessionId,
+        subjectKey: walletAuthenticationSubjectKey(authority.subject),
+        version: authority.version,
+      }),
+    });
+    testAuthorizationByCookie.set(cookieHeader, authorization);
+    testAuthorizationBySessionId.set(authority.sessionId, authorization);
+    const serverCookies = testAuthorizationCookiesByServer.get(server) ?? new Set<string>();
+    serverCookies.add(cookieHeader);
+    testAuthorizationCookiesByServer.set(server, serverCookies);
+
+    return transport;
+  };
+
+  const releaseTestScopedAuthorizations = (server: CampaignOsApiServerHandle) => {
+    const cookies = testAuthorizationCookiesByServer.get(server);
+    if (!cookies) {
+      return;
+    }
+    for (const cookie of cookies) {
+      const authorization = testAuthorizationByCookie.get(cookie);
+      testAuthorizationByCookie.delete(cookie);
+      if (
+        authorization
+        && testAuthorizationBySessionId.get(authorization.authority.sessionId) === authorization
+      ) {
+        testAuthorizationBySessionId.delete(authorization.authority.sessionId);
+      }
+    }
+    cookies.clear();
+  };
 
   const recordTiming = async <T>(
     operation: () => Promise<T>,
@@ -680,6 +922,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         `PostgreSQL integration API request failed with status ${status}`
         + `, code ${envelope.error?.code ?? "unknown"}`
         + `, diagnostic ${envelope.error?.details?.diagnosticCode ?? "unknown"}`
+        + `, field ${envelope.error?.details?.field ?? "unknown"}`
         + `, and operation ${envelope.error?.details?.operation ?? "unknown"}.`,
       );
     }
@@ -783,19 +1026,16 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       expect(data.payload.proof).toMatchObject({ status: "verified" });
       expect(data.payload.issuer).toMatchObject({ valid: true });
     }
+    const authorization = issueTestScopedAuthorization(server, data, role);
 
     return {
       data,
       headers: (requestTraceId, overrides = {}) => ({
         "content-type": "application/json",
-        "x-campaign-os-account-type": data.payload.accountType,
-        "x-campaign-os-credential-boundary": "ordinary_user_wallet",
-        "x-campaign-os-proof-status": data.payload.proof?.status ?? "proof_required",
-        "x-campaign-os-roles": role,
-        "x-campaign-os-session-id": data.payload.sessionId,
+        cookie: authorization.cookieHeader,
+        origin: testScopedAuthOrigin,
+        "x-campaign-os-csrf": authorization.csrfToken,
         "x-campaign-os-trace-id": requestTraceId,
-        "x-campaign-os-wallet-address": data.payload.address,
-        "x-campaign-os-wallet-source": data.payload.walletSource,
         ...overrides,
       }),
     };
@@ -827,12 +1067,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       throw new Error("Provider acceptance sandbox prerequisite is unavailable.");
     }
     const env: Record<string, string | undefined> = {
-      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
-        active: true,
-        campaignIds: null,
-        roleIds: ["review_operator"],
-        subjectAddress: adminOperatorAddress,
-      }]),
+      CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: adminOperatorMembershipsJson,
       CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
       CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
       CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: connectTimeoutMs,
@@ -901,6 +1136,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
           ...options,
           taskVerificationConfig,
           taskVerificationProviderRuntime: CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME,
+          walletAuthenticationRuntime: testScopedWalletAuthenticationRuntime,
+          walletAuthenticationRuntimeOwnership: "external",
         }),
         shutdownTimeoutMs: 10_000,
         taskVerificationTransport: transport,
@@ -919,12 +1156,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
   const startServerWithVerificationDisabled = async () => {
     const server = await startCampaignOsApiServer({
       env: {
-        CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
-          active: true,
-          campaignIds: null,
-          roleIds: ["review_operator"],
-          subjectAddress: adminOperatorAddress,
-        }]),
+        CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: adminOperatorMembershipsJson,
         CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
         CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
         CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: "5000",
@@ -936,6 +1168,11 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       },
       logger: false,
       port: 0,
+      runtimeFactory: (options) => createCampaignOsApiRuntime({
+        ...options,
+        walletAuthenticationRuntime: testScopedWalletAuthenticationRuntime,
+        walletAuthenticationRuntimeOwnership: "external",
+      }),
       shutdownTimeoutMs: 10_000,
     });
 
@@ -945,6 +1182,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
 
   const stopServer = async (server: CampaignOsApiServerHandle) => {
     await recordTiming(() => server.stop(), shutdownTimings);
+    releaseTestScopedAuthorizations(server);
     servers.delete(server);
     const transport = transportByServer.get(server);
     if (transport) {
@@ -1345,6 +1583,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         "0002_admin_review_export",
         "0003_admin_review_rank_projection",
         "0004_live_provider_task_verification",
+        "0005_participant_wallet_authentication",
       ]);
       const migration = await runPostgresMigrations({
         approved: true,
@@ -1360,6 +1599,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         "0002_admin_review_export",
         "0003_admin_review_rank_projection",
         "0004_live_provider_task_verification",
+        "0005_participant_wallet_authentication",
       ]);
       expect(migration.pendingMigrationIds).toEqual([]);
     } finally {
@@ -1369,6 +1609,9 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
 
   afterAll(async () => {
     const cleanupErrors: unknown[] = [];
+    for (const server of servers) {
+      releaseTestScopedAuthorizations(server);
+    }
     const stopResults = await Promise.allSettled(
       Array.from(servers, (server) => server.stop()),
     );
@@ -1384,6 +1627,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       .filter((result): result is PromiseRejectedResult => result.status === "rejected")
       .map((result) => result.reason));
     transports.clear();
+    testAuthorizationByCookie.clear();
+    testAuthorizationBySessionId.clear();
 
     if (providerSandbox) {
       try {
@@ -1425,6 +1670,1027 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       });
     }
   });
+
+  it("accepts the targeted M244 clean-start cross-role journey and durable restart fences", async () => {
+    const cleanDatabaseName = `${databaseName}_m244_t051`;
+    const origin = "http://127.0.0.1:5193";
+    const adapterId = "portkey-discover-eoa";
+    const csrfSecret = createHash("sha256").update(randomUUID()).digest("base64url");
+    const ownerSigner = createEphemeralSigner();
+    const participantASigner = createEphemeralSigner();
+    const participantBSigner = createEphemeralSigner();
+    const adminSigner = createEphemeralSigner();
+    const projectId = `m244-t051-${randomUUID()}`;
+    const participantRoles = ["participant", "project_owner"] as const;
+    const adminRoles = [...participantRoles, "review_operator"] as const;
+    const participantCapabilities = [
+      "wallet:session_create",
+      "campaign:read",
+      "task:verify",
+      "eligibility:read",
+      "user:participate",
+      "campaign:write",
+      "campaign:ownership_mutation",
+      "task:build",
+      "export:preview",
+    ] as const;
+    const adminCapabilities = [
+      ...participantCapabilities,
+      "admin:review",
+      "risk:review",
+    ] as const;
+    let sandboxA: ProviderVerificationSandboxHandle | undefined;
+    let sandboxB: ProviderVerificationSandboxHandle | undefined;
+
+    if (!/^[a-z0-9_]+$/.test(cleanDatabaseName)) {
+      throw new Error("Generated M244 T051 database name is invalid.");
+    }
+
+    const cleanUrl = new URL(TEST_DATABASE_URL!);
+    cleanUrl.pathname = `/${cleanDatabaseName}`;
+    cleanUrl.search = "";
+    const cleanDatabaseUrl = cleanUrl.toString();
+
+    interface EphemeralSigner {
+      address: string;
+      publicKey: string;
+      sign(message: string): string;
+    }
+
+    interface LiveSession {
+      address: string;
+      cookie: string;
+      csrfToken: string;
+      sessionId: string;
+    }
+
+    interface TargetedFacts {
+      attemptRows: number;
+      campaignRows: number;
+      completionRows: number;
+      evidenceRows: number;
+      participantRows: number;
+      taskRows: number;
+      totalPoints: number;
+    }
+
+    interface TargetedAttemptState {
+      campaignId: string;
+      diagnosticCodes: string[];
+      dispatchState: string;
+      id: string;
+      status: string;
+      taskId: string;
+      walletAddress: string;
+    }
+
+    interface ProviderGate {
+      entered: Promise<void>;
+      release(): void;
+    }
+
+    interface LiveServerHarness {
+      deferNextProviderCall(): ProviderGate;
+      providerCalls(): number;
+      releaseProviderCalls(): void;
+      server: CampaignOsApiServerHandle;
+    }
+
+    let runtimeA: LiveServerHarness | undefined;
+    let runtimeB: LiveServerHarness | undefined;
+
+    function createEphemeralSigner(): EphemeralSigner {
+      const keyPair = AElf.wallet.ellipticEc.genKeyPair({ entropy: randomBytes(32) });
+      const publicKey = Uint8Array.from(keyPair.getPublic().encode("array", false));
+
+      return {
+        address: AElf.wallet.getAddressFromPubKey(keyPair.getPublic()),
+        publicKey: Buffer.from(publicKey).toString("hex"),
+        sign: (message) => Buffer.from(AElf.wallet.sign(
+          Buffer.from(message, "utf8").toString("hex"),
+          keyPair,
+        )).toString("hex"),
+      };
+    }
+
+    const authRequest = async <T>(
+      server: CampaignOsApiServerHandle,
+      path: string,
+      init: RequestInit,
+    ) => {
+      const response = await fetch(`${server.url}${path}`, init);
+      return {
+        envelope: await response.json() as ApiEnvelope<T>,
+        setCookie: response.headers.get("set-cookie"),
+        status: response.status,
+      };
+    };
+
+    const sessionHeaders = (
+      session: LiveSession,
+      traceId: string,
+      overrides: Record<string, string> = {},
+    ) => ({
+      "content-type": "application/json",
+      cookie: session.cookie,
+      origin,
+      "x-campaign-os-csrf": session.csrfToken,
+      "x-campaign-os-trace-id": traceId,
+      ...overrides,
+    });
+
+    const currentSessionHeaders = (
+      session: LiveSession,
+      traceId: string,
+    ) => ({
+      cookie: session.cookie,
+      origin,
+      "x-campaign-os-trace-id": traceId,
+    });
+
+    const sessionMutationHeaders = (
+      session: LiveSession,
+      traceId: string,
+    ) => ({
+      cookie: session.cookie,
+      origin,
+      "x-campaign-os-csrf": session.csrfToken,
+      "x-campaign-os-trace-id": traceId,
+    });
+
+    const issueLiveSession = async (
+      server: CampaignOsApiServerHandle,
+      signer: EphemeralSigner,
+      tracePrefix: string,
+      expectedRoles: readonly string[],
+      expectedCapabilities: readonly string[],
+    ): Promise<LiveSession> => {
+      const challenge = await authRequest<LiveWalletAuthenticationChallengeData>(
+        server,
+        "/api/wallet/auth/challenges",
+        {
+          body: JSON.stringify({
+            adapterId,
+            chainId: "AELF",
+            network: "testnet",
+            walletAddress: signer.address,
+          }),
+          headers: {
+            "content-type": "application/json",
+            origin,
+            "x-campaign-os-trace-id": `${tracePrefix}-challenge`,
+          },
+          method: "POST",
+        },
+      );
+      expect(challenge.status).toBe(201);
+      expect(challenge.envelope.ok).toBe(true);
+      const challengeData = challenge.envelope.data;
+      if (!challengeData) {
+        throw new Error("M244 T051 challenge response is unavailable.");
+      }
+      expect(challengeData).toMatchObject({
+        adapterId,
+        chainId: "AELF",
+        network: "testnet",
+        version: "campaign-os-wallet-auth/v1",
+        walletAddress: signer.address,
+      });
+      const nonce = extractCanonicalWalletAuthenticationNonce(challengeData.message);
+      if (!nonce.ok) {
+        throw new Error("M244 T051 challenge nonce is not canonical.");
+      }
+      const authenticated = await authRequest<LiveWalletAuthenticationSessionData>(
+        server,
+        "/api/wallet/auth/sessions",
+        {
+          body: JSON.stringify({
+            challengeId: challengeData.challengeId,
+            message: challengeData.message,
+            nonce: nonce.nonce,
+            publicKey: signer.publicKey,
+            signature: signer.sign(challengeData.message),
+          }),
+          headers: {
+            "content-type": "application/json",
+            origin,
+            "x-campaign-os-trace-id": `${tracePrefix}-session`,
+          },
+          method: "POST",
+        },
+      );
+      const cookie = authenticated.setCookie?.split(";", 1)[0];
+      expect(authenticated.status).toBe(201);
+      expect(authenticated.envelope.ok).toBe(true);
+      expect(cookie).toMatch(/^campaign_os_wallet_session=/);
+      const data = authenticated.envelope.data;
+      if (!cookie || !data) {
+        throw new Error("M244 T051 durable cookie session is unavailable.");
+      }
+      expect(data.session).toMatchObject({
+        accountType: "EOA",
+        chainId: "AELF",
+        network: "testnet",
+        status: "active",
+        walletAddress: signer.address,
+        walletSource: "PORTKEY_EOA_APP",
+      });
+      expect(data.session.roles).toEqual([...expectedRoles]);
+      expect(data.session.capabilities).toEqual([...expectedCapabilities]);
+
+      return {
+        address: signer.address,
+        cookie,
+        csrfToken: data.csrfToken,
+        sessionId: data.session.sessionId,
+      };
+    };
+
+    const startLiveServer = async (
+      sandbox: ProviderVerificationSandboxHandle,
+    ) => {
+      const env: Record<string, string | undefined> = {
+        CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
+          active: true,
+          campaignIds: null,
+          roleIds: ["review_operator"],
+          subjectAddress: adminSigner.address,
+        }]),
+        CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
+        CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+        CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: "5000",
+        CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS: "5000",
+        CAMPAIGN_OS_DATABASE_POOL_MAX: "10",
+        CAMPAIGN_OS_DATABASE_SSL_MODE: sslMode,
+        CAMPAIGN_OS_DATABASE_URL: cleanDatabaseUrl,
+        CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON: JSON.stringify(
+          CONTROLLED_TASK_VERIFICATION_BINDINGS,
+        ),
+        CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT: "explicitly-enabled",
+        CAMPAIGN_OS_WALLET_AUTH_ALLOWED_ORIGINS: origin,
+        CAMPAIGN_OS_WALLET_AUTH_ALLOW_INSECURE_LOOPBACK_COOKIE: "1",
+        CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: JSON.stringify([{
+          accountType: "EOA",
+          adapterId,
+          chainIds: ["AELF"],
+          enabled: true,
+          hashStrategyId: "aelf-web-login-discover-v1",
+          network: "testnet",
+          productionApproved: false,
+          proofMethod: "AELF_EOA_RECOVERABLE",
+          signatureEncoding: "AELF_RECOVERABLE_HEX",
+          walletSource: "PORTKEY_EOA_APP",
+        }]),
+        CAMPAIGN_OS_WALLET_AUTH_CSRF_SECRET: csrfSecret,
+        CAMPAIGN_OS_WALLET_AUTH_ENABLED: "1",
+        CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT: "stage",
+        [STAGE_PROVIDER_URL_ENV]: sandbox.verifyUrl,
+      };
+      const taskVerificationConfig = resolveTaskVerificationConfig({
+        bindingsJson: env.CAMPAIGN_OS_TASK_VERIFICATION_BINDINGS_JSON,
+        enablement: env.CAMPAIGN_OS_TASK_VERIFICATION_ENABLEMENT,
+        env,
+        environment: "local",
+        providerHttpTransportProvided: true,
+      });
+      const onChainResolver = createProviderHttpExecutionMaterialResolver({
+        binding: CONTROLLED_ON_CHAIN_BINDING,
+        environment: "local",
+        lookup: { get: (key) => env[key] },
+      });
+      const dappApiResolver = createProviderHttpExecutionMaterialResolver({
+        binding: CONTROLLED_DAPP_API_BINDING,
+        environment: "local",
+        lookup: { get: (key) => env[key] },
+      });
+      const gates = new Set<{ release(): void }>();
+      let queuedGate: {
+        enter(): void;
+        entered: Promise<void>;
+        release(): void;
+        released: Promise<void>;
+      } | undefined;
+      let providerCalls = 0;
+      const deferNextProviderCall = (): ProviderGate => {
+        if (queuedGate) {
+          throw new Error("M244 T051 provider gate is already armed.");
+        }
+        let enter!: () => void;
+        let release!: () => void;
+        const gate = {
+          enter: () => enter(),
+          entered: new Promise<void>((resolve) => { enter = resolve; }),
+          release: () => release(),
+          released: new Promise<void>((resolve) => { release = resolve; }),
+        };
+        queuedGate = gate;
+        gates.add(gate);
+        return { entered: gate.entered, release: gate.release };
+      };
+      const transport = createProviderHttpFetchTransport({
+        drainTimeoutMs: 2_000,
+        fetch: async (input, init) => {
+          providerCalls += 1;
+          const gate = queuedGate;
+          queuedGate = undefined;
+          if (gate) {
+            gate.enter();
+            await gate.released;
+            gates.delete(gate);
+          }
+          return globalThis.fetch(input, init);
+        },
+        materialResolver: (plan, requestMaterial, context) =>
+          (plan.verificationType === "DAPP_API" ? dappApiResolver : onChainResolver)(
+            plan,
+            requestMaterial,
+            context,
+          ),
+      });
+      transports.add(transport);
+      let server: CampaignOsApiServerHandle;
+      try {
+        server = await startCampaignOsApiServer({
+          env,
+          logger: false,
+          port: 0,
+          runtimeFactory: (options) => createCampaignOsApiRuntime({
+            ...options,
+            taskVerificationConfig,
+            taskVerificationProviderRuntime: CONTROLLED_TASK_VERIFICATION_PROVIDER_RUNTIME,
+          }),
+          shutdownTimeoutMs: 10_000,
+          taskVerificationTransport: transport,
+        });
+      } catch (error) {
+        await transport.close();
+        transports.delete(transport);
+        throw error;
+      }
+      servers.add(server);
+      transportByServer.set(server, transport);
+
+      return {
+        deferNextProviderCall,
+        providerCalls: () => providerCalls,
+        releaseProviderCalls: () => {
+          for (const gate of gates) {
+            gate.release();
+          }
+          gates.clear();
+        },
+        server,
+      };
+    };
+
+    const readFacts = async (
+      campaignId: string,
+      walletAddress: string,
+    ): Promise<TargetedFacts> => {
+      const config = resolveCampaignOsCampaignDbConfig({
+        databaseUrl: cleanDatabaseUrl,
+        env: {},
+        mode: "postgres",
+        sslMode,
+      });
+      if (config.mode !== "postgres") {
+        throw new Error("M244 T051 audit config did not resolve PostgreSQL mode.");
+      }
+      const pool = new pg.Pool(config.pool);
+      try {
+        const result = await pool.query<{
+          attempt_rows: string;
+          campaign_rows: string;
+          completion_rows: string;
+          evidence_rows: string;
+          participant_rows: string;
+          task_rows: string;
+          total_points: string;
+        }>(`
+          SELECT
+            (SELECT COUNT(*)::text FROM campaign_os.campaigns WHERE id = $1) AS campaign_rows,
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_tasks WHERE campaign_id = $1) AS task_rows,
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_participants
+              WHERE campaign_id = $1 AND wallet_address = $2) AS participant_rows,
+            (SELECT COALESCE(MAX(total_points), 0)::text FROM campaign_os.campaign_participants
+              WHERE campaign_id = $1 AND wallet_address = $2) AS total_points,
+            (SELECT COUNT(*)::text FROM campaign_os.verification_attempts
+              WHERE campaign_id = $1 AND wallet_address = $2) AS attempt_rows,
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_task_completions
+              WHERE campaign_id = $1 AND wallet_address = $2) AS completion_rows,
+            (SELECT COUNT(*)::text FROM campaign_os.campaign_task_evidence
+              WHERE campaign_id = $1 AND wallet_address = $2) AS evidence_rows
+        `, [campaignId, walletAddress]);
+        const row = result.rows[0];
+        if (!row) {
+          throw new Error("M244 T051 audit query returned no row.");
+        }
+        return {
+          attemptRows: Number(row.attempt_rows),
+          campaignRows: Number(row.campaign_rows),
+          completionRows: Number(row.completion_rows),
+          evidenceRows: Number(row.evidence_rows),
+          participantRows: Number(row.participant_rows),
+          taskRows: Number(row.task_rows),
+          totalPoints: Number(row.total_points),
+        };
+      } finally {
+        await pool.end();
+      }
+    };
+
+    const readAttemptState = async (attemptId: string): Promise<TargetedAttemptState> => {
+      const config = resolveCampaignOsCampaignDbConfig({
+        databaseUrl: cleanDatabaseUrl,
+        env: {},
+        mode: "postgres",
+        sslMode,
+      });
+      if (config.mode !== "postgres") {
+        throw new Error("M244 T051 attempt audit config did not resolve PostgreSQL mode.");
+      }
+      const pool = new pg.Pool(config.pool);
+      try {
+        const result = await pool.query<{
+          campaign_id: string;
+          diagnostic_codes: string[];
+          dispatch_state: string;
+          id: string;
+          status: string;
+          task_id: string;
+          wallet_address: string;
+        }>(`
+          SELECT id, campaign_id, task_id, wallet_address, status, dispatch_state,
+                 diagnostic_codes
+          FROM campaign_os.verification_attempts
+          WHERE id = $1
+        `, [attemptId]);
+        const row = result.rows[0];
+        if (!row) {
+          throw new Error("M244 T051 fenced attempt audit row is unavailable.");
+        }
+        return {
+          campaignId: row.campaign_id,
+          diagnosticCodes: row.diagnostic_codes,
+          dispatchState: row.dispatch_state,
+          id: row.id,
+          status: row.status,
+          taskId: row.task_id,
+          walletAddress: row.wallet_address,
+        };
+      } finally {
+        await pool.end();
+      }
+    };
+
+    const waitForCleanPool = async () => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 10_000) {
+        const result = await adminPool.query<{ count: string }>(
+          "SELECT COUNT(*)::text AS count FROM pg_stat_activity WHERE datname = $1",
+          [cleanDatabaseName],
+        );
+        if (Number(result.rows[0]?.count) === 0) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error("M244 T051 runtime pools did not close within 10 seconds.");
+    };
+
+    await adminPool.query(`CREATE DATABASE "${cleanDatabaseName}"`);
+    try {
+      const config = resolveCampaignOsCampaignDbConfig({
+        databaseUrl: cleanDatabaseUrl,
+        env: {},
+        mode: "postgres",
+        sslMode,
+      });
+      if (config.mode !== "postgres") {
+        throw new Error("M244 T051 migration config did not resolve PostgreSQL mode.");
+      }
+      const pool = new pg.Pool(config.pool);
+      const adapter: PostgresMigrationPool = {
+        connect: async () => {
+          const client = await pool.connect();
+          return {
+            query: async (text, values = []) => {
+              const result = await client.query(text, [...values]);
+              return { rows: result.rows as Array<Record<string, unknown>> };
+            },
+            release: () => client.release(),
+          };
+        },
+        end: async () => pool.end(),
+      };
+      try {
+        const migration = await runPostgresMigrations({
+          approved: true,
+          migrations: await loadPostgresMigrations(),
+          mode: "apply",
+          pool: adapter,
+          traceId: "m244-t051-clean-start-migration",
+        });
+        expect(migration).toMatchObject({
+          appliedMigrationIds: [
+            "0001_campaign_runtime",
+            "0002_admin_review_export",
+            "0003_admin_review_rank_projection",
+            "0004_live_provider_task_verification",
+            "0005_participant_wallet_authentication",
+          ],
+          pendingMigrationIds: [],
+          status: "ready",
+        });
+      } finally {
+        await pool.end();
+      }
+
+      sandboxA = await startProviderVerificationSandbox({ host: "127.0.0.1", port: 0 });
+      const providerPort = sandboxA.port;
+      runtimeA = await startLiveServer(sandboxA);
+      const owner = await issueLiveSession(
+        runtimeA.server,
+        ownerSigner,
+        "trace-m244-owner",
+        participantRoles,
+        participantCapabilities,
+      );
+      const participantA = await issueLiveSession(
+        runtimeA.server,
+        participantASigner,
+        "trace-m244-participant-a",
+        participantRoles,
+        participantCapabilities,
+      );
+      const participantB = await issueLiveSession(
+        runtimeA.server,
+        participantBSigner,
+        "trace-m244-participant-b",
+        participantRoles,
+        participantCapabilities,
+      );
+      const admin = await issueLiveSession(
+        runtimeA.server,
+        adminSigner,
+        "trace-m244-admin",
+        adminRoles,
+        adminCapabilities,
+      );
+      expect((await authRequest<LiveWalletAuthenticationSessionData>(
+        runtimeA.server,
+        "/api/wallet/auth/session",
+        { headers: currentSessionHeaders(participantA, "trace-m244-a-current"), method: "GET" },
+      )).status).toBe(200);
+
+      const created = await requestJson<CampaignCreateData>(runtimeA.server, "/api/campaigns", {
+        body: JSON.stringify({
+          contractMode: "OFF_CHAIN_MVP",
+          defaultLocale: "en-US",
+          duration: "2026-08-01/2026-08-14",
+          endTime: "2026-08-14T23:59:59Z",
+          goal: "M244 targeted durable authentication acceptance",
+          ownerAddress: owner.address,
+          projectId,
+          rewardDescription: "M244 targeted acceptance rewards.",
+          startTime: "2026-08-01T00:00:00Z",
+          status: "live",
+          supportedLocales: ["en-US"],
+          walletPolicy: "ANY",
+        }),
+        headers: sessionHeaders(owner, "trace-m244-campaign-create"),
+        method: "POST",
+      });
+      const campaignId = created.payload.id;
+      const createTask = (templateCode: string, points: number, required: boolean) =>
+        requestJson<TaskCreateData>(runtimeA!.server, `/api/campaigns/${campaignId}/tasks`, {
+          body: JSON.stringify({
+            evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1 }),
+            points,
+            required,
+            templateCode,
+            verificationType: "ON_CHAIN",
+            walletCompatibility: "ANY",
+          }),
+          headers: sessionHeaders(owner, `trace-m244-task-${templateCode}`),
+          method: "POST",
+        });
+      const canonicalTask = await createTask("m244_canonical", 120, true);
+      const rotateFenceTask = await createTask("m244_rotate_fence", 70, false);
+      const revokeFenceTask = await createTask("m244_revoke_fence", 80, false);
+      const anonymousCampaigns = await requestJson<CampaignListData>(runtimeA.server, "/api/campaigns");
+      const participantACampaigns = await requestJson<CampaignListData>(
+        runtimeA.server,
+        "/api/participant/campaigns",
+        { headers: sessionHeaders(participantA, "trace-m244-a-campaigns") },
+      );
+      expect(anonymousCampaigns.payload.items).toContainEqual(expect.objectContaining({
+        id: campaignId,
+        status: "live",
+      }));
+      expect(participantACampaigns.payload.items).toContainEqual(expect.objectContaining({
+        id: campaignId,
+        visibility: "public",
+      }));
+
+      const beforeForgery = await readFacts(campaignId, participantA.address);
+      const providerBeforeForgery = runtimeA.providerCalls();
+      const forgedRequests = await Promise.all([
+        requestApi(runtimeA.server, `/api/tasks/${canonicalTask.payload.id}/verify`, {
+          body: JSON.stringify({ campaignId }),
+          headers: sessionHeaders(participantA, "trace-m244-forged-headers", {
+            "x-campaign-os-chain-id": "tDVV",
+            "x-campaign-os-network": "mainnet",
+            "x-campaign-os-roles": "review_operator",
+            "x-campaign-os-wallet-address": participantB.address,
+          }),
+          method: "POST",
+        }),
+        requestApi(runtimeA.server, `/api/tasks/${canonicalTask.payload.id}/verify`, {
+          body: JSON.stringify({
+            campaignId,
+            chainId: "tDVV",
+            network: "mainnet",
+            walletAddress: participantB.address,
+          }),
+          headers: sessionHeaders(participantA, "trace-m244-forged-body"),
+          method: "POST",
+        }),
+        requestApi(runtimeA.server, `/api/tasks/${canonicalTask.payload.id}/verify`, {
+          body: JSON.stringify({ campaignId: `campaign-${randomUUID()}` }),
+          headers: sessionHeaders(participantA, "trace-m244-cross-campaign"),
+          method: "POST",
+        }),
+        requestApi(runtimeA.server, `/api/campaigns/${campaignId}/tasks`, {
+          body: JSON.stringify({
+            evidenceRule: controlledOnChainEvidenceRule({ minAmount: 1 }),
+            points: 10,
+            required: false,
+            templateCode: "m244_cross_owner",
+            verificationType: "ON_CHAIN",
+            walletCompatibility: "ANY",
+          }),
+          headers: sessionHeaders(participantA, "trace-m244-cross-owner"),
+          method: "POST",
+        }),
+      ]);
+      expect(forgedRequests.every(({ status }) => [400, 401, 403, 404].includes(status))).toBe(true);
+      expect(forgedRequests.every(({ envelope }) => !envelope.ok && !envelope.data)).toBe(true);
+      expect(runtimeA.providerCalls()).toBe(providerBeforeForgery);
+      expect(await readFacts(campaignId, participantA.address)).toEqual(beforeForgery);
+
+      const verified = await requestJson<VerificationData>(
+        runtimeA.server,
+        `/api/tasks/${canonicalTask.payload.id}/verify`,
+        {
+          body: JSON.stringify({ campaignId }),
+          headers: sessionHeaders(participantA, "trace-m244-a-exact-verify"),
+          method: "POST",
+        },
+      );
+      expect(verified.payload).toMatchObject({
+        campaignId,
+        pointsAwarded: canonicalTask.payload.points,
+        status: "completed",
+        taskId: canonicalTask.payload.id,
+        walletAddress: participantA.address,
+      });
+      const participantAJourney = await requestJson<ParticipantJourneyData>(
+        runtimeA.server,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: sessionHeaders(participantA, "trace-m244-a-journey") },
+      );
+      expect(participantAJourney.payload).toMatchObject({
+        participant: { totalPoints: 120, walletAddress: participantA.address },
+        ranking: { rank: 1, totalPoints: 120, walletAddress: participantA.address },
+        visibility: "public",
+      });
+      expect(participantAJourney.payload.tasks.find(
+        ({ taskId }) => taskId === canonicalTask.payload.id,
+      )).toMatchObject({
+        completionId: verified.campaignDbCompletion.completionId,
+        evidenceId: verified.campaignDbEvidence.evidenceId,
+        pointsAwarded: 120,
+        status: "completed",
+        verificationAttemptId: verified.payload.verificationAttemptId,
+      });
+
+      const participantBCampaigns = await requestJson<CampaignListData>(
+        runtimeA.server,
+        "/api/participant/campaigns",
+        { headers: sessionHeaders(participantB, "trace-m244-b-campaigns") },
+      );
+      const participantBJourney = await requestJson<ParticipantJourneyData>(
+        runtimeA.server,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: sessionHeaders(participantB, "trace-m244-b-journey") },
+      );
+      expect(participantBCampaigns.payload.items).toContainEqual(expect.objectContaining({
+        id: campaignId,
+        visibility: "public",
+      }));
+      expect(participantBJourney.payload).toMatchObject({
+        participant: { totalPoints: 0, walletAddress: participantB.address },
+        ranking: { rank: null, totalPoints: 0, walletAddress: participantB.address },
+      });
+      expect(JSON.stringify(participantBJourney.payload)).not.toContain(
+        verified.campaignDbCompletion.completionId,
+      );
+      expect(JSON.stringify(participantBJourney.payload)).not.toContain(
+        verified.campaignDbEvidence.evidenceId,
+      );
+
+      const adminQueue = (await requestAdminJson<AdminQueueData>(
+        runtimeA.server,
+        `/api/admin/campaigns/${campaignId}/reviews`,
+        { headers: sessionHeaders(admin, "trace-m244-admin-queue") },
+      )).data;
+      const adminParticipantA = adminQueue.items.find(
+        ({ walletAddress }) => walletAddress === participantA.address,
+      );
+      expect(adminParticipantA).toMatchObject({ rank: 1, totalPoints: 120 });
+      if (!adminParticipantA) {
+        throw new Error("M244 T051 Admin participant projection is unavailable.");
+      }
+      const adminDetail = (await requestAdminJson<AdminReviewDetailData>(
+        runtimeA.server,
+        `/api/admin/campaigns/${campaignId}/reviews/${adminParticipantA.participantId}`,
+        { headers: sessionHeaders(admin, "trace-m244-admin-detail") },
+      )).data;
+      expect(adminDetail.snapshot).toMatchObject({
+        completions: [expect.objectContaining({ id: verified.campaignDbCompletion.completionId })],
+        evidence: [expect.objectContaining({ id: verified.campaignDbEvidence.evidenceId })],
+        participantId: adminParticipantA.participantId,
+      });
+      const participantBPrivateRead = await requestApi(
+        runtimeA.server,
+        `/api/admin/campaigns/${campaignId}/reviews/${adminParticipantA.participantId}`,
+        { headers: sessionHeaders(participantB, "trace-m244-b-private-a"), method: "GET" },
+      );
+      expect(participantBPrivateRead.status).toBe(403);
+      expect(participantBPrivateRead.envelope.data).toBeUndefined();
+
+      const beforeFences = await readFacts(campaignId, participantA.address);
+      const rotateGate = runtimeA.deferNextProviderCall();
+      const rotateFencedVerify = requestApi<AttemptOnlyVerificationData>(
+        runtimeA.server,
+        `/api/tasks/${rotateFenceTask.payload.id}/verify`,
+        {
+          body: JSON.stringify({ campaignId }),
+          headers: sessionHeaders(participantA, "trace-m244-rotate-fenced-verify"),
+          method: "POST",
+        },
+      );
+      await rotateGate.entered;
+      const rotated = await authRequest<LiveWalletAuthenticationSessionData>(
+        runtimeA.server,
+        "/api/wallet/auth/session/rotate",
+        { headers: sessionMutationHeaders(participantA, "trace-m244-rotate"), method: "POST" },
+      );
+      expect(rotated.status).toBe(200);
+      const rotatedCookie = rotated.setCookie?.split(";", 1)[0];
+      if (!rotatedCookie || !rotated.envelope.data) {
+        throw new Error("M244 T051 rotated cookie is unavailable.");
+      }
+      participantA.cookie = rotatedCookie;
+      participantA.csrfToken = rotated.envelope.data.csrfToken;
+      expect(rotated.envelope.data.session.sessionId).toBe(participantA.sessionId);
+      rotateGate.release();
+      const rotateFenced = await rotateFencedVerify;
+      expect(rotateFenced.status).toBe(200);
+      const rotateFencedPayload = rotateFenced.envelope.data?.payload;
+      expect(rotateFencedPayload).toMatchObject({
+        campaignId,
+        pointsAwarded: 0,
+        status: "manual_review",
+        taskId: rotateFenceTask.payload.id,
+        walletAddress: participantA.address,
+      });
+      expect(rotateFencedPayload?.diagnosticCodes).toEqual([
+        "TASK_VERIFICATION_FINALIZE_STALE",
+      ]);
+      expect(JSON.stringify(rotateFenced.envelope)).not.toContain("campaignDbCompletion");
+      expect(JSON.stringify(rotateFenced.envelope)).not.toContain("campaignDbEvidence");
+      const afterRotateFence = await readFacts(campaignId, participantA.address);
+      expect(afterRotateFence).toMatchObject({
+        completionRows: beforeFences.completionRows,
+        evidenceRows: beforeFences.evidenceRows,
+        totalPoints: beforeFences.totalPoints,
+      });
+      expect(afterRotateFence.attemptRows).toBe(beforeFences.attemptRows + 1);
+
+      const revokeGate = runtimeA.deferNextProviderCall();
+      const revokeFencedVerify = requestApi<AttemptOnlyVerificationData>(
+        runtimeA.server,
+        `/api/tasks/${revokeFenceTask.payload.id}/verify`,
+        {
+          body: JSON.stringify({ campaignId }),
+          headers: sessionHeaders(participantA, "trace-m244-revoke-fenced-verify"),
+          method: "POST",
+        },
+      );
+      await revokeGate.entered;
+      const revoked = await authRequest<Record<string, unknown>>(
+        runtimeA.server,
+        `/api/admin/wallet-sessions/${encodeURIComponent(participantA.sessionId)}/revoke`,
+        {
+          body: JSON.stringify({ reasonCode: "ADMIN_REVOKED" }),
+          headers: sessionHeaders(admin, "trace-m244-admin-revoke"),
+          method: "POST",
+        },
+      );
+      expect(revoked.status).toBe(200);
+      expect(revoked.envelope.ok).toBe(true);
+      revokeGate.release();
+      const revokeFenced = await revokeFencedVerify;
+      expect(revokeFenced.status).toBe(200);
+      const revokeFencedPayload = revokeFenced.envelope.data?.payload;
+      expect(revokeFencedPayload).toMatchObject({
+        campaignId,
+        pointsAwarded: 0,
+        status: "manual_review",
+        taskId: revokeFenceTask.payload.id,
+        walletAddress: participantA.address,
+      });
+      expect(revokeFencedPayload?.diagnosticCodes).toEqual([
+        "TASK_VERIFICATION_FINALIZE_STALE",
+      ]);
+      const afterRevokeFence = await readFacts(campaignId, participantA.address);
+      expect(afterRevokeFence).toMatchObject({
+        completionRows: beforeFences.completionRows,
+        evidenceRows: beforeFences.evidenceRows,
+        totalPoints: beforeFences.totalPoints,
+      });
+      expect(afterRevokeFence.attemptRows).toBe(beforeFences.attemptRows + 2);
+      if (!rotateFencedPayload || !revokeFencedPayload) {
+        throw new Error("M244 T051 fenced attempt projection is unavailable.");
+      }
+      expect(revokeFencedPayload.verificationAttemptId).not.toBe(
+        rotateFencedPayload.verificationAttemptId,
+      );
+      for (const [payload, taskId] of [
+        [rotateFencedPayload, rotateFenceTask.payload.id],
+        [revokeFencedPayload, revokeFenceTask.payload.id],
+      ] as const) {
+        await expect(readAttemptState(payload.verificationAttemptId)).resolves.toEqual({
+          campaignId,
+          diagnosticCodes: [],
+          dispatchState: "started",
+          id: payload.verificationAttemptId,
+          status: "running",
+          taskId,
+          walletAddress: participantA.address,
+        });
+      }
+
+      await stopServer(runtimeA.server);
+      runtimeA = undefined;
+      await sandboxA.close();
+      sandboxA = undefined;
+      await waitForCleanPool();
+      sandboxB = await startProviderVerificationSandbox({
+        host: "127.0.0.1",
+        port: providerPort,
+      });
+      runtimeB = await startLiveServer(sandboxB);
+      const restore = async (session: LiveSession, traceId: string) => {
+        const current = await authRequest<LiveWalletAuthenticationSessionData>(
+          runtimeB!.server,
+          "/api/wallet/auth/session",
+          { headers: currentSessionHeaders(session, traceId), method: "GET" },
+        );
+        if (current.envelope.data) {
+          session.csrfToken = current.envelope.data.csrfToken;
+        }
+        return current;
+      };
+      for (const [session, traceId, expectedRoles, expectedCapabilities] of [
+        [owner, "trace-m244-owner-restored", participantRoles, participantCapabilities],
+        [participantB, "trace-m244-b-restored", participantRoles, participantCapabilities],
+        [admin, "trace-m244-admin-restored", adminRoles, adminCapabilities],
+      ] as const) {
+        const current = await restore(session, traceId);
+        expect(current.status).toBe(200);
+        expect(current.envelope.data?.session).toMatchObject({
+          accountType: "EOA",
+          chainId: "AELF",
+          network: "testnet",
+          sessionId: session.sessionId,
+          walletAddress: session.address,
+          walletSource: "PORTKEY_EOA_APP",
+        });
+        expect(current.envelope.data?.session.roles).toEqual([...expectedRoles]);
+        expect(current.envelope.data?.session.capabilities).toEqual([...expectedCapabilities]);
+      }
+      const revokedAfterRestart = await restore(participantA, "trace-m244-a-revoked-restart");
+      expect(revokedAfterRestart.status).toBe(401);
+      expect(revokedAfterRestart.envelope.data).toBeUndefined();
+      const restoredAdminQueue = (await requestAdminJson<AdminQueueData>(
+        runtimeB.server,
+        `/api/admin/campaigns/${campaignId}/reviews`,
+        { headers: sessionHeaders(admin, "trace-m244-admin-restored-queue") },
+      )).data;
+      expect(restoredAdminQueue.items.find(
+        ({ participantId }) => participantId === adminParticipantA.participantId,
+      )).toMatchObject({ rank: 1, totalPoints: 120 });
+      const restoredOwnerDetail = await requestJson<DetailData>(
+        runtimeB.server,
+        `/api/owner/campaigns/${campaignId}`,
+        { headers: sessionHeaders(owner, "trace-m244-owner-restored-detail") },
+      );
+      expect(restoredOwnerDetail.payload.item).toMatchObject({ id: campaignId });
+      expect(restoredOwnerDetail.payload.tasks).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          points: canonicalTask.payload.points,
+          taskId: canonicalTask.payload.id,
+        }),
+      ]));
+      const restoredParticipantBJourney = await requestJson<ParticipantJourneyData>(
+        runtimeB.server,
+        `/api/participant/campaigns/${campaignId}/journey`,
+        { headers: sessionHeaders(participantB, "trace-m244-b-restored-journey") },
+      );
+      expect(restoredParticipantBJourney.payload).toMatchObject({
+        participant: { totalPoints: 0, walletAddress: participantB.address },
+        ranking: { rank: null, totalPoints: 0, walletAddress: participantB.address },
+      });
+      expect(JSON.stringify(restoredParticipantBJourney.payload)).not.toContain(
+        verified.campaignDbCompletion.completionId,
+      );
+      expect(JSON.stringify(restoredParticipantBJourney.payload)).not.toContain(
+        verified.campaignDbEvidence.evidenceId,
+      );
+
+      const factsBeforeLogout = await readFacts(campaignId, participantA.address);
+      const participantBOldCookie = participantB.cookie;
+      const logout = await authRequest<Record<string, boolean>>(
+        runtimeB.server,
+        "/api/wallet/auth/logout",
+        { headers: sessionMutationHeaders(participantB, "trace-m244-b-logout"), method: "POST" },
+      );
+      expect(logout.status).toBe(200);
+      expect(logout.envelope.data).toEqual({ revoked: true });
+      const terminalB = { ...participantB, cookie: participantBOldCookie };
+      expect((await restore(terminalB, "trace-m244-b-terminal-1")).status).toBe(401);
+      expect((await restore(terminalB, "trace-m244-b-terminal-2")).status).toBe(401);
+      expect(await readFacts(campaignId, participantA.address)).toEqual(factsBeforeLogout);
+
+      await stopServer(runtimeB.server);
+      runtimeB = undefined;
+      await sandboxB.close();
+      sandboxB = undefined;
+      await waitForCleanPool();
+      expect(await readFacts(campaignId, participantA.address)).toEqual(factsBeforeLogout);
+      const terminalConfig = resolveCampaignOsCampaignDbConfig({
+        databaseUrl: cleanDatabaseUrl,
+        env: {},
+        mode: "postgres",
+        sslMode,
+      });
+      if (terminalConfig.mode !== "postgres") {
+        throw new Error("M244 T051 terminal audit config is unavailable.");
+      }
+      const terminalPool = new pg.Pool(terminalConfig.pool);
+      try {
+        const terminalRows = await terminalPool.query<{
+          id: string;
+          revocation_code: string | null;
+          status: string;
+        }>(`
+          SELECT id, status, revocation_code
+          FROM campaign_os.wallet_sessions
+          WHERE id = ANY($1::text[])
+          ORDER BY id
+        `, [[participantA.sessionId, participantB.sessionId]]);
+        expect(terminalRows.rows).toEqual(expect.arrayContaining([
+          {
+            id: participantA.sessionId,
+            revocation_code: "ADMIN_REVOKED",
+            status: "revoked",
+          },
+          {
+            id: participantB.sessionId,
+            revocation_code: "PARTICIPANT_LOGOUT",
+            status: "revoked",
+          },
+        ]));
+      } finally {
+        await terminalPool.end();
+      }
+    } finally {
+      runtimeA?.releaseProviderCalls();
+      runtimeB?.releaseProviderCalls();
+      if (runtimeA && servers.has(runtimeA.server)) {
+        await stopServer(runtimeA.server).catch(() => undefined);
+      }
+      if (runtimeB && servers.has(runtimeB.server)) {
+        await stopServer(runtimeB.server).catch(() => undefined);
+      }
+      await sandboxA?.close().catch(() => undefined);
+      await sandboxB?.close().catch(() => undefined);
+      await adminPool.query(`DROP DATABASE IF EXISTS "${cleanDatabaseName}" WITH (FORCE)`);
+    }
+  }, 120_000);
 
   it("preserves every M242 business row while applying migration 0004", async () => {
     const compatibilityDatabaseName = `${databaseName}_m242`;
@@ -1929,10 +3195,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const bodyWalletSubstitution = await expectNegativeCaseNoParticipantJourneyWrite(
       "body wallet substitution",
       {
-        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-        field: "walletAddress",
-        outerCode: "AUTH_SUBJECT_MISMATCH",
-        status: 403,
+        diagnosticCode: "INVALID_REQUEST",
+        field: "body",
+        outerCode: "INVALID_REQUEST",
+        status: 400,
         traceId: "trace-pg-participant-body-substitution",
       },
       () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
@@ -1944,10 +3210,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const queryWalletSubstitution = await expectNegativeCaseNoParticipantJourneyWrite(
       "query wallet substitution",
       {
-        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-        field: "walletAddress",
-        outerCode: "AUTH_SUBJECT_MISMATCH",
-        status: 403,
+        diagnosticCode: "INVALID_REQUEST",
+        field: "query",
+        outerCode: "INVALID_REQUEST",
+        status: 400,
         traceId: "trace-pg-participant-query-substitution",
       },
       () => requestApi(
@@ -1963,10 +3229,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const caseVariantSubstitution = await expectNegativeCaseNoParticipantJourneyWrite(
       "case-variant wallet substitution",
       {
-        diagnosticCode: "AUTH_SUBJECT_MISMATCH",
-        field: "walletAddress",
-        outerCode: "AUTH_SUBJECT_MISMATCH",
-        status: 403,
+        diagnosticCode: "INVALID_REQUEST",
+        field: "body",
+        outerCode: "INVALID_REQUEST",
+        status: 400,
         traceId: "trace-pg-participant-case-variant",
       },
       () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
@@ -1978,8 +3244,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const missingParticipantSession = await expectNegativeCaseNoParticipantJourneyWrite(
       "missing Participant session",
       {
-        diagnosticCode: "AUTH_SESSION_REQUIRED",
-        field: "x-campaign-os-session-id",
+        field: "cookie",
         outerCode: "AUTH_SESSION_REQUIRED",
         status: 401,
         traceId: "trace-pg-participant-missing-session",
@@ -1988,6 +3253,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         body: JSON.stringify({ campaignId }),
         headers: {
           "content-type": "application/json",
+          origin: testScopedAuthOrigin,
+          "x-campaign-os-csrf": randomBytes(32).toString("base64url"),
           "x-campaign-os-trace-id": "trace-pg-participant-missing-session",
         },
         method: "POST",
@@ -1996,8 +3263,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const unknownParticipantSession = await expectNegativeCaseNoParticipantJourneyWrite(
       "unknown Participant session",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-session-id",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-participant-unknown-session",
@@ -2005,25 +3272,23 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
         body: JSON.stringify({ campaignId }),
         headers: participantSessionA1.headers("trace-pg-participant-unknown-session", {
-          "x-campaign-os-session-id": "unissued-participant-session",
+          cookie: `campaign_os_wallet_session=${randomBytes(32).toString("base64url")}`,
         }),
         method: "POST",
       }),
     );
     const internalParticipantCredential = await expectNegativeCaseNoParticipantJourneyWrite(
-      "internal Participant credential",
+      "non-live internal Participant credential",
       {
-        diagnosticCode: "AUTH_FORBIDDEN",
-        field: "authSession.credentialBoundary",
-        outerCode: "AUTH_FORBIDDEN",
-        status: 403,
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
+        outerCode: "AUTH_SESSION_INVALID",
+        status: 401,
         traceId: "trace-pg-participant-internal-credential",
       },
       () => requestApi(firstServer, `/api/tasks/${taskId}/verify`, {
         body: JSON.stringify({ campaignId }),
-        headers: internalAgentSession.headers("trace-pg-participant-internal-credential", {
-          "x-campaign-os-credential-boundary": "internal_agent_credential",
-        }),
+        headers: internalAgentSession.headers("trace-pg-participant-internal-credential"),
         method: "POST",
       }),
     );
@@ -2049,10 +3314,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const crossCampaignTask = await expectNegativeCaseNoParticipantJourneyWrite(
       "cross-Campaign Task",
       {
-        diagnosticCode: "INVALID_TASK",
-        field: "taskId",
-        outerCode: "INVALID_TASK",
-        status: 404,
+        diagnosticCode: "LIVE_AUTH_SCOPE_FORBIDDEN",
+        field: "authorization",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
         traceId: "trace-pg-participant-cross-campaign",
       },
       () => requestApi(
@@ -3192,8 +4457,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const oldParticipantAAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
       "Runtime B rejects stale Participant A1",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-session-id",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-old-participant-a-after-restart",
@@ -3207,8 +4472,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const oldParticipantBAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
       "Runtime B rejects stale Participant B1",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-session-id",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-old-participant-b-after-restart",
@@ -3222,8 +4487,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const oldSessionAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
       "Runtime B rejects stale Owner session",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-session-id",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-old-session-after-restart",
@@ -3237,8 +4502,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const oldAdminAfterRestart = await expectNegativeCaseNoParticipantJourneyWrite(
       "Runtime B rejects stale Admin A1",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-session-id",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-old-admin-after-restart",
@@ -3873,8 +5138,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const otherWalletAdd = await expectNegativeCaseNoParticipantJourneyWrite(
       "non-owner Task mutation",
       {
-        diagnosticCode: "AUTH_OWNER_MISMATCH",
-        field: "ownerAddress",
+        diagnosticCode: "LIVE_AUTH_OWNERSHIP_FORBIDDEN",
+        field: "authorization",
         outerCode: "AUTH_FORBIDDEN",
         status: 403,
         traceId: "trace-pg-other-wallet-add",
@@ -3899,8 +5164,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const otherWalletGenerate = await expectNegativeCaseNoParticipantJourneyWrite(
       "non-owner Task generation",
       {
-        diagnosticCode: "AUTH_OWNER_MISMATCH",
-        field: "ownerAddress",
+        diagnosticCode: "LIVE_AUTH_OWNERSHIP_FORBIDDEN",
+        field: "authorization",
         outerCode: "AUTH_FORBIDDEN",
         status: 403,
         traceId: "trace-pg-other-wallet-generate",
@@ -3923,8 +5188,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const unknownSession = await expectNegativeCaseNoParticipantJourneyWrite(
       "unknown Owner session",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-session-id",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-unknown-session",
@@ -3934,7 +5199,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
         "/api/projects/postgres-restart-project/campaigns?status=draft&limit=100",
         {
           headers: sessionB.headers("trace-pg-unknown-session", {
-            "x-campaign-os-session-id": "unissued-wp05-session",
+            cookie: `campaign_os_wallet_session=${randomBytes(32).toString("base64url")}`,
           }),
         },
       ),
@@ -3942,10 +5207,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const mismatchedSession = await expectNegativeCaseNoParticipantJourneyWrite(
       "mismatched Owner wallet header",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "x-campaign-os-wallet-address",
-        outerCode: "AUTH_SESSION_INVALID",
-        status: 401,
+        diagnosticCode: "LIVE_AUTH_CALLER_AUTHORITY_FORBIDDEN",
+        field: "authorization",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
         traceId: "trace-pg-mismatched-session",
       },
       () => requestApi(
@@ -3973,8 +5238,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const invalidIssuer = await expectNegativeCaseNoParticipantJourneyWrite(
       "invalid Owner session issuer",
       {
-        diagnosticCode: "AUTH_SESSION_INVALID",
-        field: "authSession.issuer",
+        diagnosticCode: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED",
+        field: "cookie",
         outerCode: "AUTH_SESSION_INVALID",
         status: 401,
         traceId: "trace-pg-invalid-issuer",
@@ -3988,8 +5253,8 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const forbiddenRole = await expectNegativeCaseNoParticipantJourneyWrite(
       "forbidden Owner route role",
       {
-        diagnosticCode: "AUTH_ROLE_FORBIDDEN",
-        field: "authSession.roleIds",
+        diagnosticCode: "LIVE_AUTH_CALLER_AUTHORITY_FORBIDDEN",
+        field: "authorization",
         outerCode: "AUTH_FORBIDDEN",
         status: 403,
         traceId: "trace-pg-forbidden-role",
@@ -4007,10 +5272,10 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const missingCampaign = await expectNegativeCaseNoParticipantJourneyWrite(
       "missing Campaign",
       {
-        diagnosticCode: "INVALID_CAMPAIGN",
-        field: "campaignId",
-        outerCode: "INVALID_CAMPAIGN",
-        status: 404,
+        diagnosticCode: "LIVE_AUTH_OWNERSHIP_FORBIDDEN",
+        field: "authorization",
+        outerCode: "AUTH_FORBIDDEN",
+        status: 403,
         traceId: "trace-pg-missing-campaign",
       },
       () => requestApi(

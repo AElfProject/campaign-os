@@ -142,11 +142,43 @@ Stage mode exposes only allowlisted safe fixtures and isolates legacy seeded Pro
 the normal UI; clearing the Participant preview environment value restores draft deny-all immediately. Rollback must not delete persisted
 Campaigns, Completions, Decisions, or Artifacts.
 
+## Wallet Authentication Stage
+
+Wallet Authentication Stage 是 default-disabled 的 disposable local acceptance launcher，只绑定 exact loopback API，并始终报告
+`productionReady=false`。启动前需要配置以下 env key names；Public 文档不提供 operator values：
+
+Wallet Authentication Stage is a default-disabled disposable local acceptance launcher. It binds only the exact loopback API and always reports
+`productionReady=false`. Configure the following env key names before startup; operator values are intentionally omitted from Public docs:
+
+- `CAMPAIGN_OS_API_HOST`
+- `CAMPAIGN_OS_API_PORT`
+- `CAMPAIGN_OS_CAMPAIGN_DB_MODE`
+- `CAMPAIGN_OS_DATABASE_URL`
+- `CAMPAIGN_OS_DATABASE_SSL_MODE`
+- `CAMPAIGN_OS_STAGE_DISPOSABLE_DATABASE_ACK`
+- `CAMPAIGN_OS_WALLET_AUTH_ENABLED`
+- `CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT`
+- `CAMPAIGN_OS_WALLET_AUTH_ALLOWED_ORIGINS`
+- `CAMPAIGN_OS_WALLET_AUTH_COOKIE_SECURE`
+- `CAMPAIGN_OS_WALLET_AUTH_COOKIE_SAME_SITE`
+- `CAMPAIGN_OS_WALLET_AUTH_COOKIE_PATH`
+- `CAMPAIGN_OS_WALLET_AUTH_ALLOW_INSECURE_LOOPBACK_COOKIE`
+- `CAMPAIGN_OS_WALLET_AUTH_CSRF_SECRET`
+- `CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON`
+- `CAMPAIGN_OS_PORTKEY_CA_RELATION_PROVIDERS_JSON`
+- CA provider binding 引用的 endpoint env key / endpoint env keys referenced by CA provider bindings
+
+使用 `npm run server:wallet-auth-stage` 启动。发送 `SIGINT` 或 `SIGTERM` 停止；launcher 会通过 API server ownership 有界关闭
+listener、authentication runtime、provider 与 PostgreSQL resources。launcher 只执行 read-only migration validate，不执行 apply。
+
+Start with `npm run server:wallet-auth-stage`. Stop with `SIGINT` or `SIGTERM`; bounded shutdown follows API server ownership for the listener,
+authentication runtime, providers, and PostgreSQL resources. The launcher performs read-only migration validation and never applies migrations.
+
 ## Migrations
 
-Migration runner 按顺序加载 `0001_campaign_runtime`、additive `0002_admin_review_export`、additive `0003_admin_review_rank_projection` 和 additive `0004_live_provider_task_verification`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。
+Migration runner 按顺序加载 `0001_campaign_runtime`、additive `0002_admin_review_export`、additive `0003_admin_review_rank_projection`、additive `0004_live_provider_task_verification` 和 additive `0005_participant_wallet_authentication`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。
 
-The migration runner loads `0001_campaign_runtime`, additive `0002_admin_review_export`, additive `0003_admin_review_rank_projection`, and additive `0004_live_provider_task_verification` in order. Run read-only plan/validate first; `apply` requires a separate explicit approval flag. API server startup never runs migrations automatically.
+The migration runner loads `0001_campaign_runtime`, additive `0002_admin_review_export`, additive `0003_admin_review_rank_projection`, additive `0004_live_provider_task_verification`, and additive `0005_participant_wallet_authentication` in order. Run read-only plan/validate first; `apply` requires a separate explicit approval flag. API server startup never runs migrations automatically.
 
 ```bash
 npm run server:migrate -- --plan
@@ -178,9 +210,9 @@ npm run build
 
 `CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` prevents a missing URL, skipped suite, or zero executed tests from being reported as success. Adding `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` requires real loopback TCP/HTTP dispatch through the fetch transport and fails when the PostgreSQL gate or URL is absent. `server:smoke` verifies that default-disabled provider/Admin paths fail closed; the required integration suite verifies the enabled PostgreSQL workflows.
 
-Integration 验收覆盖真实 `0001`/`0002`/`0003`/`0004` migrations、Owner create、Participant A/B verify、Admin decision/winner、exact CSV/JSON artifact、并发幂等、跨 Campaign 隔离、完整 restart、旧 session 失效、fresh session 恢复、active provider finalize-before-pool-close、Pool shutdown 和性能边界。
+Integration 验收覆盖真实 `0001`/`0002`/`0003`/`0004`/`0005` migrations、Owner create、Participant A/B verify、Admin decision/winner、exact CSV/JSON artifact、并发幂等、跨 Campaign 隔离、完整 restart、active wallet session 持久恢复、rotated/revoked/logout credential 持续失效、active provider finalize-before-pool-close、Pool shutdown 和性能边界。
 
-Integration acceptance covers real `0001`/`0002`/`0003`/`0004` migrations, Owner creation, Participant A/B verification, Admin decisions and winners, exact CSV/JSON artifacts, concurrent idempotency, cross-Campaign isolation, full restart, old-session invalidation, fresh-session recovery, active-provider finalization before pool close, pool shutdown, and performance bounds.
+Integration acceptance covers real `0001`/`0002`/`0003`/`0004`/`0005` migrations, Owner creation, Participant A/B verification, Admin decisions and winners, exact CSV/JSON artifacts, concurrent idempotency, cross-Campaign isolation, full restart, durable active-wallet-session recovery, continued invalidation of rotated, revoked, or logged-out credentials, active-provider finalization before pool close, pool shutdown, and performance bounds.
 
 ## Rollback
 
