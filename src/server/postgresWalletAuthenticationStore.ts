@@ -1318,7 +1318,8 @@ export const createPostgresWalletAuthenticationStore = ({
       const rows = await queryWith(
         client,
         "revokeSession",
-        `SELECT id, status FROM campaign_os.wallet_sessions WHERE ${field} = $1 FOR UPDATE`,
+        `SELECT id, status, idle_expires_at, absolute_expires_at
+         FROM campaign_os.wallet_sessions WHERE ${field} = $1 FOR UPDATE`,
         [value],
         traceId,
       );
@@ -1327,6 +1328,29 @@ export const createPostgresWalletAuthenticationStore = ({
         return Object.freeze({ status: "already_terminal" as const });
       }
       if (readString(row, "status") !== "active") {
+        return Object.freeze({ status: "already_terminal" as const });
+      }
+      if (
+        Date.parse(readInstant(row, "idle_expires_at")) <= now.getTime()
+        || Date.parse(readInstant(row, "absolute_expires_at")) <= now.getTime()
+      ) {
+        await queryWith(
+          client,
+          "revokeSession",
+          `
+            UPDATE campaign_os.wallet_sessions
+            SET
+              status = 'expired',
+              version = version + 1,
+              revoked_at = $2,
+              revocation_code = 'SESSION_EXPIRED',
+              last_trace_id = $3,
+              updated_at = $2
+            WHERE id = $1 AND status = 'active'
+          `,
+          [readString(row, "id"), now.toISOString(), traceId],
+          traceId,
+        );
         return Object.freeze({ status: "already_terminal" as const });
       }
       await queryWith(

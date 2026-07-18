@@ -369,30 +369,39 @@ describe("wallet authentication store contract", () => {
     await store.close();
   });
 
-  it("normalizes expired session logout and revoke to the idempotent terminal result", async () => {
+  it("normalizes direct logout and revoke of expired active rows to the terminal result", async () => {
     let now = new Date(START);
     const store = createMemoryWalletAuthenticationStoreForTests({
       clock: { now: () => new Date(now) },
       mode: "unit_test",
     });
-    await store.issueChallenge(challenge());
+    await store.issueChallenge(challenge(1));
+    await store.issueChallenge(challenge(2));
     await store.consumeChallengeAndCreateSession({
       challengeId: "wallet-challenge-1",
       expectedChallengeVersion: "campaign-os-wallet-auth/v1",
-      session: session(),
-      traceId: "trace-expired-idempotency-create",
+      session: session(1),
+      traceId: "trace-expired-idempotency-create-1",
+    });
+    await store.consumeChallengeAndCreateSession({
+      challengeId: "wallet-challenge-2",
+      expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+      session: session(2),
+      traceId: "trace-expired-idempotency-create-2",
     });
     now = new Date(START.getTime() + 31 * 60_000);
-    expect(await store.resolveActiveSession(digest("1"))).toBeUndefined();
+
     expect(await store.logoutSession({
       credentialDigest: digest("1"),
       traceId: "trace-expired-idempotency-logout",
     })).toEqual({ status: "already_terminal" });
     expect(await store.revokeSession({
       reasonCode: "ADMIN_REVOKE",
-      sessionId: "wallet-session-1",
+      sessionId: "wallet-session-2",
       traceId: "trace-expired-idempotency-revoke",
     })).toEqual({ status: "already_terminal" });
+    expect(await store.resolveActiveSession(digest("1"))).toBeUndefined();
+    expect(await store.resolveActiveSession(digest("2"))).toBeUndefined();
     await store.close();
   });
 

@@ -1018,7 +1018,8 @@ export const createMemoryWalletAuthenticationStoreForTests = ({
     if (!row) {
       return Object.freeze({ status: "already_terminal" });
     }
-    if (!revokeRow(row, input.reasonCode, readClock(clock, "revokeSession", traceId))) {
+    const now = readClock(clock, "revokeSession", traceId);
+    if (markSessionExpired(row, now) || !revokeRow(row, input.reasonCode, now)) {
       return Object.freeze({ status: "already_terminal" });
     }
     return Object.freeze({ status: "revoked" });

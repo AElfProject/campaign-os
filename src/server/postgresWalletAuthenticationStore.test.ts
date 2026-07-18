@@ -846,6 +846,55 @@ postgresSuite("PostgreSQL wallet authentication store", () => {
     await authStore.close();
   });
 
+  it("persists expiry before direct logout and public revoke without a prior read", async () => {
+    const authStore = store();
+    await authStore.issueChallenge(challenge(1));
+    await authStore.issueChallenge(challenge(2));
+    await authStore.consumeChallengeAndCreateSession({
+      challengeId: "postgres-wallet-challenge-1",
+      expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+      session: session(1),
+      traceId: "trace-postgres-direct-expiry-create-1",
+    });
+    await authStore.consumeChallengeAndCreateSession({
+      challengeId: "postgres-wallet-challenge-2",
+      expectedChallengeVersion: "campaign-os-wallet-auth/v1",
+      session: session(2),
+      traceId: "trace-postgres-direct-expiry-create-2",
+    });
+    now = new Date(START.getTime() + 31 * 60_000);
+
+    expect(await authStore.logoutSession({
+      credentialDigest: digest("1"),
+      traceId: "trace-postgres-direct-expiry-logout",
+    })).toEqual({ status: "already_terminal" });
+    expect(await authStore.revokeSession({
+      reasonCode: "ADMIN_REVOKE",
+      sessionId: "postgres-wallet-session-2",
+      traceId: "trace-postgres-direct-expiry-revoke",
+    })).toEqual({ status: "already_terminal" });
+    expect((await requiredPool().query(
+      `SELECT id, status, version, revocation_code, revoked_at
+       FROM campaign_os.wallet_sessions ORDER BY id`,
+    )).rows).toEqual([
+      {
+        id: "postgres-wallet-session-1",
+        revocation_code: "SESSION_EXPIRED",
+        revoked_at: now,
+        status: "expired",
+        version: 2,
+      },
+      {
+        id: "postgres-wallet-session-2",
+        revocation_code: "SESSION_EXPIRED",
+        revoked_at: now,
+        status: "expired",
+        version: 2,
+      },
+    ]);
+    await authStore.close();
+  });
+
   it("uses indexed credential, public ID and subject inventory paths", async () => {
     const authStore = store();
     await authStore.issueChallenge(challenge());
