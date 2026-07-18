@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { NormalizedWalletSession } from "../domain/types";
+import { createDeprecatedNonLivePreviewAuthorityOption } from "./apiRuntime";
 import {
   loadPostgresMigrations,
   runPostgresMigrations,
@@ -388,6 +389,7 @@ realPostgresSuite("Admin Node HTTP and PostgreSQL acceptance", () => {
     databasePool = createPool(databaseUrl, 24);
     await seedCampaign(databasePool);
     server = await startCampaignOsApiServer({
+      deprecatedNonLivePreviewAuthority: createDeprecatedNonLivePreviewAuthorityOption(),
       env: {
         CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
           active: true,
