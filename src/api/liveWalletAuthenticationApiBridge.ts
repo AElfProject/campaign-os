@@ -374,6 +374,8 @@ const FAILURE_ENVELOPE_FIELDS = new Set(["error", "ok", "traceId"]);
 const ERROR_FIELDS = new Set(["code", "details", "message"]);
 const ERROR_REQUIRED_FIELDS = ["code", "message"] as const;
 const ERROR_DETAIL_FIELDS = new Set(["diagnosticCode", "field", "retryable"]);
+const CONFIG_FIELDS = new Set(["baseUrl", "maxResponseBytes", "mode", "timeoutMs", "tracePrefix"]);
+const FACTORY_OPTION_FIELDS = new Set(["config", "fetchImpl", "traceIdGenerator"]);
 
 const utf8ByteLength = (value: string): number =>
   new TextEncoder().encode(value).byteLength;
@@ -1396,8 +1398,46 @@ const isJsonResponseContentType = (value: string | null): boolean => {
 export const createLiveWalletAuthenticationApiBridge = (
   options: LiveWalletAuthenticationApiBridgeFactoryOptions = {},
 ): LiveWalletAuthenticationApiBridge => {
-  const config = normalizeConfig(options.config);
-  const fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
+  const optionEntries = ownDataEntries(options);
+  const factoryInvalid = !optionEntries
+    || optionEntries.some(([key]) => !FACTORY_OPTION_FIELDS.has(key));
+  const configInput = optionEntries?.find(([key]) => key === "config")?.[1];
+  const fetchInput = optionEntries?.find(([key]) => key === "fetchImpl")?.[1];
+  const traceIdGeneratorInput = optionEntries
+    ?.find(([key]) => key === "traceIdGenerator")?.[1];
+  const configEntries = configInput === undefined ? [] : ownDataEntries(configInput);
+  const configShapeInvalid = configEntries === undefined
+    || configEntries.some(([key]) => !CONFIG_FIELDS.has(key));
+  const rawConfig = configShapeInvalid ? undefined : Object.fromEntries(configEntries);
+  const configValueInvalid = rawConfig !== undefined && (
+    (rawConfig.baseUrl !== undefined && typeof rawConfig.baseUrl !== "string")
+    || (rawConfig.maxResponseBytes !== undefined
+      && (typeof rawConfig.maxResponseBytes !== "number"
+        || !Number.isFinite(rawConfig.maxResponseBytes)))
+    || (rawConfig.mode !== undefined
+      && rawConfig.mode !== "live_disabled"
+      && rawConfig.mode !== "live_local_stage"
+      && rawConfig.mode !== "live_production"
+      && rawConfig.mode !== "preview")
+    || (rawConfig.timeoutMs !== undefined
+      && (typeof rawConfig.timeoutMs !== "number" || !Number.isFinite(rawConfig.timeoutMs)))
+    || (rawConfig.tracePrefix !== undefined && typeof rawConfig.tracePrefix !== "string")
+  );
+  const configInvalid = configShapeInvalid || configValueInvalid;
+  const capturedConfig = configInvalid
+    ? undefined
+    : Object.freeze(rawConfig) as LiveWalletAuthenticationApiConfig;
+  const dependenciesInvalid = factoryInvalid
+    || configInvalid
+    || (fetchInput !== undefined && typeof fetchInput !== "function")
+    || (traceIdGeneratorInput !== undefined && typeof traceIdGeneratorInput !== "function");
+  const config = normalizeConfig(capturedConfig);
+  const fetchImpl = typeof fetchInput === "function"
+    ? fetchInput as LiveWalletAuthenticationApiFetch
+    : ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
+  const traceIdGenerator = typeof traceIdGeneratorInput === "function"
+    ? traceIdGeneratorInput as (operation: LiveWalletAuthenticationOperation) => string
+    : undefined;
   const activeControllers = new Set<AbortController>();
   let closed = false;
   let csrfMemory: string | undefined;
@@ -1413,7 +1453,7 @@ export const createLiveWalletAuthenticationApiBridge = (
       return candidate;
     }
     try {
-      const generated = options.traceIdGenerator?.(operation);
+      const generated = traceIdGenerator?.(operation);
       if (safeTraceId(generated)) {
         return generated;
       }
@@ -1444,6 +1484,16 @@ export const createLiveWalletAuthenticationApiBridge = (
     if (closed) {
       return Object.freeze({
         failure: makeFailure({ category: "closed", code: "BRIDGE_CLOSED", traceId }),
+        traceId,
+      });
+    }
+    if (dependenciesInvalid) {
+      return Object.freeze({
+        failure: makeFailure({
+          category: "configuration",
+          code: "BRIDGE_INVALID_INPUT",
+          traceId,
+        }),
         traceId,
       });
     }
@@ -1531,6 +1581,7 @@ export const createLiveWalletAuthenticationApiBridge = (
     let externalAborted = false;
     let externalListenerRegistered = false;
     let timedOut = false;
+    let transportStarted = false;
     const onExternalAbort = () => {
       externalAborted = true;
       controller.abort();
@@ -1539,13 +1590,14 @@ export const createLiveWalletAuthenticationApiBridge = (
 
     try {
       if (prepared.signal) {
-        prepared.signal.addEventListener("abort", onExternalAbort, { once: true });
         externalListenerRegistered = true;
+        prepared.signal.addEventListener("abort", onExternalAbort, { once: true });
       }
       timeout = globalThis.setTimeout(() => {
         timedOut = true;
         controller.abort();
       }, config.timeoutMs);
+      transportStarted = true;
       const response = await raceWithAbort(
         Promise.resolve(fetchImpl(`${config.baseUrl}${path}`, {
           ...(serializedBody === undefined ? {} : { body: serializedBody }),
@@ -1614,6 +1666,9 @@ export const createLiveWalletAuthenticationApiBridge = (
         ...(responseTraceHeader === undefined ? {} : { responseTraceHeader }),
       });
     } catch {
+      if (!transportStarted) {
+        return invalidInput(prepared.traceId);
+      }
       if (timedOut) {
         return makeFailure({
           category: "timeout",
@@ -1640,7 +1695,11 @@ export const createLiveWalletAuthenticationApiBridge = (
       });
     } finally {
       if (timeout !== undefined) {
-        globalThis.clearTimeout(timeout);
+        try {
+          globalThis.clearTimeout(timeout);
+        } catch {
+          // Timer cleanup is best effort for a hostile host implementation.
+        }
       }
       if (externalListenerRegistered) {
         try {

@@ -583,9 +583,56 @@ describe("liveWalletAuthenticationApiBridge typed failures", () => {
     expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("fails closed when an external signal throws while registering its listener", async () => {
+    const fetchImpl = vi.fn<LiveWalletAuthenticationApiFetch>();
+    const removeEventListener = vi.fn();
+    const signal = {
+      aborted: false,
+      addEventListener: () => {
+        throw new Error("host listener detail");
+      },
+      removeEventListener,
+    } as unknown as AbortSignal;
+
+    const result = await bridgeFor(fetchImpl).getCurrentSession({ signal });
+
+    expect(result).toMatchObject({
+      category: "invalid_request",
+      code: "BRIDGE_INVALID_INPUT",
+      ok: false,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(removeEventListener).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
 });
 
 describe("liveWalletAuthenticationApiBridge mode and logout posture", () => {
+  it.each([
+    ["null options", null],
+    ["invalid config value", {
+      config: { baseUrl: 42, mode: "live_local_stage" },
+    }],
+    ["throwing accessor", Object.defineProperty({}, "config", {
+      enumerable: true,
+      get: () => {
+        throw new Error("host config detail");
+      },
+    })],
+  ])("constructs a closed bridge for %s instead of throwing", async (_label, malformed) => {
+    const bridge = createLiveWalletAuthenticationApiBridge(
+      malformed as unknown as Parameters<typeof createLiveWalletAuthenticationApiBridge>[0],
+    );
+
+    const result = await bridge.getCurrentSession();
+
+    expect(result).toMatchObject({
+      category: "configuration",
+      code: "BRIDGE_INVALID_INPUT",
+      ok: false,
+    });
+  });
+
   it("fails closed for every live operation when constructed for preview", async () => {
     const fetchImpl = vi.fn<LiveWalletAuthenticationApiFetch>();
     const bridge = bridgeFor(fetchImpl, { mode: "preview" });
