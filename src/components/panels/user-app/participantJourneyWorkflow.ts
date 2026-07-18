@@ -1,6 +1,7 @@
 import type {
   ParticipantCampaignFeedItem,
   ParticipantCampaignListSuccess,
+  ParticipantJourneyDurableSession,
   ParticipantJourneyFailure,
   ParticipantJourneyMode,
   ParticipantJourneyProjection,
@@ -8,6 +9,7 @@ import type {
   ParticipantVerifySuccess,
 } from "../../../api/participantJourneyApiBridge";
 import type { NormalizedWalletSession } from "../../../domain/types";
+import type { RequestedWalletConnectionHint } from "../../../wallet/walletClient";
 
 export type ParticipantJourneyWorkflowStatus =
   | "no_session"
@@ -1627,3 +1629,1032 @@ export const participantJourneyWorkflowReducer = (
 
   return state;
 };
+
+export const PARTICIPANT_AUTHENTICATION_MAX_CONFLICT_RECOVERY_STEPS = 2;
+
+export type ParticipantAuthenticationWorkflowStatus =
+  | "disconnected"
+  | "connecting"
+  | "challengeReady"
+  | "signing"
+  | "authenticating"
+  | "restoring"
+  | "rotating"
+  | "loggingOut"
+  | "ready"
+  | "expired"
+  | "revoked"
+  | "unavailable"
+  | "failed"
+  | "rateLimited";
+
+export type ParticipantAuthenticationOperation =
+  | "connect"
+  | "challenge"
+  | "sign"
+  | "authenticate"
+  | "restore"
+  | "rotate"
+  | "logout";
+
+export type ParticipantAuthenticationAction =
+  | "connect"
+  | "sign"
+  | "restore"
+  | "retry"
+  | "none";
+
+export type ParticipantAuthenticationWalletContextChange =
+  | "account_changed"
+  | "chain_changed"
+  | "network_changed"
+  | "provider_disconnected";
+
+export interface ParticipantAuthenticationFailure {
+  readonly code: string;
+  readonly httpStatus: number | null;
+  readonly retryAfterMs: number | null;
+  readonly traceId: string | null;
+}
+
+export type ParticipantAuthenticationWalletConnection = RequestedWalletConnectionHint;
+
+export interface ParticipantAuthenticationChallengeReference {
+  readonly challengeId: string;
+  readonly expiresAt: string;
+}
+
+export type ParticipantAuthenticationPrivateSession = ParticipantJourneyDurableSession;
+
+export interface ParticipantAuthenticationPublicCampaignState {
+  readonly lastGood: ParticipantCampaignFeedItem | null;
+}
+
+export interface ParticipantAuthenticationPrivateState {
+  readonly challenge: ParticipantAuthenticationChallengeReference | null;
+  readonly session: ParticipantAuthenticationPrivateSession | null;
+  readonly wallet: ParticipantAuthenticationWalletConnection | null;
+}
+
+export interface ParticipantAuthenticationWorkflowState {
+  readonly conflictRecoveryStep: number;
+  readonly failure: ParticipantAuthenticationFailure | null;
+  readonly pendingOperation: ParticipantAuthenticationOperation | null;
+  readonly privateParticipant: ParticipantAuthenticationPrivateState;
+  readonly publicCampaign: ParticipantAuthenticationPublicCampaignState;
+  readonly retryOperation: ParticipantAuthenticationOperation | null;
+  readonly sessionEpoch: number;
+  readonly status: ParticipantAuthenticationWorkflowStatus;
+  readonly walletEpoch: number;
+}
+
+export interface CreateParticipantAuthenticationWorkflowStateOptions {
+  readonly publicCampaignLastGood?: ParticipantCampaignFeedItem | null;
+}
+
+interface ParticipantAuthenticationCompletionEpochs {
+  readonly sessionEpoch: number;
+  readonly walletEpoch: number;
+}
+
+export type ParticipantAuthenticationRestoreOutcome =
+  | "ready"
+  | "disconnected"
+  | "expired"
+  | "revoked"
+  | "unavailable"
+  | "failed"
+  | "rateLimited";
+
+export type ParticipantAuthenticationWorkflowEvent =
+  | Readonly<{ type: "connect_requested" }>
+  | Readonly<{ type: "restore_requested" }>
+  | Readonly<{ type: "sign_requested" }>
+  | Readonly<{ type: "rotation_requested" }>
+  | Readonly<{ type: "logout_requested" }>
+  | Readonly<{ type: "retry_requested" }>
+  | Readonly<{
+      campaign: ParticipantCampaignFeedItem | null;
+      type: "public_campaign_last_good_changed";
+    }>
+  | Readonly<{
+      reason: ParticipantAuthenticationWalletContextChange;
+      type: "wallet_context_changed";
+    }>
+  | Readonly<{
+      reason: "role_changed" | "unmount";
+      type: "scope_invalidated";
+    }>
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      type: "wallet_connected";
+      wallet: ParticipantAuthenticationWalletConnection;
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      challenge: ParticipantAuthenticationChallengeReference;
+      type: "challenge_succeeded";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      type: "sign_succeeded";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      participant: ParticipantAuthenticationPrivateSession;
+      type: "authenticate_succeeded";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      failure?: ParticipantAuthenticationFailure | null;
+      outcome: ParticipantAuthenticationRestoreOutcome;
+      participant?: ParticipantAuthenticationPrivateSession;
+      type: "restore_completed";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      participant: ParticipantAuthenticationPrivateSession;
+      type: "rotation_succeeded";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      failure: ParticipantAuthenticationFailure | null;
+      ok: boolean;
+      type: "logout_completed";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      failure: ParticipantAuthenticationFailure;
+      operation: ParticipantAuthenticationOperation;
+      type: "operation_failed";
+    }>)
+  | (ParticipantAuthenticationCompletionEpochs & Readonly<{
+      failure: ParticipantAuthenticationFailure;
+      type: "private_request_failed";
+    }>);
+
+type ParticipantAuthenticationEffectEpochs = Readonly<{
+  sessionEpoch: number;
+  walletEpoch: number;
+}>;
+
+type ParticipantAuthenticationChallengeCommand =
+  ParticipantAuthenticationEffectEpochs
+  & ParticipantAuthenticationWalletConnection
+  & Readonly<{ type: "request_challenge" }>;
+
+/** The effect owner maps these serializable epochs to controllers and subscriptions. */
+export type ParticipantAuthenticationEffectCommand =
+  | (ParticipantAuthenticationEffectEpochs & Readonly<{
+      type: "connect_wallet";
+    }>)
+  | ParticipantAuthenticationChallengeCommand
+  | (ParticipantAuthenticationEffectEpochs & Readonly<{
+      challengeId: string;
+      type: "sign_challenge";
+    }>)
+  | (ParticipantAuthenticationEffectEpochs & Readonly<{
+      challengeId: string;
+      type: "authenticate_session";
+    }>)
+  | (ParticipantAuthenticationEffectEpochs & Readonly<{
+      type: "restore_session";
+    }>)
+  | (ParticipantAuthenticationEffectEpochs & Readonly<{
+      type: "rotate_session";
+    }>)
+  | (ParticipantAuthenticationEffectEpochs & Readonly<{
+      type: "logout_session";
+    }>);
+
+export interface ParticipantAuthenticationWorkflowReduction {
+  readonly commands: readonly ParticipantAuthenticationEffectCommand[];
+  readonly state: ParticipantAuthenticationWorkflowState;
+  readonly writeCount: 0 | 1;
+}
+
+const emptyParticipantAuthenticationPrivateState = (
+): ParticipantAuthenticationPrivateState => ({
+  challenge: null,
+  session: null,
+  wallet: null,
+});
+
+const authenticationNoop = (
+  state: ParticipantAuthenticationWorkflowState,
+): ParticipantAuthenticationWorkflowReduction => ({
+  commands: [],
+  state,
+  writeCount: 0,
+});
+
+const authenticationWrite = (
+  state: ParticipantAuthenticationWorkflowState,
+  commands: readonly ParticipantAuthenticationEffectCommand[] = [],
+): ParticipantAuthenticationWorkflowReduction => ({
+  commands,
+  state,
+  writeCount: 1,
+});
+
+const safeAuthenticationText = (
+  value: unknown,
+  maximumLength = 256,
+): value is string => typeof value === "string"
+  && value.length > 0
+  && value.length <= maximumLength
+  && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+
+const safeAuthenticationIdentifier = (
+  value: unknown,
+  maximumLength: number,
+): value is string => safeAuthenticationText(value, maximumLength)
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+
+const copyAuthenticationStringArray = (
+  value: unknown,
+): readonly string[] | null => {
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || value.length > 64
+    || value.some((item) => !safeAuthenticationIdentifier(item, 128))
+    || new Set(value).size !== value.length
+  ) {
+    return null;
+  }
+  return [...value];
+};
+
+const copyAuthenticationWallet = (
+  wallet: ParticipantAuthenticationWalletConnection,
+): ParticipantAuthenticationWalletConnection | null => {
+  if (
+    !safeAuthenticationIdentifier(wallet.adapterId, 128)
+    || !safeAuthenticationText(wallet.chainId, 32)
+    || (wallet.network !== "mainnet" && wallet.network !== "testnet")
+    || !safeAuthenticationText(wallet.walletAddressHint, 256)
+    || (
+      wallet.caHashHint !== undefined
+      && !safeAuthenticationText(wallet.caHashHint, 256)
+    )
+  ) {
+    return null;
+  }
+  return {
+    adapterId: wallet.adapterId,
+    ...(wallet.caHashHint === undefined ? {} : { caHashHint: wallet.caHashHint }),
+    chainId: wallet.chainId,
+    network: wallet.network,
+    walletAddressHint: wallet.walletAddressHint,
+  };
+};
+
+const copyAuthenticationChallenge = (
+  challenge: ParticipantAuthenticationChallengeReference,
+): ParticipantAuthenticationChallengeReference | null => {
+  if (
+    !safeAuthenticationIdentifier(challenge.challengeId, 160)
+    || !safeAuthenticationText(challenge.expiresAt, 64)
+    || !Number.isFinite(Date.parse(challenge.expiresAt))
+  ) {
+    return null;
+  }
+  return {
+    challengeId: challenge.challengeId,
+    expiresAt: challenge.expiresAt,
+  };
+};
+
+const copyAuthenticationSession = (
+  session: ParticipantAuthenticationPrivateSession,
+): ParticipantAuthenticationPrivateSession | null => {
+  const capabilities = copyAuthenticationStringArray(session.capabilities);
+  const roles = copyAuthenticationStringArray(session.roles);
+  if (
+    (session.accountType !== "AA" && session.accountType !== "EOA")
+    || !capabilities
+    || !safeAuthenticationText(session.chainId, 32)
+    || !safeAuthenticationIdentifier(session.sessionId, 160)
+    || (session.network !== "mainnet" && session.network !== "testnet")
+    || !roles
+    || session.status !== "active"
+    || !safeAuthenticationText(session.walletAddress, 256)
+    || !safeAuthenticationIdentifier(session.walletSource, 80)
+    || !safeAuthenticationText(session.issuedAt, 64)
+    || !safeAuthenticationText(session.idleExpiresAt, 64)
+    || !safeAuthenticationText(session.absoluteExpiresAt, 64)
+    || !Number.isFinite(Date.parse(session.issuedAt))
+    || !Number.isFinite(Date.parse(session.idleExpiresAt))
+    || !Number.isFinite(Date.parse(session.absoluteExpiresAt))
+  ) {
+    return null;
+  }
+  return {
+    absoluteExpiresAt: session.absoluteExpiresAt,
+    accountType: session.accountType,
+    capabilities,
+    chainId: session.chainId,
+    idleExpiresAt: session.idleExpiresAt,
+    issuedAt: session.issuedAt,
+    network: session.network,
+    roles,
+    sessionId: session.sessionId,
+    status: "active",
+    walletAddress: session.walletAddress,
+    walletSource: session.walletSource,
+  };
+};
+
+const copyAuthenticationFailure = (
+  failure: ParticipantAuthenticationFailure,
+): ParticipantAuthenticationFailure => ({
+  code: safeAuthenticationIdentifier(failure.code, 128)
+    ? failure.code
+    : "AUTH_WORKFLOW_FAILED",
+  httpStatus: Number.isInteger(failure.httpStatus)
+    && (failure.httpStatus as number) >= 100
+    && (failure.httpStatus as number) <= 599
+    ? failure.httpStatus
+    : null,
+  retryAfterMs: typeof failure.retryAfterMs === "number"
+    && Number.isFinite(failure.retryAfterMs)
+    && failure.retryAfterMs >= 0
+    ? Math.round(failure.retryAfterMs)
+    : null,
+  traceId: failure.traceId === null
+    || safeAuthenticationIdentifier(failure.traceId, 128)
+    ? failure.traceId
+    : null,
+});
+
+const invalidAuthenticationCompletionFailure = (
+): ParticipantAuthenticationFailure => ({
+  code: "AUTH_WORKFLOW_RESPONSE_INVALID",
+  httpStatus: null,
+  retryAfterMs: null,
+  traceId: null,
+});
+
+const authenticationEpochs = (
+  state: ParticipantAuthenticationWorkflowState,
+): ParticipantAuthenticationEffectEpochs => ({
+  sessionEpoch: state.sessionEpoch,
+  walletEpoch: state.walletEpoch,
+});
+
+const authenticationCompletionMatches = (
+  state: ParticipantAuthenticationWorkflowState,
+  completion: ParticipantAuthenticationCompletionEpochs,
+) => completion.sessionEpoch === state.sessionEpoch
+  && completion.walletEpoch === state.walletEpoch;
+
+const authenticationOperationCompletionMatches = (
+  state: ParticipantAuthenticationWorkflowState,
+  completion: ParticipantAuthenticationCompletionEpochs,
+  operation: ParticipantAuthenticationOperation,
+) => state.pendingOperation === operation
+  && authenticationCompletionMatches(state, completion);
+
+export const createParticipantAuthenticationWorkflowState = (
+  options: CreateParticipantAuthenticationWorkflowStateOptions = {},
+): ParticipantAuthenticationWorkflowState => ({
+  conflictRecoveryStep: 0,
+  failure: null,
+  pendingOperation: null,
+  privateParticipant: emptyParticipantAuthenticationPrivateState(),
+  publicCampaign: {
+    lastGood: options.publicCampaignLastGood ?? null,
+  },
+  retryOperation: null,
+  sessionEpoch: 0,
+  status: "disconnected",
+  walletEpoch: 0,
+});
+
+export const selectParticipantAuthenticationAction = (
+  state: ParticipantAuthenticationWorkflowState,
+): ParticipantAuthenticationAction => {
+  if (state.status === "disconnected" || state.status === "revoked") {
+    return "connect";
+  }
+  if (state.status === "expired") {
+    return "restore";
+  }
+  if (state.status === "challengeReady") {
+    return "sign";
+  }
+  if (
+    state.status === "unavailable"
+    || state.status === "failed"
+    || state.status === "rateLimited"
+  ) {
+    return state.retryOperation ? "retry" : "connect";
+  }
+  return "none";
+};
+
+const authenticationFailureStatus = (
+  failure: ParticipantAuthenticationFailure,
+): ParticipantAuthenticationWorkflowStatus => {
+  if (failure.httpStatus === 429) {
+    return "rateLimited";
+  }
+  if (failure.httpStatus === 503) {
+    return "unavailable";
+  }
+  return "failed";
+};
+
+const authenticationInvalidCompletion = (
+  state: ParticipantAuthenticationWorkflowState,
+  retryOperation: ParticipantAuthenticationOperation,
+): ParticipantAuthenticationWorkflowReduction => authenticationWrite({
+  ...state,
+  failure: invalidAuthenticationCompletionFailure(),
+  pendingOperation: null,
+  privateParticipant: emptyParticipantAuthenticationPrivateState(),
+  retryOperation,
+  status: "failed",
+});
+
+const requestChallengeCommand = (
+  state: ParticipantAuthenticationWorkflowState,
+  wallet: ParticipantAuthenticationWalletConnection,
+): ParticipantAuthenticationChallengeCommand => ({
+  ...authenticationEpochs(state),
+  adapterId: wallet.adapterId,
+  ...(wallet.caHashHint === undefined ? {} : { caHashHint: wallet.caHashHint }),
+  chainId: wallet.chainId,
+  network: wallet.network,
+  type: "request_challenge",
+  walletAddressHint: wallet.walletAddressHint,
+});
+
+const startParticipantAuthenticationConnect = (
+  state: ParticipantAuthenticationWorkflowState,
+  resetConflictRecovery = true,
+): ParticipantAuthenticationWorkflowReduction => {
+  const nextState: ParticipantAuthenticationWorkflowState = {
+    ...state,
+    conflictRecoveryStep: resetConflictRecovery ? 0 : state.conflictRecoveryStep,
+    failure: null,
+    pendingOperation: "connect",
+    privateParticipant: emptyParticipantAuthenticationPrivateState(),
+    retryOperation: null,
+    sessionEpoch: nextCounter(state.sessionEpoch),
+    status: "connecting",
+    walletEpoch: nextCounter(state.walletEpoch),
+  };
+  return authenticationWrite(nextState, [{
+    ...authenticationEpochs(nextState),
+    type: "connect_wallet",
+  }]);
+};
+
+const startParticipantAuthenticationRestore = (
+  state: ParticipantAuthenticationWorkflowState,
+  resetConflictRecovery: boolean,
+): ParticipantAuthenticationWorkflowReduction => {
+  const nextState: ParticipantAuthenticationWorkflowState = {
+    ...state,
+    conflictRecoveryStep: resetConflictRecovery ? 0 : state.conflictRecoveryStep,
+    failure: null,
+    pendingOperation: "restore",
+    privateParticipant: {
+      ...state.privateParticipant,
+      challenge: null,
+      session: null,
+    },
+    retryOperation: null,
+    sessionEpoch: nextCounter(state.sessionEpoch),
+    status: "restoring",
+  };
+  return authenticationWrite(nextState, [{
+    ...authenticationEpochs(nextState),
+    type: "restore_session",
+  }]);
+};
+
+const recoverParticipantAuthenticationConflict = (
+  state: ParticipantAuthenticationWorkflowState,
+  failure: ParticipantAuthenticationFailure,
+): ParticipantAuthenticationWorkflowReduction => {
+  const safeFailure = copyAuthenticationFailure(failure);
+  if (state.conflictRecoveryStep === 0) {
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      conflictRecoveryStep: 1,
+      failure: safeFailure,
+      pendingOperation: "restore",
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: null,
+      sessionEpoch: nextCounter(state.sessionEpoch),
+      status: "restoring",
+    };
+    return authenticationWrite(nextState, [{
+      ...authenticationEpochs(nextState),
+      type: "restore_session",
+    }]);
+  }
+
+  if (
+    state.conflictRecoveryStep
+    < PARTICIPANT_AUTHENTICATION_MAX_CONFLICT_RECOVERY_STEPS
+  ) {
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      conflictRecoveryStep: PARTICIPANT_AUTHENTICATION_MAX_CONFLICT_RECOVERY_STEPS,
+      failure: safeFailure,
+      pendingOperation: "connect",
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: null,
+      sessionEpoch: nextCounter(state.sessionEpoch),
+      status: "connecting",
+      walletEpoch: nextCounter(state.walletEpoch),
+    };
+    return authenticationWrite(nextState, [{
+      ...authenticationEpochs(nextState),
+      type: "connect_wallet",
+    }]);
+  }
+
+  return authenticationWrite({
+    ...state,
+    failure: safeFailure,
+    pendingOperation: null,
+    privateParticipant: emptyParticipantAuthenticationPrivateState(),
+    retryOperation: null,
+    status: "failed",
+  });
+};
+
+const applyParticipantAuthenticationFailure = (
+  state: ParticipantAuthenticationWorkflowState,
+  failure: ParticipantAuthenticationFailure,
+  retryOperation: ParticipantAuthenticationOperation,
+): ParticipantAuthenticationWorkflowReduction => {
+  const safeFailure = copyAuthenticationFailure(failure);
+  if (safeFailure.httpStatus === 401 || safeFailure.httpStatus === 403) {
+    return authenticationWrite({
+      ...state,
+      failure: safeFailure,
+      pendingOperation: null,
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: null,
+      sessionEpoch: nextCounter(state.sessionEpoch),
+      status: safeFailure.httpStatus === 401 ? "expired" : "revoked",
+      walletEpoch: nextCounter(state.walletEpoch),
+    });
+  }
+  if (safeFailure.httpStatus === 409) {
+    return recoverParticipantAuthenticationConflict(state, safeFailure);
+  }
+  return authenticationWrite({
+    ...state,
+    failure: safeFailure,
+    pendingOperation: null,
+    retryOperation,
+    status: authenticationFailureStatus(safeFailure),
+  });
+};
+
+const retryParticipantAuthenticationOperation = (
+  state: ParticipantAuthenticationWorkflowState,
+): ParticipantAuthenticationWorkflowReduction => {
+  const operation = state.retryOperation;
+  if (!operation || state.pendingOperation) {
+    return authenticationNoop(state);
+  }
+  if (operation === "connect") {
+    return startParticipantAuthenticationConnect(state);
+  }
+  if (operation === "restore") {
+    return startParticipantAuthenticationRestore(state, true);
+  }
+
+  const challenge = state.privateParticipant.challenge;
+  const wallet = state.privateParticipant.wallet;
+  const session = state.privateParticipant.session;
+  if (
+    (operation === "challenge" && !wallet)
+    || ((operation === "sign" || operation === "authenticate") && !challenge)
+    || (operation === "rotate" && !session)
+    || operation === "logout"
+  ) {
+    return authenticationNoop(state);
+  }
+
+  const nextState: ParticipantAuthenticationWorkflowState = {
+    ...state,
+    failure: null,
+    pendingOperation: operation,
+    retryOperation: null,
+    sessionEpoch: nextCounter(state.sessionEpoch),
+    status: operation === "challenge"
+      ? "connecting"
+      : operation === "sign"
+        ? "signing"
+        : operation === "authenticate"
+          ? "authenticating"
+          : "rotating",
+  };
+  const epochs = authenticationEpochs(nextState);
+  const command: ParticipantAuthenticationEffectCommand = operation === "challenge"
+    ? requestChallengeCommand(nextState, wallet!)
+    : operation === "sign"
+      ? { ...epochs, challengeId: challenge!.challengeId, type: "sign_challenge" }
+      : operation === "authenticate"
+        ? { ...epochs, challengeId: challenge!.challengeId, type: "authenticate_session" }
+        : { ...epochs, type: "rotate_session" };
+  return authenticationWrite(nextState, [command]);
+};
+
+export const participantAuthenticationWorkflowReducer = (
+  state: ParticipantAuthenticationWorkflowState,
+  event: ParticipantAuthenticationWorkflowEvent,
+): ParticipantAuthenticationWorkflowReduction => {
+  if (event.type === "public_campaign_last_good_changed") {
+    if (state.publicCampaign.lastGood === event.campaign) {
+      return authenticationNoop(state);
+    }
+    return authenticationWrite({
+      ...state,
+      publicCampaign: { lastGood: event.campaign },
+    });
+  }
+
+  if (event.type === "wallet_context_changed" || event.type === "scope_invalidated") {
+    return authenticationWrite({
+      ...state,
+      conflictRecoveryStep: 0,
+      failure: null,
+      pendingOperation: null,
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: null,
+      sessionEpoch: nextCounter(state.sessionEpoch),
+      status: "disconnected",
+      walletEpoch: nextCounter(state.walletEpoch),
+    });
+  }
+
+  if (event.type === "connect_requested") {
+    return state.pendingOperation
+      ? authenticationNoop(state)
+      : startParticipantAuthenticationConnect(state);
+  }
+
+  if (event.type === "restore_requested") {
+    return state.pendingOperation
+      ? authenticationNoop(state)
+      : startParticipantAuthenticationRestore(state, true);
+  }
+
+  if (event.type === "sign_requested") {
+    const challenge = state.privateParticipant.challenge;
+    if (
+      state.status !== "challengeReady"
+      || state.pendingOperation
+      || !challenge
+    ) {
+      return authenticationNoop(state);
+    }
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      failure: null,
+      pendingOperation: "sign",
+      retryOperation: null,
+      status: "signing",
+    };
+    return authenticationWrite(nextState, [{
+      ...authenticationEpochs(nextState),
+      challengeId: challenge.challengeId,
+      type: "sign_challenge",
+    }]);
+  }
+
+  if (event.type === "rotation_requested") {
+    if (
+      state.status !== "ready"
+      || state.pendingOperation
+      || !state.privateParticipant.session
+    ) {
+      return authenticationNoop(state);
+    }
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      failure: null,
+      pendingOperation: "rotate",
+      retryOperation: null,
+      sessionEpoch: nextCounter(state.sessionEpoch),
+      status: "rotating",
+    };
+    return authenticationWrite(nextState, [{
+      ...authenticationEpochs(nextState),
+      type: "rotate_session",
+    }]);
+  }
+
+  if (event.type === "logout_requested") {
+    if (
+      state.status === "loggingOut"
+      || !state.privateParticipant.session
+    ) {
+      return authenticationNoop(state);
+    }
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      conflictRecoveryStep: 0,
+      failure: null,
+      pendingOperation: "logout",
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: null,
+      sessionEpoch: nextCounter(state.sessionEpoch),
+      status: "loggingOut",
+      walletEpoch: nextCounter(state.walletEpoch),
+    };
+    return authenticationWrite(nextState, [{
+      ...authenticationEpochs(nextState),
+      type: "logout_session",
+    }]);
+  }
+
+  if (event.type === "retry_requested") {
+    return retryParticipantAuthenticationOperation(state);
+  }
+
+  if (event.type === "wallet_connected") {
+    if (!authenticationOperationCompletionMatches(state, event, "connect")) {
+      return authenticationNoop(state);
+    }
+    const wallet = copyAuthenticationWallet(event.wallet);
+    if (!wallet) {
+      return authenticationInvalidCompletion(state, "connect");
+    }
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      failure: null,
+      pendingOperation: "challenge",
+      privateParticipant: {
+        challenge: null,
+        session: null,
+        wallet,
+      },
+      retryOperation: null,
+      status: "connecting",
+    };
+    return authenticationWrite(nextState, [requestChallengeCommand(nextState, wallet)]);
+  }
+
+  if (event.type === "challenge_succeeded") {
+    if (!authenticationOperationCompletionMatches(state, event, "challenge")) {
+      return authenticationNoop(state);
+    }
+    const challenge = copyAuthenticationChallenge(event.challenge);
+    if (!challenge || !state.privateParticipant.wallet) {
+      return authenticationInvalidCompletion(state, "challenge");
+    }
+    return authenticationWrite({
+      ...state,
+      conflictRecoveryStep: 0,
+      failure: null,
+      pendingOperation: null,
+      privateParticipant: {
+        ...state.privateParticipant,
+        challenge,
+        session: null,
+      },
+      retryOperation: null,
+      status: "challengeReady",
+    });
+  }
+
+  if (event.type === "sign_succeeded") {
+    if (!authenticationOperationCompletionMatches(state, event, "sign")) {
+      return authenticationNoop(state);
+    }
+    const challenge = state.privateParticipant.challenge;
+    if (!challenge) {
+      return authenticationInvalidCompletion(state, "sign");
+    }
+    const nextState: ParticipantAuthenticationWorkflowState = {
+      ...state,
+      failure: null,
+      pendingOperation: "authenticate",
+      retryOperation: null,
+      status: "authenticating",
+    };
+    return authenticationWrite(nextState, [{
+      ...authenticationEpochs(nextState),
+      challengeId: challenge.challengeId,
+      type: "authenticate_session",
+    }]);
+  }
+
+  if (event.type === "authenticate_succeeded") {
+    if (!authenticationOperationCompletionMatches(state, event, "authenticate")) {
+      return authenticationNoop(state);
+    }
+    const participant = copyAuthenticationSession(event.participant);
+    const wallet = state.privateParticipant.wallet;
+    if (
+      !participant
+      || (wallet !== null && (
+        wallet.chainId !== participant.chainId
+        || wallet.network !== participant.network
+      ))
+    ) {
+      return authenticationInvalidCompletion(state, "authenticate");
+    }
+    return authenticationWrite({
+      ...state,
+      conflictRecoveryStep: 0,
+      failure: null,
+      pendingOperation: null,
+      privateParticipant: {
+        challenge: null,
+        session: participant,
+        wallet,
+      },
+      retryOperation: null,
+      status: "ready",
+    });
+  }
+
+  if (event.type === "restore_completed") {
+    if (!authenticationOperationCompletionMatches(state, event, "restore")) {
+      return authenticationNoop(state);
+    }
+    if (event.outcome === "ready") {
+      const participant = event.participant
+        ? copyAuthenticationSession(event.participant)
+        : null;
+      if (!participant) {
+        return authenticationInvalidCompletion(state, "restore");
+      }
+      return authenticationWrite({
+        ...state,
+        conflictRecoveryStep: 0,
+        failure: null,
+        pendingOperation: null,
+        privateParticipant: {
+          challenge: null,
+          session: participant,
+          wallet: state.privateParticipant.wallet,
+        },
+        retryOperation: null,
+        status: "ready",
+      });
+    }
+
+    const failure = event.failure
+      ? copyAuthenticationFailure(event.failure)
+      : event.outcome === "disconnected"
+        ? null
+        : {
+            code: `AUTH_RESTORE_${event.outcome.toUpperCase()}`,
+            httpStatus: null,
+            retryAfterMs: null,
+            traceId: null,
+          };
+    if (
+      event.outcome === "disconnected"
+      || event.outcome === "expired"
+      || event.outcome === "revoked"
+    ) {
+      return authenticationWrite({
+        ...state,
+        conflictRecoveryStep: 0,
+        failure,
+        pendingOperation: null,
+        privateParticipant: emptyParticipantAuthenticationPrivateState(),
+        retryOperation: null,
+        status: event.outcome,
+      });
+    }
+    return authenticationWrite({
+      ...state,
+      conflictRecoveryStep: 0,
+      failure,
+      pendingOperation: null,
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: "restore",
+      status: event.outcome,
+    });
+  }
+
+  if (event.type === "rotation_succeeded") {
+    if (!authenticationOperationCompletionMatches(state, event, "rotate")) {
+      return authenticationNoop(state);
+    }
+    const participant = copyAuthenticationSession(event.participant);
+    const wallet = state.privateParticipant.wallet;
+    if (
+      !participant
+      || (wallet !== null && (
+        wallet.chainId !== participant.chainId
+        || wallet.network !== participant.network
+      ))
+    ) {
+      return authenticationInvalidCompletion(state, "rotate");
+    }
+    return authenticationWrite({
+      ...state,
+      conflictRecoveryStep: 0,
+      failure: null,
+      pendingOperation: null,
+      privateParticipant: {
+        challenge: null,
+        session: participant,
+        wallet,
+      },
+      retryOperation: null,
+      status: "ready",
+    });
+  }
+
+  if (event.type === "logout_completed") {
+    if (!authenticationOperationCompletionMatches(state, event, "logout")) {
+      return authenticationNoop(state);
+    }
+    return authenticationWrite({
+      ...state,
+      conflictRecoveryStep: 0,
+      failure: event.failure ? copyAuthenticationFailure(event.failure) : null,
+      pendingOperation: null,
+      privateParticipant: emptyParticipantAuthenticationPrivateState(),
+      retryOperation: null,
+      status: "disconnected",
+    });
+  }
+
+  if (event.type === "operation_failed") {
+    if (!authenticationOperationCompletionMatches(state, event, event.operation)) {
+      return authenticationNoop(state);
+    }
+    if (event.operation === "logout") {
+      return authenticationWrite({
+        ...state,
+        conflictRecoveryStep: 0,
+        failure: copyAuthenticationFailure(event.failure),
+        pendingOperation: null,
+        privateParticipant: emptyParticipantAuthenticationPrivateState(),
+        retryOperation: null,
+        status: "disconnected",
+      });
+    }
+    const challengeCannotBeReused = event.operation === "authenticate"
+      || (
+        event.operation === "sign"
+        && [
+          "AUTH_CHALLENGE_EXPIRED",
+          "AUTH_CHALLENGE_INVALID",
+          "AUTH_CHALLENGE_REPLAYED",
+          "AUTH_CHALLENGE_REVOKED",
+          "CHALLENGE_EXPIRED",
+        ].includes(event.failure.code)
+      );
+    const retryOperation = challengeCannotBeReused
+      ? "challenge"
+      : event.operation;
+    const failureState = retryOperation === "challenge"
+      ? {
+          ...state,
+          privateParticipant: {
+            ...state.privateParticipant,
+            challenge: null,
+            session: null,
+          },
+        }
+      : state;
+    if (challengeCannotBeReused) {
+      const failure = copyAuthenticationFailure(event.failure);
+      return authenticationWrite({
+        ...failureState,
+        failure,
+        pendingOperation: null,
+        retryOperation,
+        status: authenticationFailureStatus(failure),
+      });
+    }
+    return applyParticipantAuthenticationFailure(
+      failureState,
+      event.failure,
+      retryOperation,
+    );
+  }
+
+  if (event.type === "private_request_failed") {
+    if (!authenticationCompletionMatches(state, event)) {
+      return authenticationNoop(state);
+    }
+    return applyParticipantAuthenticationFailure(state, event.failure, "restore");
+  }
+
+  return authenticationNoop(state);
+};
+
+export type ParticipantLiveWalletAuthenticationWorkflowState =
+  ParticipantAuthenticationWorkflowState;
+export type ParticipantLiveWalletAuthenticationWorkflowEvent =
+  ParticipantAuthenticationWorkflowEvent;
+export type ParticipantLiveWalletAuthenticationEffectCommand =
+  ParticipantAuthenticationEffectCommand;
+export const createParticipantLiveWalletAuthenticationWorkflowState =
+  createParticipantAuthenticationWorkflowState;
+export const participantLiveWalletAuthenticationWorkflowReducer =
+  participantAuthenticationWorkflowReducer;
+export const selectParticipantLiveWalletAuthenticationAction =
+  selectParticipantAuthenticationAction;

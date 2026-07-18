@@ -9,6 +9,7 @@ import type {
 } from "../../../api/participantJourneyApiBridge";
 import type { NormalizedWalletSession } from "../../../domain/types";
 import {
+  PARTICIPANT_AUTHENTICATION_MAX_CONFLICT_RECOVERY_STEPS,
   PARTICIPANT_JOURNEY_POLL_MAX_ATTEMPTS,
   PARTICIPANT_JOURNEY_POLL_MAX_DELAY_MS,
   PARTICIPANT_JOURNEY_POLL_MIN_DELAY_MS,
@@ -16,16 +17,22 @@ import {
   canReconnectParticipantJourney,
   canSelectParticipantCampaign,
   canVerifyParticipantJourneyTask,
+  createParticipantAuthenticationWorkflowState,
   createParticipantJourneyWorkflowState,
   createParticipantSessionKey,
   nextParticipantJourneyRequestToken,
+  participantAuthenticationWorkflowReducer,
   participantJourneyWorkflowReducer,
+  selectParticipantAuthenticationAction,
   selectParticipantJourneyRefreshTaskId,
   selectParticipantJourneyTaskAction,
   selectParticipantJourneyTaskAttempt,
   selectParticipantJourneyTaskPoll,
   selectParticipantJourneyTaskRefresh,
   selectParticipantJourneyRetryOperation,
+  type ParticipantAuthenticationFailure,
+  type ParticipantAuthenticationPrivateSession,
+  type ParticipantAuthenticationWalletConnection,
   type ParticipantJourneyRequestToken,
   type ParticipantJourneyWorkflowState,
 } from "./participantJourneyWorkflow";
@@ -2226,5 +2233,612 @@ describe("Participant journey workflow", () => {
       token,
       type: "verify_succeeded",
     })).toBe(switched);
+  });
+});
+
+const authenticationWallet: ParticipantAuthenticationWalletConnection = {
+  adapterId: "portkey-eoa-extension",
+  caHashHint: "ca-hash-participant",
+  chainId: "AELF",
+  network: "testnet",
+  walletAddressHint: walletAddress,
+};
+
+const authenticationSession = (
+  overrides: Partial<ParticipantAuthenticationPrivateSession> = {},
+): ParticipantAuthenticationPrivateSession => ({
+  absoluteExpiresAt: "2026-07-18T14:00:00.000Z",
+  accountType: "EOA",
+  capabilities: ["CAMPAIGN_READ", "TASK_VERIFY"],
+  chainId: "AELF",
+  idleExpiresAt: "2026-07-18T13:15:00.000Z",
+  issuedAt: "2026-07-18T13:00:00.000Z",
+  network: "testnet",
+  roles: ["participant"],
+  sessionId: "durable-session-participant",
+  status: "active",
+  walletAddress,
+  walletSource: "PORTKEY_EOA_EXTENSION",
+  ...overrides,
+});
+
+const authenticationFailure = (
+  overrides: Partial<ParticipantAuthenticationFailure> = {},
+): ParticipantAuthenticationFailure => ({
+  code: "AUTH_DEPENDENCY_UNAVAILABLE",
+  httpStatus: 503,
+  retryAfterMs: null,
+  traceId: "trace-participant-auth-failure",
+  ...overrides,
+});
+
+const challengeReadyAuthenticationState = () => {
+  let state = createParticipantAuthenticationWorkflowState({
+    publicCampaignLastGood: feedItem(campaignAId),
+  });
+  let reduction = participantAuthenticationWorkflowReducer(state, {
+    type: "connect_requested",
+  });
+  state = reduction.state;
+  reduction = participantAuthenticationWorkflowReducer(state, {
+    sessionEpoch: state.sessionEpoch,
+    type: "wallet_connected",
+    wallet: authenticationWallet,
+    walletEpoch: state.walletEpoch,
+  });
+  state = reduction.state;
+  reduction = participantAuthenticationWorkflowReducer(state, {
+    challenge: {
+      challengeId: "challenge-participant-auth",
+      expiresAt: "2026-07-18T13:05:00.000Z",
+    },
+    sessionEpoch: state.sessionEpoch,
+    type: "challenge_succeeded",
+    walletEpoch: state.walletEpoch,
+  });
+  return reduction.state;
+};
+
+const readyAuthenticationState = () => {
+  let state = challengeReadyAuthenticationState();
+  state = participantAuthenticationWorkflowReducer(state, {
+    type: "sign_requested",
+  }).state;
+  let reduction = participantAuthenticationWorkflowReducer(state, {
+    sessionEpoch: state.sessionEpoch,
+    type: "sign_succeeded",
+    walletEpoch: state.walletEpoch,
+  });
+  state = reduction.state;
+  return participantAuthenticationWorkflowReducer(state, {
+    participant: authenticationSession(),
+    sessionEpoch: state.sessionEpoch,
+    type: "authenticate_succeeded",
+    walletEpoch: state.walletEpoch,
+  }).state;
+};
+
+describe("participantAuthenticationWorkflow", () => {
+  it("drives connect, challenge, signing, authentication, and ready through serializable commands", () => {
+    let state = createParticipantAuthenticationWorkflowState({
+      publicCampaignLastGood: feedItem(campaignAId),
+    });
+    expect(state.status).toBe("disconnected");
+
+    let reduction = participantAuthenticationWorkflowReducer(state, {
+      type: "connect_requested",
+    });
+    expect(reduction.state.status).toBe("connecting");
+    expect(reduction.commands).toEqual([{
+      sessionEpoch: 1,
+      type: "connect_wallet",
+      walletEpoch: 1,
+    }]);
+    state = reduction.state;
+
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      sessionEpoch: state.sessionEpoch,
+      type: "wallet_connected",
+      wallet: authenticationWallet,
+      walletEpoch: state.walletEpoch,
+    });
+    expect(reduction.state.status).toBe("connecting");
+    expect(reduction.commands).toEqual([{
+      adapterId: authenticationWallet.adapterId,
+      caHashHint: authenticationWallet.caHashHint,
+      chainId: authenticationWallet.chainId,
+      network: authenticationWallet.network,
+      sessionEpoch: state.sessionEpoch,
+      type: "request_challenge",
+      walletAddressHint: authenticationWallet.walletAddressHint,
+      walletEpoch: state.walletEpoch,
+    }]);
+    state = reduction.state;
+
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      challenge: {
+        challengeId: "challenge-participant-auth",
+        expiresAt: "2026-07-18T13:05:00.000Z",
+      },
+      sessionEpoch: state.sessionEpoch,
+      type: "challenge_succeeded",
+      walletEpoch: state.walletEpoch,
+    });
+    expect(reduction.state.status).toBe("challengeReady");
+    expect(reduction.state.privateParticipant.challenge).toEqual({
+      challengeId: "challenge-participant-auth",
+      expiresAt: "2026-07-18T13:05:00.000Z",
+    });
+    expect(reduction.commands).toEqual([]);
+    state = reduction.state;
+
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      type: "sign_requested",
+    });
+    expect(reduction.state.status).toBe("signing");
+    expect(reduction.commands[0]).toMatchObject({
+      challengeId: "challenge-participant-auth",
+      type: "sign_challenge",
+    });
+    state = reduction.state;
+
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      sessionEpoch: state.sessionEpoch,
+      type: "sign_succeeded",
+      walletEpoch: state.walletEpoch,
+    });
+    expect(reduction.state.status).toBe("authenticating");
+    expect(reduction.commands[0]).toMatchObject({
+      challengeId: "challenge-participant-auth",
+      type: "authenticate_session",
+    });
+    state = reduction.state;
+
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      participant: authenticationSession(),
+      sessionEpoch: state.sessionEpoch,
+      type: "authenticate_succeeded",
+      walletEpoch: state.walletEpoch,
+    });
+    expect(reduction.state.status).toBe("ready");
+    expect(reduction.state.privateParticipant).toMatchObject({
+      challenge: null,
+      session: { sessionId: "durable-session-participant" },
+      wallet: authenticationWallet,
+    });
+    expect(reduction.writeCount).toBe(1);
+
+    const serialized = JSON.stringify(reduction);
+    expect(serialized).not.toMatch(
+      /abortcontroller|subscription|csrf|cookie|nonce|privatekey|proof|rawsignature|signature/i,
+    );
+    expect(JSON.parse(serialized)).toEqual(reduction);
+  });
+
+  it("fails closed on an oversized WalletClient connection projection", () => {
+    const connecting = participantAuthenticationWorkflowReducer(
+      createParticipantAuthenticationWorkflowState(),
+      { type: "connect_requested" },
+    ).state;
+    const reduction = participantAuthenticationWorkflowReducer(connecting, {
+      sessionEpoch: connecting.sessionEpoch,
+      type: "wallet_connected",
+      wallet: {
+        ...authenticationWallet,
+        walletAddressHint: "x".repeat(257),
+      },
+      walletEpoch: connecting.walletEpoch,
+    });
+
+    expect(reduction.state.status).toBe("failed");
+    expect(reduction.state.failure?.code).toBe("AUTH_WORKFLOW_RESPONSE_INVALID");
+    expect(reduction.state.privateParticipant.wallet).toBeNull();
+    expect(reduction.commands).toEqual([]);
+    expect(reduction.writeCount).toBe(1);
+  });
+
+  it.each([
+    ["disconnected", "disconnected", "connect"],
+    ["expired", "expired", "restore"],
+    ["revoked", "revoked", "connect"],
+    ["unavailable", "unavailable", "retry"],
+    ["failed", "failed", "retry"],
+    ["rateLimited", "rateLimited", "retry"],
+  ] as const)(
+    "maps the %s restore outcome to an actionable state",
+    (outcome, expectedStatus, expectedAction) => {
+      let state = createParticipantAuthenticationWorkflowState();
+      let reduction = participantAuthenticationWorkflowReducer(state, {
+        type: "restore_requested",
+      });
+      expect(reduction.state.status).toBe("restoring");
+      expect(reduction.commands[0]?.type).toBe("restore_session");
+      state = reduction.state;
+
+      reduction = participantAuthenticationWorkflowReducer(state, {
+        failure: outcome === "disconnected"
+          ? null
+          : authenticationFailure({
+              code: `AUTH_RESTORE_${outcome.toUpperCase()}`,
+              httpStatus: outcome === "rateLimited" ? 429 : 503,
+              retryAfterMs: outcome === "rateLimited" ? 2_000 : null,
+            }),
+        outcome,
+        sessionEpoch: state.sessionEpoch,
+        type: "restore_completed",
+        walletEpoch: state.walletEpoch,
+      });
+
+      expect(reduction.state.status).toBe(expectedStatus);
+      expect(reduction.state.privateParticipant.session).toBeNull();
+      expect(selectParticipantAuthenticationAction(reduction.state))
+        .toBe(expectedAction);
+      expect(reduction.state.failure?.retryAfterMs ?? null)
+        .toBe(outcome === "rateLimited" ? 2_000 : null);
+    },
+  );
+
+  it("restores an active durable session without retaining transport credentials", () => {
+    const restoring = participantAuthenticationWorkflowReducer(
+      createParticipantAuthenticationWorkflowState(),
+      { type: "restore_requested" },
+    ).state;
+    const reduction = participantAuthenticationWorkflowReducer(restoring, {
+      outcome: "ready",
+      participant: authenticationSession(),
+      sessionEpoch: restoring.sessionEpoch,
+      type: "restore_completed",
+      walletEpoch: restoring.walletEpoch,
+    });
+
+    expect(reduction.state.status).toBe("ready");
+    expect(reduction.state.privateParticipant.session).toEqual(authenticationSession());
+    expect(reduction.state.privateParticipant.challenge).toBeNull();
+    expect(JSON.stringify(reduction.state)).not.toMatch(/csrf|cookie|proof|signature/i);
+  });
+
+  it("requests a fresh challenge after challenge expiry instead of signing stale bytes", () => {
+    const signing = participantAuthenticationWorkflowReducer(
+      challengeReadyAuthenticationState(),
+      { type: "sign_requested" },
+    ).state;
+    const failed = participantAuthenticationWorkflowReducer(signing, {
+      failure: authenticationFailure({
+        code: "AUTH_CHALLENGE_EXPIRED",
+        httpStatus: 400,
+      }),
+      operation: "sign",
+      sessionEpoch: signing.sessionEpoch,
+      type: "operation_failed",
+      walletEpoch: signing.walletEpoch,
+    });
+
+    expect(failed.state.status).toBe("failed");
+    expect(failed.state.privateParticipant.challenge).toBeNull();
+    expect(selectParticipantAuthenticationAction(failed.state)).toBe("retry");
+
+    const retried = participantAuthenticationWorkflowReducer(failed.state, {
+      type: "retry_requested",
+    });
+    expect(retried.state.status).toBe("connecting");
+    expect(retried.commands[0]?.type).toBe("request_challenge");
+  });
+
+  it("starts a fresh challenge after proof rejection", () => {
+    const signing = participantAuthenticationWorkflowReducer(
+      challengeReadyAuthenticationState(),
+      { type: "sign_requested" },
+    ).state;
+    const authenticating = participantAuthenticationWorkflowReducer(signing, {
+      sessionEpoch: signing.sessionEpoch,
+      type: "sign_succeeded",
+      walletEpoch: signing.walletEpoch,
+    }).state;
+    const failed = participantAuthenticationWorkflowReducer(authenticating, {
+      failure: authenticationFailure({
+        code: "AUTH_PROOF_INVALID",
+        httpStatus: 401,
+      }),
+      operation: "authenticate",
+      sessionEpoch: authenticating.sessionEpoch,
+      type: "operation_failed",
+      walletEpoch: authenticating.walletEpoch,
+    });
+
+    expect(failed.state.privateParticipant.challenge).toBeNull();
+    const retried = participantAuthenticationWorkflowReducer(failed.state, {
+      type: "retry_requested",
+    });
+    expect(retried.state.status).toBe("connecting");
+    expect(retried.commands[0]?.type).toBe("request_challenge");
+  });
+
+  it("retains a valid challenge for a retryable provider outage", () => {
+    const signing = participantAuthenticationWorkflowReducer(
+      challengeReadyAuthenticationState(),
+      { type: "sign_requested" },
+    ).state;
+    const failed = participantAuthenticationWorkflowReducer(signing, {
+      failure: authenticationFailure({
+        code: "AUTH_PROVIDER_UNAVAILABLE",
+        httpStatus: 503,
+      }),
+      operation: "sign",
+      sessionEpoch: signing.sessionEpoch,
+      type: "operation_failed",
+      walletEpoch: signing.walletEpoch,
+    });
+
+    expect(failed.state.status).toBe("unavailable");
+    expect(failed.state.privateParticipant.challenge).not.toBeNull();
+    const retried = participantAuthenticationWorkflowReducer(failed.state, {
+      type: "retry_requested",
+    });
+    expect(retried.state.status).toBe("signing");
+    expect(retried.commands[0]?.type).toBe("sign_challenge");
+  });
+
+  it("rotates the durable session under a new session epoch", () => {
+    const ready = readyAuthenticationState();
+    const rotation = participantAuthenticationWorkflowReducer(ready, {
+      type: "rotation_requested",
+    });
+
+    expect(rotation.state.status).toBe("rotating");
+    expect(rotation.state.sessionEpoch).toBe(ready.sessionEpoch + 1);
+    expect(rotation.commands).toEqual([{
+      sessionEpoch: rotation.state.sessionEpoch,
+      type: "rotate_session",
+      walletEpoch: rotation.state.walletEpoch,
+    }]);
+
+    const rotatedSession = authenticationSession({
+      sessionId: "durable-session-participant-rotated",
+    });
+    const rotated = participantAuthenticationWorkflowReducer(rotation.state, {
+      participant: rotatedSession,
+      sessionEpoch: rotation.state.sessionEpoch,
+      type: "rotation_succeeded",
+      walletEpoch: rotation.state.walletEpoch,
+    });
+    expect(rotated.state.status).toBe("ready");
+    expect(rotated.state.privateParticipant.session).toEqual(rotatedSession);
+    expect(rotated.state.sessionEpoch).toBe(rotation.state.sessionEpoch);
+  });
+
+  it.each([true, false])(
+    "clears private Participant state before logout completion (ok=%s)",
+    (ok) => {
+      const ready = readyAuthenticationState();
+      const publicCampaign = ready.publicCampaign;
+      const logout = participantAuthenticationWorkflowReducer(ready, {
+        type: "logout_requested",
+      });
+
+      expect(logout.state.status).toBe("loggingOut");
+      expect(logout.state.privateParticipant).toEqual({
+        challenge: null,
+        session: null,
+        wallet: null,
+      });
+      expect(logout.state.publicCampaign).toBe(publicCampaign);
+      expect(logout.commands[0]?.type).toBe("logout_session");
+
+      const completed = participantAuthenticationWorkflowReducer(logout.state, {
+        failure: ok ? null : authenticationFailure({ code: "AUTH_LOGOUT_FAILED" }),
+        ok,
+        sessionEpoch: logout.state.sessionEpoch,
+        type: "logout_completed",
+        walletEpoch: logout.state.walletEpoch,
+      });
+      expect(completed.state.status).toBe("disconnected");
+      expect(completed.state.privateParticipant).toEqual({
+        challenge: null,
+        session: null,
+        wallet: null,
+      });
+      expect(completed.commands).toEqual([]);
+    },
+  );
+
+  it.each([
+    [401, "expired"],
+    [403, "revoked"],
+  ] as const)(
+    "clears only private Participant authority on HTTP %s",
+    (httpStatus, expectedStatus) => {
+      const ready = readyAuthenticationState();
+      const publicCampaign = ready.publicCampaign;
+      const rejected = participantAuthenticationWorkflowReducer(ready, {
+        failure: authenticationFailure({
+          code: httpStatus === 401 ? "AUTH_SESSION_INVALID" : "AUTH_FORBIDDEN",
+          httpStatus,
+        }),
+        sessionEpoch: ready.sessionEpoch,
+        type: "private_request_failed",
+        walletEpoch: ready.walletEpoch,
+      });
+
+      expect(rejected.state.status).toBe(expectedStatus);
+      expect(rejected.state.privateParticipant).toEqual({
+        challenge: null,
+        session: null,
+        wallet: null,
+      });
+      expect(rejected.state.publicCampaign).toBe(publicCampaign);
+      expect(rejected.state.publicCampaign.lastGood).toEqual(feedItem(campaignAId));
+    },
+  );
+
+  it.each([
+    [429, "rateLimited", "retry"],
+    [503, "unavailable", "retry"],
+    [500, "failed", "retry"],
+  ] as const)(
+    "keeps non-authority HTTP %s failures actionable",
+    (httpStatus, expectedStatus, expectedAction) => {
+      const ready = readyAuthenticationState();
+      const failed = participantAuthenticationWorkflowReducer(ready, {
+        failure: authenticationFailure({
+          code: `AUTH_HTTP_${httpStatus}`,
+          httpStatus,
+          retryAfterMs: httpStatus === 429 ? 3_000 : null,
+        }),
+        sessionEpoch: ready.sessionEpoch,
+        type: "private_request_failed",
+        walletEpoch: ready.walletEpoch,
+      });
+
+      expect(failed.state.status).toBe(expectedStatus);
+      expect(failed.state.privateParticipant.session).toBe(
+        ready.privateParticipant.session,
+      );
+      expect(selectParticipantAuthenticationAction(failed.state))
+        .toBe(expectedAction);
+
+      const retried = participantAuthenticationWorkflowReducer(failed.state, {
+        type: "retry_requested",
+      });
+      expect(retried.state.status).toBe("restoring");
+      expect(retried.commands[0]?.type).toBe("restore_session");
+    },
+  );
+
+  it("keeps logout cleanup final when the generic effect failure path is used", () => {
+    const ready = readyAuthenticationState();
+    const logout = participantAuthenticationWorkflowReducer(ready, {
+      type: "logout_requested",
+    });
+    const failed = participantAuthenticationWorkflowReducer(logout.state, {
+      failure: authenticationFailure({ code: "AUTH_LOGOUT_TRANSPORT_FAILED" }),
+      operation: "logout",
+      sessionEpoch: logout.state.sessionEpoch,
+      type: "operation_failed",
+      walletEpoch: logout.state.walletEpoch,
+    });
+
+    expect(failed.state.status).toBe("disconnected");
+    expect(failed.state.privateParticipant).toEqual({
+      challenge: null,
+      session: null,
+      wallet: null,
+    });
+    expect(failed.commands).toEqual([]);
+  });
+
+  it("bounds HTTP 409 recovery to one restore and one reconnect command", () => {
+    const ready = readyAuthenticationState();
+    let reduction = participantAuthenticationWorkflowReducer(ready, {
+      failure: authenticationFailure({
+        code: "AUTH_CONFLICT",
+        httpStatus: 409,
+      }),
+      sessionEpoch: ready.sessionEpoch,
+      type: "private_request_failed",
+      walletEpoch: ready.walletEpoch,
+    });
+
+    expect(reduction.state.status).toBe("restoring");
+    expect(reduction.state.conflictRecoveryStep).toBe(1);
+    expect(reduction.commands[0]?.type).toBe("restore_session");
+
+    let state = reduction.state;
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      failure: authenticationFailure({ code: "AUTH_CONFLICT", httpStatus: 409 }),
+      operation: "restore",
+      sessionEpoch: state.sessionEpoch,
+      type: "operation_failed",
+      walletEpoch: state.walletEpoch,
+    });
+    expect(reduction.state.status).toBe("connecting");
+    expect(reduction.state.conflictRecoveryStep).toBe(2);
+    expect(reduction.commands[0]?.type).toBe("connect_wallet");
+
+    state = reduction.state;
+    reduction = participantAuthenticationWorkflowReducer(state, {
+      failure: authenticationFailure({ code: "AUTH_CONFLICT", httpStatus: 409 }),
+      operation: "connect",
+      sessionEpoch: state.sessionEpoch,
+      type: "operation_failed",
+      walletEpoch: state.walletEpoch,
+    });
+    expect(reduction.state.status).toBe("failed");
+    expect(reduction.state.conflictRecoveryStep)
+      .toBe(PARTICIPANT_AUTHENTICATION_MAX_CONFLICT_RECOVERY_STEPS);
+    expect(reduction.commands).toEqual([]);
+    expect(selectParticipantAuthenticationAction(reduction.state)).toBe("connect");
+  });
+
+  it.each([
+    "account_changed",
+    "chain_changed",
+    "network_changed",
+    "provider_disconnected",
+  ] as const)(
+    "increments both epochs and rejects late completions after %s",
+    (reason) => {
+      const ready = readyAuthenticationState();
+      const rotation = participantAuthenticationWorkflowReducer(ready, {
+        type: "rotation_requested",
+      });
+      const invalidated = participantAuthenticationWorkflowReducer(rotation.state, {
+        reason,
+        type: "wallet_context_changed",
+      });
+
+      expect(invalidated.state.walletEpoch).toBe(rotation.state.walletEpoch + 1);
+      expect(invalidated.state.sessionEpoch).toBe(rotation.state.sessionEpoch + 1);
+      expect(invalidated.state.status).toBe("disconnected");
+      expect(invalidated.state.privateParticipant.session).toBeNull();
+
+      const late = participantAuthenticationWorkflowReducer(invalidated.state, {
+        participant: authenticationSession({ sessionId: `late-${reason}` }),
+        sessionEpoch: rotation.state.sessionEpoch,
+        type: "rotation_succeeded",
+        walletEpoch: rotation.state.walletEpoch,
+      });
+      expect(late.state).toBe(invalidated.state);
+      expect(late.writeCount).toBe(0);
+      expect(late.commands).toEqual([]);
+    },
+  );
+
+  it("treats an epoch mismatch on every async completion as an exact no-op", () => {
+    const connecting = participantAuthenticationWorkflowReducer(
+      createParticipantAuthenticationWorkflowState(),
+      { type: "connect_requested" },
+    ).state;
+    const completions = [
+      { type: "wallet_connected", wallet: authenticationWallet },
+      {
+        challenge: {
+          challengeId: "stale-challenge",
+          expiresAt: "2026-07-18T13:05:00.000Z",
+        },
+        type: "challenge_succeeded",
+      },
+      { type: "sign_succeeded" },
+      { participant: authenticationSession(), type: "authenticate_succeeded" },
+      { outcome: "ready", participant: authenticationSession(), type: "restore_completed" },
+      { participant: authenticationSession(), type: "rotation_succeeded" },
+      { failure: null, ok: true, type: "logout_completed" },
+      {
+        failure: authenticationFailure(),
+        operation: "connect",
+        type: "operation_failed",
+      },
+      { failure: authenticationFailure(), type: "private_request_failed" },
+    ] as const;
+
+    for (const completion of completions) {
+      const stale = participantAuthenticationWorkflowReducer(connecting, {
+        ...completion,
+        sessionEpoch: connecting.sessionEpoch,
+        walletEpoch: connecting.walletEpoch + 1,
+      });
+      expect(stale.state).toBe(connecting);
+      expect(stale.writeCount).toBe(0);
+      expect(stale.commands).toEqual([]);
+    }
   });
 });
