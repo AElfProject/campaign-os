@@ -11,5 +11,20 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS wallet_session_transition_guard
+  ON campaign_os.wallet_sessions;
+DROP TRIGGER IF EXISTS wallet_session_challenge_guard
+  ON campaign_os.wallet_sessions;
+DROP TRIGGER IF EXISTS wallet_auth_challenge_transition_guard
+  ON campaign_os.wallet_auth_challenges;
+DROP TRIGGER IF EXISTS wallet_auth_challenge_insert_guard
+  ON campaign_os.wallet_auth_challenges;
+
 DROP TABLE campaign_os.wallet_sessions;
 DROP TABLE campaign_os.wallet_auth_challenges;
+
+DROP FUNCTION IF EXISTS campaign_os.protect_wallet_session_transition();
+DROP FUNCTION IF EXISTS campaign_os.validate_wallet_session_challenge();
+DROP FUNCTION IF EXISTS campaign_os.protect_wallet_auth_challenge_transition();
+DROP FUNCTION IF EXISTS campaign_os.validate_wallet_auth_challenge_insert();
+DROP FUNCTION IF EXISTS campaign_os.valid_wallet_auth_id_array(jsonb);

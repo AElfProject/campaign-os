@@ -1,5 +1,43 @@
+CREATE FUNCTION campaign_os.valid_wallet_auth_id_array(value jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+DECLARE
+  item jsonb;
+  item_value text;
+  seen_values text[] := ARRAY[]::text[];
+BEGIN
+  IF jsonb_typeof(value) <> 'array'
+    OR jsonb_array_length(value) > 64
+    OR octet_length(value::text) > 8192
+  THEN
+    RETURN false;
+  END IF;
+
+  FOR item IN SELECT element FROM jsonb_array_elements(value) AS entries(element)
+  LOOP
+    IF jsonb_typeof(item) <> 'string' THEN
+      RETURN false;
+    END IF;
+    item_value := item #>> '{}';
+    IF length(item_value) NOT BETWEEN 1 AND 128
+      OR item_value !~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+      OR item_value = ANY(seen_values)
+    THEN
+      RETURN false;
+    END IF;
+    seen_values := array_append(seen_values, item_value);
+  END LOOP;
+
+  RETURN true;
+END;
+$$;
+
 CREATE TABLE campaign_os.wallet_auth_challenges (
-  id text PRIMARY KEY,
+  id text NOT NULL,
   version text NOT NULL,
   wallet_address text NOT NULL,
   subject_key text NOT NULL,
@@ -23,6 +61,7 @@ CREATE TABLE campaign_os.wallet_auth_challenges (
   trace_id text NOT NULL,
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL,
+  CONSTRAINT campaign_os_wallet_auth_challenges_pkey PRIMARY KEY (id),
   CONSTRAINT campaign_os_wallet_auth_challenges_id_check CHECK (
     length(id) BETWEEN 1 AND 160
     AND id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
@@ -117,8 +156,81 @@ CREATE INDEX campaign_os_wallet_auth_challenges_fingerprint_rate_idx
     client_fingerprint_digest, rate_window_started_at, status, id
   ) WHERE client_fingerprint_digest IS NOT NULL;
 
+CREATE FUNCTION campaign_os.validate_wallet_auth_challenge_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status <> 'issued'
+    OR NEW.state_version <> 1
+    OR NEW.verification_attempts <> 0
+    OR NEW.rate_attempt_count <> 0
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'Wallet authentication challenges must begin in the issued state.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER wallet_auth_challenge_insert_guard
+BEFORE INSERT ON campaign_os.wallet_auth_challenges
+FOR EACH ROW EXECUTE FUNCTION campaign_os.validate_wallet_auth_challenge_insert();
+
+CREATE FUNCTION campaign_os.protect_wallet_auth_challenge_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.status <> 'issued' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet authentication challenge terminal state is immutable.';
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.version IS DISTINCT FROM OLD.version
+    OR NEW.wallet_address IS DISTINCT FROM OLD.wallet_address
+    OR NEW.subject_key IS DISTINCT FROM OLD.subject_key
+    OR NEW.adapter_id IS DISTINCT FROM OLD.adapter_id
+    OR NEW.chain_id IS DISTINCT FROM OLD.chain_id
+    OR NEW.network IS DISTINCT FROM OLD.network
+    OR NEW.ca_hash IS DISTINCT FROM OLD.ca_hash
+    OR NEW.nonce_digest IS DISTINCT FROM OLD.nonce_digest
+    OR NEW.message_digest IS DISTINCT FROM OLD.message_digest
+    OR NEW.client_fingerprint_digest IS DISTINCT FROM OLD.client_fingerprint_digest
+    OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
+    OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet authentication challenge canonical facts are immutable.';
+  END IF;
+
+  IF NEW.status NOT IN ('issued', 'consumed', 'rejected', 'expired')
+    OR NEW.state_version <> OLD.state_version + 1
+    OR NEW.verification_attempts < OLD.verification_attempts
+    OR NEW.verification_attempts > OLD.verification_attempts + 1
+    OR NEW.updated_at < OLD.updated_at
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet authentication challenge transition is invalid.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER wallet_auth_challenge_transition_guard
+BEFORE UPDATE ON campaign_os.wallet_auth_challenges
+FOR EACH ROW EXECUTE FUNCTION campaign_os.protect_wallet_auth_challenge_transition();
+
 CREATE TABLE campaign_os.wallet_sessions (
-  id text PRIMARY KEY,
+  id text NOT NULL,
   credential_digest text NOT NULL,
   csrf_token_digest text NOT NULL,
   challenge_id text NOT NULL,
@@ -149,6 +261,7 @@ CREATE TABLE campaign_os.wallet_sessions (
   last_trace_id text NOT NULL,
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL,
+  CONSTRAINT campaign_os_wallet_sessions_pkey PRIMARY KEY (id),
   CONSTRAINT campaign_os_wallet_sessions_id_check CHECK (
     length(id) BETWEEN 1 AND 160
     AND id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
@@ -211,12 +324,10 @@ CREATE TABLE campaign_os.wallet_sessions (
     AND credential_boundary ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
   ),
   CONSTRAINT campaign_os_wallet_sessions_roles_check CHECK (
-    jsonb_typeof(role_ids) = 'array'
-    AND jsonb_array_length(role_ids) <= 64
+    campaign_os.valid_wallet_auth_id_array(role_ids)
   ),
   CONSTRAINT campaign_os_wallet_sessions_capabilities_check CHECK (
-    jsonb_typeof(capabilities) = 'array'
-    AND jsonb_array_length(capabilities) <= 64
+    campaign_os.valid_wallet_auth_id_array(capabilities)
   ),
   CONSTRAINT campaign_os_wallet_sessions_status_check CHECK (
     status IN ('active', 'revoked', 'expired')
@@ -255,3 +366,116 @@ CREATE INDEX campaign_os_wallet_sessions_subject_inventory_idx
   ON campaign_os.wallet_sessions (subject_key, status, issued_at, id);
 CREATE INDEX campaign_os_wallet_sessions_expiry_idx
   ON campaign_os.wallet_sessions (status, idle_expires_at, absolute_expires_at, id);
+
+CREATE FUNCTION campaign_os.validate_wallet_session_challenge()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status <> 'active' OR NEW.version <> 1 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'Wallet sessions must begin in the active state at version one.';
+  END IF;
+
+  PERFORM 1
+  FROM campaign_os.wallet_auth_challenges
+  WHERE id = NEW.challenge_id
+    AND status = 'consumed'
+    AND wallet_address = NEW.wallet_address
+    AND chain_id = NEW.chain_id
+    AND network = NEW.network
+    AND adapter_id = NEW.adapter_id
+    AND ca_hash IS NOT DISTINCT FROM NEW.ca_hash;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'Wallet session requires one consumed matching authentication challenge.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER wallet_session_challenge_guard
+BEFORE INSERT ON campaign_os.wallet_sessions
+FOR EACH ROW EXECUTE FUNCTION campaign_os.validate_wallet_session_challenge();
+
+CREATE FUNCTION campaign_os.protect_wallet_session_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.status <> 'active' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet session terminal state is immutable.';
+  END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id
+    OR NEW.challenge_id IS DISTINCT FROM OLD.challenge_id
+    OR NEW.subject_key IS DISTINCT FROM OLD.subject_key
+    OR NEW.wallet_address IS DISTINCT FROM OLD.wallet_address
+    OR NEW.account_type IS DISTINCT FROM OLD.account_type
+    OR NEW.wallet_source IS DISTINCT FROM OLD.wallet_source
+    OR NEW.chain_id IS DISTINCT FROM OLD.chain_id
+    OR NEW.network IS DISTINCT FROM OLD.network
+    OR NEW.adapter_id IS DISTINCT FROM OLD.adapter_id
+    OR NEW.proof_method IS DISTINCT FROM OLD.proof_method
+    OR NEW.signer_address IS DISTINCT FROM OLD.signer_address
+    OR NEW.ca_hash IS DISTINCT FROM OLD.ca_hash
+    OR NEW.proof_digest IS DISTINCT FROM OLD.proof_digest
+    OR NEW.verified_at IS DISTINCT FROM OLD.verified_at
+    OR NEW.credential_boundary IS DISTINCT FROM OLD.credential_boundary
+    OR NEW.role_ids IS DISTINCT FROM OLD.role_ids
+    OR NEW.capabilities IS DISTINCT FROM OLD.capabilities
+    OR NEW.membership_revision IS DISTINCT FROM OLD.membership_revision
+    OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
+    OR NEW.absolute_expires_at IS DISTINCT FROM OLD.absolute_expires_at
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet session subject and proof lineage are immutable.';
+  END IF;
+
+  IF NEW.status NOT IN ('active', 'revoked', 'expired')
+    OR NEW.version < OLD.version
+    OR NEW.version > OLD.version + 1
+    OR NEW.last_seen_at < OLD.last_seen_at
+    OR NEW.idle_expires_at < OLD.idle_expires_at
+    OR NEW.updated_at < OLD.updated_at
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet session transition is invalid.';
+  END IF;
+
+  IF NEW.credential_digest IS DISTINCT FROM OLD.credential_digest
+    OR NEW.csrf_token_digest IS DISTINCT FROM OLD.csrf_token_digest
+  THEN
+    IF NEW.status <> 'active'
+      OR NEW.version <> OLD.version + 1
+      OR NEW.credential_digest IS NOT DISTINCT FROM OLD.credential_digest
+      OR NEW.csrf_token_digest IS NOT DISTINCT FROM OLD.csrf_token_digest
+    THEN
+      RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'Wallet session credential rotation is invalid.';
+    END IF;
+  END IF;
+
+  IF NEW.status <> 'active' AND NEW.version <> OLD.version + 1 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Wallet session terminal transition must advance version.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER wallet_session_transition_guard
+BEFORE UPDATE ON campaign_os.wallet_sessions
+FOR EACH ROW EXECUTE FUNCTION campaign_os.protect_wallet_session_transition();

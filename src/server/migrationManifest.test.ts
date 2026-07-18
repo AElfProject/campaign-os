@@ -12,7 +12,7 @@ import { defaultSchemaMigrations } from "./migrationRunner";
 describe("migration manifest", () => {
   it("locks the participant wallet authentication migration identity, paths, and checksum", () => {
     expect(participantWalletAuthenticationMigration).toEqual({
-      checksum: "919c912bfd715b016d012f3926bd4cd9f28c106e4a762e9bf2f7e9d3f7efa151",
+      checksum: "d8d7dea2d7e8d4d0f8d195082cad72c01007dd28a63d2b97b27fa4584940db0c",
       downPath: "db/migrations/0005_participant_wallet_authentication.down.sql",
       id: "0005_participant_wallet_authentication",
       upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
