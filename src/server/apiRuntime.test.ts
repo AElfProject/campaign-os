@@ -1235,7 +1235,15 @@ const capabilityDigest = (values: readonly string[]): string => createHash("sha2
   .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
   .digest("hex");
 
-const createLiveWalletAuthenticationAuthorityRuntime = () => {
+const createLiveWalletAuthenticationAuthorityRuntime = ({
+  capabilities = ["campaign:read", "eligibility:read", "task:verify"],
+  roleIds = ["participant"],
+  walletAddress = "2YVwLiveParticipant",
+}: {
+  capabilities?: readonly string[];
+  roleIds?: readonly string[];
+  walletAddress?: string;
+} = {}) => {
   const subject = issueVerifiedWalletSubject({
     accountType: "EOA",
     adapterId: "aelf-eoa-v1",
@@ -1243,19 +1251,21 @@ const createLiveWalletAuthenticationAuthorityRuntime = () => {
     network: "mainnet",
     proofDigest: "a".repeat(64),
     proofMethod: "AELF_EOA_RECOVERABLE",
-    signerAddress: "2YVwLiveSigner",
+    signerAddress: walletAddress,
     verifiedAt: "2026-07-18T00:00:00.000Z",
-    walletAddress: "2YVwLiveParticipant",
+    walletAddress,
     walletSource: "PORTKEY_EOA_EXTENSION",
   });
   const authority = issueResolvedWalletSessionAuthority({
     absoluteExpiresAt: "2099-07-18T04:00:00.000Z",
-    capabilities: ["campaign:read", "eligibility:read", "task:verify"],
+    capabilities,
     credentialBoundary: "wallet-auth-cookie/v1",
     idleExpiresAt: "2099-07-18T03:00:00.000Z",
     membershipRevision: "membership-live-v1",
-    roleIds: ["participant"],
-    sessionId: "sess-live-participant",
+    roleIds,
+    sessionId: roleIds.includes("project_owner")
+      ? "sess-live-project-owner"
+      : "sess-live-participant",
     subject,
     version: 3,
   });
@@ -4924,6 +4934,59 @@ describe("Campaign OS API runtime", () => {
       "owner-detail-project",
     ]);
     await ownerRuntime.close();
+  });
+
+  it("uses the cookie-derived live Project Owner for repository list and detail", async () => {
+    const walletAddress = "2YVwLiveProjectOwner";
+    const campaignDbRepository = createCampaignDbRepository();
+    const draft = await campaignDbRepository.createDraft({
+      duration: "2026-10-15/2026-10-31",
+      endTime: "2026-10-31T23:59:59Z",
+      goal: "Live Owner recovery",
+      ownerAddress: walletAddress,
+      projectId: "live-owner-project",
+      rewardDescription: "Live Owner recovery reward description.",
+      startTime: "2026-10-15T00:00:00Z",
+      status: "draft",
+    });
+    const authority = createLiveWalletAuthenticationAuthorityRuntime({
+      capabilities: [
+        "campaign:read",
+        "campaign:write",
+        "campaign:ownership_mutation",
+        "task:build",
+        "export:preview",
+      ],
+      roleIds: ["project_owner"],
+      walletAddress,
+    });
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository,
+      walletAuthenticationRuntime: authority.runtime,
+    });
+
+    const list = await runtime.handle({
+      headers: liveTaskVerificationHeaders({
+        "x-campaign-os-trace-id": "trace-live-owner-list",
+      }),
+      method: "GET",
+      path: "/api/projects/live-owner-project/campaigns?status=draft&limit=100",
+    });
+    const detail = await runtime.handle({
+      headers: liveTaskVerificationHeaders({
+        "x-campaign-os-trace-id": "trace-live-owner-detail",
+      }),
+      method: "GET",
+      path: `/api/owner/campaigns/${draft.id}`,
+    });
+
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignListPayload>>(list).payload.items)
+      .toContainEqual(expect.objectContaining({ id: draft.id, status: "draft" }));
+    expect(expectSuccessData<LocalServiceEnvelope<CampaignDetailPayload>>(detail).payload.item)
+      .toMatchObject({ id: draft.id, ownerAddress: walletAddress });
+    expect(authority.resolveAuthorization).toHaveBeenCalledTimes(2);
+    await runtime.close();
+    expect(authority.stop).toHaveBeenCalledTimes(1);
   });
 
   it("blocks live verification before runtime execution and repository success writes for every inactive posture", async () => {

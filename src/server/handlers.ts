@@ -505,7 +505,8 @@ const ownerCampaignListLimit = (value: string | undefined) => {
 };
 
 const issuedOwnerAddress = (context: ApiRuntimeHandlerContext) => {
-  const address = context.auth?.session?.address;
+  const address = context.liveAuthorization?.subject.walletAddress
+    ?? context.auth?.session?.address;
 
   if (!address) {
     throw invalidRequest("authSession", "Issued owner session is required for owner campaign recovery.");
@@ -3177,7 +3178,7 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
     }
 
     const ownerAccess = evaluateOwnerCampaignDetailAccess({
-      authenticatedOwner: context.auth?.session?.address === campaign.ownerAddress,
+      authenticatedOwner: issuedOwnerAddress(context) === campaign.ownerAddress,
       campaign: campaignAccessRecord(campaign),
     });
 
