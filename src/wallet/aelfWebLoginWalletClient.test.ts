@@ -798,6 +798,17 @@ describe("AElf Web Login WalletClient adapter", () => {
     ["missing globals", undefined],
     ["empty globals", Object.freeze({})],
     [
+      "partial globals",
+      Object.freeze({
+        Portkey: Object.freeze({
+          isPortkey: true,
+          on: vi.fn(),
+          removeListener: vi.fn(),
+          request: vi.fn(),
+        }),
+      }),
+    ],
+    [
       "malformed globals",
       Object.freeze({
         NightElf: Object.freeze({ AElf: "not-a-constructor" }),
@@ -812,37 +823,24 @@ describe("AElf Web Login WalletClient adapter", () => {
       }),
     ],
   ])("composes deny-by-default browser availability for %s", async (_label, browserGlobal) => {
-    const client = createDefaultAelfWebLoginBrowserWalletClient({
-      adapterConfig: config([
-        entry(),
-        entry({
-          adapterId: "nightelf",
-          label: "NightElf",
-          packageName: packages.nightElf,
-          recommended: false,
-        }),
-      ]),
+    const composition = createDefaultAelfWebLoginBrowserWalletClient({
       browserGlobal,
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([
+          {
+            adapterId: "portkey-discover-eoa",
+            enabled: true,
+            label: "Portkey EOA",
+            recommended: true,
+          },
+          { adapterId: "nightelf", enabled: true, label: "NightElf", recommended: false },
+        ]),
+      },
       runtime,
-      traceIdFactory: () => "trace-default-browser",
     });
 
-    await expect(client.listAvailableWallets()).resolves.toEqual([
-      {
-        adapterId: "portkey-discover-eoa",
-        enabled: false,
-        label: "Portkey EOA",
-        recommended: false,
-        status: "unavailable",
-      },
-      {
-        adapterId: "nightelf",
-        enabled: false,
-        label: "NightElf",
-        recommended: false,
-        status: "unavailable",
-      },
-    ]);
+    expect(composition).toEqual({ client: undefined, options: [], status: "unavailable" });
   });
 
   it("composes available default browser providers behind the internal WalletClient API", async () => {
@@ -855,28 +853,45 @@ describe("AElf Web Login WalletClient adapter", () => {
         request: vi.fn(),
       }),
     });
-    const client = createDefaultAelfWebLoginBrowserWalletClient({
-      adapterConfig: config([
-        entry(),
-        entry({
-          adapterId: "nightelf",
-          label: "NightElf",
-          packageName: packages.nightElf,
-          recommended: false,
-        }),
-      ]),
+    const composition = createDefaultAelfWebLoginBrowserWalletClient({
       browserGlobal,
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([
+          {
+            adapterId: "portkey-discover-eoa",
+            enabled: true,
+            label: "Portkey EOA",
+            recommended: true,
+          },
+          { adapterId: "nightelf", enabled: true, label: "NightElf", recommended: false },
+        ]),
+      },
       runtime,
     });
 
-    await expect(client.listAvailableWallets()).resolves.toEqual([
+    expect(composition.status).toBe("ready");
+    expect(composition.options).toEqual([
       {
+        accountType: "EOA",
+        adapterId: "nightelf",
+        label: "NightElf",
+        recommended: false,
+        status: "available",
+      },
+      {
+        accountType: "EOA",
         adapterId: "portkey-discover-eoa",
-        enabled: true,
         label: "Portkey EOA",
         recommended: true,
         status: "available",
       },
+    ]);
+    expect(JSON.stringify(composition.options)).not.toMatch(/packageName|providerAvailable/);
+    if (composition.status !== "ready") {
+      throw new Error("Expected ready browser wallet composition.");
+    }
+    await expect(composition.client.listAvailableWallets()).resolves.toEqual([
       {
         adapterId: "nightelf",
         enabled: true,
@@ -884,8 +899,15 @@ describe("AElf Web Login WalletClient adapter", () => {
         recommended: false,
         status: "available",
       },
+      {
+        adapterId: "portkey-discover-eoa",
+        enabled: true,
+        label: "Portkey EOA",
+        recommended: true,
+        status: "available",
+      },
     ]);
-    expect(Object.keys(client).sort()).toEqual([
+    expect(Object.keys(composition.client).sort()).toEqual([
       "close",
       "connect",
       "disconnect",
@@ -893,6 +915,29 @@ describe("AElf Web Login WalletClient adapter", () => {
       "signMessage",
       "subscribeAccountAndChain",
     ]);
+  });
+
+  it("returns disabled with no client when browser wallet auth is not enabled", () => {
+    const composition = createDefaultAelfWebLoginBrowserWalletClient({
+      browserGlobal: Object.freeze({}),
+      env: {},
+      runtime,
+    });
+
+    expect(composition).toEqual({ client: undefined, options: [], status: "disabled" });
+  });
+
+  it("returns unavailable with no client for malformed browser-safe env", () => {
+    const composition = createDefaultAelfWebLoginBrowserWalletClient({
+      browserGlobal: Object.freeze({}),
+      env: {
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: "not-json",
+      },
+      runtime,
+    });
+
+    expect(composition).toEqual({ client: undefined, options: [], status: "unavailable" });
   });
 
   it("keeps alpha imports inside the adapter and preserves exact package pins", () => {

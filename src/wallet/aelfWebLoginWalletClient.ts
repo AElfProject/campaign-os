@@ -1,6 +1,7 @@
-import type {
-  BrowserWalletAdapterConfigEntry,
-  WalletAdapterConfig,
+import {
+  resolveWalletAdapterConfig,
+  type BrowserWalletAdapterConfigEntry,
+  type WalletAdapterConfig,
 } from "./walletAdapterConfig";
 import {
   WalletClientError,
@@ -31,6 +32,7 @@ const textEncoder = new TextEncoder();
 
 const discoverPackageName = "@aelf-web-login/wallet-adapter-portkey-discover";
 const nightElfPackageName = "@aelf-web-login/wallet-adapter-night-elf";
+const defaultBrowserAdapterIds = Object.freeze(["portkey-discover-eoa", "nightelf"] as const);
 
 export type AelfWebLoginAccountType = "AA" | "EOA";
 
@@ -137,12 +139,36 @@ export interface CreateAelfWebLoginWalletClientOptions {
   readonly traceIdFactory?: () => string;
 }
 
-export interface CreateDefaultAelfWebLoginBrowserWalletClientOptions {
-  readonly adapterConfig: WalletAdapterConfig;
-  readonly browserGlobal?: unknown;
-  readonly runtime: AelfWebLoginRuntimeConfig;
-  readonly traceIdFactory?: () => string;
+export interface AelfWebLoginBrowserSafeEnv {
+  readonly VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED?: string;
+  readonly VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON?: string;
 }
+
+export interface AelfWebLoginBrowserWalletOptionDescriptor {
+  readonly accountType: AelfWebLoginAccountType;
+  readonly adapterId: string;
+  readonly label: string;
+  readonly recommended: boolean;
+  readonly status: "available" | "disabled" | "unavailable";
+}
+
+export interface CreateDefaultAelfWebLoginBrowserWalletClientOptions {
+  readonly browserGlobal?: unknown;
+  readonly env: AelfWebLoginBrowserSafeEnv;
+  readonly runtime: AelfWebLoginRuntimeConfig;
+}
+
+export type AelfWebLoginBrowserWalletComposition =
+  | Readonly<{
+    client: WalletClient;
+    options: readonly AelfWebLoginBrowserWalletOptionDescriptor[];
+    status: "ready";
+  }>
+  | Readonly<{
+    client: undefined;
+    options: readonly [];
+    status: "disabled" | "unavailable";
+  }>;
 
 export interface CreateRegisteredAelfWebLoginWalletClientOptions {
   readonly config: WalletAdapterConfig;
@@ -2117,18 +2143,72 @@ const isNightElfProviderAvailable = (value: unknown): boolean =>
   && value !== null
   && method(value, "AElf") !== undefined;
 
-export const createDefaultAelfWebLoginBrowserWalletClient = ({
-  adapterConfig,
-  browserGlobal = globalThis,
-  runtime,
-  traceIdFactory,
-}: CreateDefaultAelfWebLoginBrowserWalletClientOptions): WalletClient =>
-  createAelfWebLoginWalletClient({
-    adapterConfig,
-    bindings: createDefaultAelfWebLoginAdapterBindings(Object.freeze({
-      discover: isDiscoverProviderAvailable(browserGlobalValue(browserGlobal, "Portkey")),
-      nightElf: isNightElfProviderAvailable(browserGlobalValue(browserGlobal, "NightElf")),
-    })),
-    runtime,
-    traceIdFactory,
+const emptyBrowserWalletComposition = (
+  status: "disabled" | "unavailable",
+): AelfWebLoginBrowserWalletComposition => Object.freeze({
+  client: undefined,
+  options: Object.freeze([]),
+  status,
+});
+
+const browserSafeEnv = (
+  env: AelfWebLoginBrowserSafeEnv,
+): Readonly<Record<string, string | undefined>> => {
+  const enabled = browserGlobalValue(env, "VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED");
+  const adaptersJson = browserGlobalValue(env, "VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON");
+  return Object.freeze({
+    VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: typeof enabled === "string" ? enabled : undefined,
+    VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: typeof adaptersJson === "string" ? adaptersJson : undefined,
   });
+};
+
+export const createDefaultAelfWebLoginBrowserWalletClient = ({
+  browserGlobal = globalThis,
+  env,
+  runtime,
+}: CreateDefaultAelfWebLoginBrowserWalletClientOptions): AelfWebLoginBrowserWalletComposition => {
+  if (!validRuntime(runtime)) {
+    return emptyBrowserWalletComposition("unavailable");
+  }
+  const providerAvailability = Object.freeze({
+    discover: isDiscoverProviderAvailable(browserGlobalValue(browserGlobal, "Portkey")),
+    nightElf: isNightElfProviderAvailable(browserGlobalValue(browserGlobal, "NightElf")),
+  });
+  const adapterConfig = resolveWalletAdapterConfig({
+    env: browserSafeEnv(env),
+    runtimeAvailability: Object.freeze({
+      nightelf: providerAvailability.nightElf ? "available" : "unavailable",
+      "portkey-discover-eoa": providerAvailability.discover ? "available" : "unavailable",
+    }),
+    serverBindingIds: defaultBrowserAdapterIds,
+  });
+  if (adapterConfig.status === "disabled") {
+    return emptyBrowserWalletComposition("disabled");
+  }
+  if (adapterConfig.status !== "ready" || adapterConfig.adapters.length === 0) {
+    return emptyBrowserWalletComposition("unavailable");
+  }
+
+  const bindings = createDefaultAelfWebLoginAdapterBindings(providerAvailability);
+  const bindingByPackageName = new Map(bindings.map((binding) => [binding.packageName, binding]));
+  const options: AelfWebLoginBrowserWalletOptionDescriptor[] = [];
+  for (const adapter of adapterConfig.adapters) {
+    const binding = bindingByPackageName.get(adapter.packageName);
+    if (!binding) {
+      return emptyBrowserWalletComposition("unavailable");
+    }
+    options.push(Object.freeze({
+      accountType: binding.accountType,
+      adapterId: adapter.adapterId,
+      label: adapter.label,
+      recommended: adapter.recommended,
+      status: adapter.status,
+    }));
+  }
+
+  return Object.freeze({
+    client: createAelfWebLoginWalletClient({ adapterConfig, bindings, runtime }),
+    options: Object.freeze(options),
+    status: "ready",
+  });
+};
