@@ -1,8 +1,14 @@
 import "@testing-library/jest-dom/vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminDurableReviewApiBridge } from "../api/adminDurableReviewApiBridge";
+import type {
+  LiveWalletAuthenticationApiBridge,
+  LiveWalletAuthenticationChallenge,
+  LiveWalletAuthenticationFailure,
+  LiveWalletAuthenticationSession,
+} from "../api/liveWalletAuthenticationApiBridge";
 import { submitWalletSessionApiPreview, type WalletSessionApiBridgeState } from "../api/walletSessionApiBridge";
 import type {
   OwnerCampaignDetailResult,
@@ -31,7 +37,16 @@ import {
   browserLocalePromptDismissedStorageKey,
   localePreferenceStorageKey,
 } from "../i18n/useLocale";
-import { App } from "./App";
+import type {
+  WalletClient,
+  WalletClientAdapterAvailability,
+  WalletClientEvent,
+} from "../wallet/walletClient";
+import {
+  App,
+  createDefaultLiveWalletAppComposition,
+  type LiveWalletAppComposition,
+} from "./App";
 
 vi.mock("../api/walletSessionApiBridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/walletSessionApiBridge")>();
@@ -2416,7 +2431,9 @@ describe("App Owner campaign authority", () => {
     await connectHeaderWallet();
     fireEvent.click(screen.getByRole("button", { name: "User App" }));
 
-    expect(await screen.findByRole("button", { name: "Reconnect wallet" })).toBeInTheDocument();
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Reconnect wallet" }),
+    ).toBeInTheDocument());
     expect(participantBridge.listCampaigns).not.toHaveBeenCalled();
   });
 
@@ -2478,6 +2495,538 @@ describe("App Owner campaign authority", () => {
     await act(async () => {
       resolveSessionB(appOwnerList([]));
       await sessionBRecovery;
+    });
+  });
+});
+
+describe("App live Participant wallet authentication", () => {
+  const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+  const originalLiveWalletAuthEnabled =
+    import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED;
+  const originalStageReviewEnabled = import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED;
+  const originalWalletAdaptersJson = import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON;
+  const adapterId = "portkey-discover-eoa";
+  const walletAddress = ["test", "participant", "wallet", "address"].join("-");
+  const nonce = "n".repeat(43);
+  const challengeMessage = [
+    "aelf Campaign OS Wallet Authentication",
+    "Version: campaign-os-wallet-auth/v1",
+    "Domain: 127.0.0.1:5193",
+    "URI: http://127.0.0.1:5193/",
+    "Audience: campaign-os",
+    `Wallet Address: ${walletAddress}`,
+    `Adapter: ${adapterId}`,
+    "Chain ID: AELF",
+    "Network: testnet",
+    "CA Hash: -",
+    `Nonce: ${nonce}`,
+    "Issued At: 2026-07-18T01:00:00.000Z",
+    "Expires At: 2026-07-18T01:05:00.000Z",
+    "Request ID: app-live-wallet-request",
+  ].join("\n");
+  const challenge: LiveWalletAuthenticationChallenge = {
+    adapterId,
+    challengeId: "challenge-app-live-wallet",
+    chainId: "AELF",
+    expiresAt: "2026-07-18T01:05:00.000Z",
+    message: challengeMessage,
+    network: "testnet",
+    version: "campaign-os-wallet-auth/v1",
+    walletAddress,
+  };
+  const liveSession: LiveWalletAuthenticationSession = {
+    absoluteExpiresAt: "2026-07-18T09:00:00.000Z",
+    accountType: "EOA",
+    capabilities: ["PARTICIPATE_CAMPAIGN"],
+    chainId: "AELF",
+    idleExpiresAt: "2026-07-18T01:30:00.000Z",
+    issuedAt: "2026-07-18T01:00:00.000Z",
+    network: "testnet",
+    roles: ["participant"],
+    sessionId: "session-app-live-wallet",
+    status: "active",
+    walletAddress,
+    walletSource: "PORTKEY_EOA_EXTENSION",
+  };
+  const availability: readonly WalletClientAdapterAvailability[] = [{
+    adapterId,
+    enabled: true,
+    label: "Portkey EOA",
+    recommended: true,
+    status: "available",
+  }];
+  const disconnectedFailure = (): LiveWalletAuthenticationFailure => ({
+    category: "unauthorized",
+    code: "WALLET_AUTH_SESSION_MISSING",
+    httpStatus: 401,
+    ok: false,
+    reconnectRequired: true,
+    retryable: false,
+    traceId: "trace-app-live-disconnected",
+  });
+
+  const createLiveBridge = (
+    overrides: Partial<LiveWalletAuthenticationApiBridge> = {},
+  ): LiveWalletAuthenticationApiBridge => ({
+    clearLocalSession: vi.fn(),
+    close: vi.fn(),
+    getCurrentSession: vi.fn(async () => disconnectedFailure()),
+    issueChallenge: vi.fn<LiveWalletAuthenticationApiBridge["issueChallenge"]>(async () => ({
+      challenge,
+      httpStatus: 201,
+      ok: true,
+      status: "challenge_issued",
+      traceId: "trace-app-live-challenge",
+    })),
+    issueSession: vi.fn<LiveWalletAuthenticationApiBridge["issueSession"]>(async () => ({
+      httpStatus: 201,
+      ok: true,
+      session: liveSession,
+      status: "authenticated",
+      traceId: "trace-app-live-authenticated",
+    })),
+    logout: vi.fn<LiveWalletAuthenticationApiBridge["logout"]>(async () => ({
+      httpStatus: 200,
+      localSessionCleared: true,
+      ok: true,
+      revoked: true,
+      status: "logged_out",
+      traceId: "trace-app-live-logout",
+    })),
+    rotateSession: vi.fn<LiveWalletAuthenticationApiBridge["rotateSession"]>(async () => ({
+      httpStatus: 200,
+      ok: true,
+      session: liveSession,
+      status: "rotated",
+      traceId: "trace-app-live-rotate",
+    })),
+    ...overrides,
+  });
+
+  const createLiveClient = (
+    overrides: Partial<WalletClient> = {},
+  ): WalletClient => ({
+    close: vi.fn(async () => undefined),
+    connect: vi.fn<WalletClient["connect"]>(async () => ({
+      adapterId,
+      chainId: "AELF",
+      network: "testnet",
+      walletAddressHint: walletAddress,
+    })),
+    disconnect: vi.fn(async () => undefined),
+    listAvailableWallets: vi.fn(async () => availability),
+    signMessage: vi.fn(async () => ({
+      publicKey: Uint8Array.from({ length: 33 }, (_, index) => index + 1),
+      signature: Uint8Array.from({ length: 65 }, (_, index) => index + 1),
+    })),
+    subscribeAccountAndChain: vi.fn(() => () => undefined),
+    ...overrides,
+  });
+
+  const createLiveComposition = (
+    bridge: LiveWalletAuthenticationApiBridge,
+    client: WalletClient,
+  ): LiveWalletAppComposition => ({
+    bridge,
+    client,
+    mode: "live_local_stage",
+    options: [{
+      accountType: "EOA",
+      adapterId,
+      label: "Portkey EOA",
+      recommended: true,
+      status: "available",
+    }],
+    status: "ready",
+  });
+
+  beforeEach(() => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED = "0";
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "0";
+    import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON = "";
+    vi.mocked(submitWalletSessionApiPreview).mockClear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+    import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED = originalLiveWalletAuthEnabled;
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = originalStageReviewEnabled;
+    import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON = originalWalletAdaptersJson;
+  });
+
+  it("composes the default browser wallet and live API bridge from browser-safe config", async () => {
+    const composition = createDefaultLiveWalletAppComposition({
+      browserGlobal: Object.freeze({
+        Portkey: Object.freeze({
+          isPortkey: true,
+          on: vi.fn(),
+          removeListener: vi.fn(),
+          request: vi.fn(),
+        }),
+      }),
+      env: {
+        VITE_CAMPAIGN_OS_API_BASE_URL: "http://127.0.0.1:5194",
+        VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED: "1",
+        VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED: "1",
+        VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON: JSON.stringify([{
+          adapterId,
+          enabled: true,
+          label: "Portkey EOA",
+          recommended: true,
+        }]),
+      },
+    });
+
+    expect(composition).toMatchObject({
+      mode: "live_local_stage",
+      options: [{
+        accountType: "EOA",
+        adapterId,
+        label: "Portkey EOA",
+        recommended: true,
+        status: "available",
+      }],
+      status: "ready",
+    });
+    if (composition?.status === "ready") {
+      composition.bridge.close();
+      await composition.client.close();
+    }
+  });
+
+  it("keeps default Vite startup in live unavailable mode when adapter config is invalid", () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5194";
+    import.meta.env.VITE_CAMPAIGN_OS_LIVE_WALLET_AUTH_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "1";
+    import.meta.env.VITE_CAMPAIGN_OS_WALLET_ADAPTERS_JSON = "invalid-json";
+
+    render(<App />);
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByText("Wallet service unavailable")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Review identity")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", {
+      name: "Use seeded wallet preview",
+    })).not.toBeInTheDocument();
+    expect(submitWalletSessionApiPreview).not.toHaveBeenCalled();
+  });
+
+  it("does not close a live composition during the StrictMode effect replay", async () => {
+    const bridge = createLiveBridge();
+    const client = createLiveClient();
+    const view = render(
+      <StrictMode>
+        <App liveWalletAuthentication={createLiveComposition(bridge, client)} />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(2));
+    expect(client.close).not.toHaveBeenCalled();
+    expect(bridge.close).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() => expect(client.close).toHaveBeenCalledTimes(1));
+    expect(bridge.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a durable cookie session into Participant UI without granting Owner or Admin authority", async () => {
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn<LiveWalletAuthenticationApiBridge["getCurrentSession"]>(async () => ({
+        httpStatus: 200,
+        ok: true,
+        session: liveSession,
+        status: "restored",
+        traceId: "trace-app-live-restored",
+      })),
+    });
+    const client = createLiveClient();
+    const participantBridge = appParticipantBridge();
+    const ownerBridge = appOwnerBridge();
+    const adminBridge = appAdminBridge();
+
+    render(
+      <App
+        adminDurableReviewBridge={adminBridge}
+        liveWalletAuthentication={createLiveComposition(bridge, client)}
+        ownerCampaignBridge={ownerBridge}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    expect(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Verified EOA/,
+    })).toHaveTextContent(/Verified EOA/);
+
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect((await screen.findAllByText(/Verified EOA/)).length).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(participantBridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(participantBridge.listCampaigns).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "durable",
+      session: null,
+    }));
+    expect(ownerBridge.recoverCampaigns).not.toHaveBeenCalled();
+    expect(adminBridge.listCampaigns).not.toHaveBeenCalled();
+    expect(submitWalletSessionApiPreview).not.toHaveBeenCalled();
+  });
+
+  it("connects, signs the exact server challenge bytes, and authenticates through the live bridge", async () => {
+    const bridge = createLiveBridge();
+    const client = createLiveClient();
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).queryByLabelText("Review identity")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", {
+      name: "Use seeded wallet preview",
+    })).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect Portkey EOA" }));
+    });
+
+    await waitFor(() => expect(bridge.issueSession).toHaveBeenCalledTimes(1));
+    expect(client.connect).toHaveBeenCalledWith(adapterId, expect.any(AbortSignal));
+    expect(bridge.issueChallenge).toHaveBeenCalledWith({
+      adapterId,
+      chainId: "AELF",
+      network: "testnet",
+      walletAddress,
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    const signedBytes = vi.mocked(client.signMessage).mock.calls[0]?.[0].exactMessageBytes;
+    expect(signedBytes).toEqual(new TextEncoder().encode(challengeMessage));
+    expect(bridge.issueSession).toHaveBeenCalledWith(expect.objectContaining({
+      challengeId: challenge.challengeId,
+      message: challengeMessage,
+      nonce,
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Verified EOA/,
+    })).toBeInTheDocument();
+    expect(submitWalletSessionApiPreview).not.toHaveBeenCalled();
+  });
+
+  it("invalidates private Participant authority immediately on a wallet account event", async () => {
+    let walletListener: ((event: WalletClientEvent) => void) | undefined;
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn<LiveWalletAuthenticationApiBridge["getCurrentSession"]>(async () => ({
+        httpStatus: 200,
+        ok: true,
+        session: liveSession,
+        status: "restored",
+        traceId: "trace-app-live-restored",
+      })),
+    });
+    const client = createLiveClient({
+      subscribeAccountAndChain: vi.fn((listener) => {
+        walletListener = listener;
+        return () => undefined;
+      }),
+    });
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+    expect((await screen.findAllByText(/Verified EOA/)).length).toBeGreaterThanOrEqual(2);
+
+    act(() => walletListener?.({
+      type: "account_changed",
+      walletAddressHint: ["replacement", "wallet", "address"].join("-"),
+    }));
+
+    expect(await screen.findByRole("button", { name: "Reconnect wallet" })).toBeInTheDocument();
+    expect(screen.queryByText(walletAddress)).not.toBeInTheDocument();
+    expect(screen.getByText("Public Campaign")).toBeInTheDocument();
+    expect(bridge.clearLocalSession).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [401, "WALLET_AUTH_SESSION_EXPIRED"],
+    [403, "WALLET_AUTH_SESSION_REVOKED"],
+  ])("clears Header and private Participant authority after an HTTP %i failure", async (
+    httpStatus,
+    code,
+  ) => {
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn<LiveWalletAuthenticationApiBridge["getCurrentSession"]>(async () => ({
+        httpStatus: 200,
+        ok: true,
+        session: liveSession,
+        status: "restored",
+        traceId: "trace-app-live-restored",
+      })),
+    });
+    const client = createLiveClient();
+    const participantBridge = appParticipantBridge({
+      listCampaigns: vi.fn<ParticipantJourneyApiBridge["listCampaigns"]>(async () => ({
+        code,
+        httpStatus,
+        ok: false,
+        phase: "auth",
+        reconnectRequired: true,
+        retryable: false,
+        source: "durable",
+        status: "blocked",
+        traceId: `trace-app-live-${httpStatus}`,
+      })),
+    });
+
+    render(
+      <App
+        liveWalletAuthentication={createLiveComposition(bridge, client)}
+        participantJourneyBridge={participantBridge}
+      />,
+    );
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "User App" }));
+
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Reconnect wallet" }),
+    ).toBeInTheDocument());
+    expect(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    })).toBeInTheDocument();
+    expect(screen.getByText("Public Campaign")).toBeInTheDocument();
+    expect(screen.queryByText(walletAddress)).not.toBeInTheDocument();
+    expect(bridge.clearLocalSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("binds session rotation and logout to the ready wallet controls", async () => {
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn<LiveWalletAuthenticationApiBridge["getCurrentSession"]>(async () => ({
+        httpStatus: 200,
+        ok: true,
+        session: liveSession,
+        status: "restored",
+        traceId: "trace-app-live-restored",
+      })),
+    });
+    const client = createLiveClient();
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Verified EOA/,
+    }));
+    let dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Refresh session" }));
+    });
+    await waitFor(() => expect(bridge.rotateSession).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog", {
+      name: "Connect Wallet",
+    })).not.toBeInTheDocument());
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: /Verified EOA/,
+    }));
+    dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByText("Wallet verified")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect wallet" }));
+    });
+    await waitFor(() => expect(bridge.logout).toHaveBeenCalledTimes(1));
+    expect(client.disconnect).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    })).toBeInTheDocument();
+    dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByText("Choose a wallet to continue")).toBeInTheDocument();
+  });
+
+  it("ignores a late authenticated session after the wallet epoch changes", async () => {
+    let walletListener: ((event: WalletClientEvent) => void) | undefined;
+    let resolveSession!: (
+      result: Awaited<ReturnType<LiveWalletAuthenticationApiBridge["issueSession"]>>,
+    ) => void;
+    const pendingSession = new Promise<
+      Awaited<ReturnType<LiveWalletAuthenticationApiBridge["issueSession"]>>
+    >((resolve) => {
+      resolveSession = resolve;
+    });
+    const issueSession = vi.fn<LiveWalletAuthenticationApiBridge["issueSession"]>(
+      async () => pendingSession,
+    );
+    const bridge = createLiveBridge({ issueSession });
+    const client = createLiveClient({
+      subscribeAccountAndChain: vi.fn((listener) => {
+        walletListener = listener;
+        return () => undefined;
+      }),
+    });
+
+    render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect Portkey EOA" }));
+    });
+    await waitFor(() => expect(issueSession).toHaveBeenCalledTimes(1));
+    const requestSignal = issueSession.mock.calls[0]?.[1]?.signal;
+
+    act(() => walletListener?.({ type: "disconnected" }));
+    expect(requestSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveSession({
+        httpStatus: 201,
+        ok: true,
+        session: liveSession,
+        status: "authenticated",
+        traceId: "trace-app-live-late-session",
+      });
+      await pendingSession;
+    });
+
+    expect(within(screen.getByRole("banner")).getByRole("button", {
+      name: "Connect Wallet",
+    })).toBeInTheDocument();
+    expect(screen.queryByText(walletAddress)).not.toBeInTheDocument();
+  });
+
+  it("aborts restore and releases wallet and bridge resources on unmount", async () => {
+    let restoreSignal: AbortSignal | undefined;
+    let resolveRestore!: (result: ReturnType<typeof disconnectedFailure>) => void;
+    const restore = new Promise<ReturnType<typeof disconnectedFailure>>((resolve) => {
+      resolveRestore = resolve;
+    });
+    const bridge = createLiveBridge({
+      getCurrentSession: vi.fn((context) => {
+        restoreSignal = context?.signal;
+        return restore;
+      }),
+    });
+    const unsubscribe = vi.fn();
+    const client = createLiveClient({
+      subscribeAccountAndChain: vi.fn(() => unsubscribe),
+    });
+    const view = render(<App liveWalletAuthentication={createLiveComposition(bridge, client)} />);
+
+    await waitFor(() => expect(bridge.getCurrentSession).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    expect(restoreSignal?.aborted).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(client.close).toHaveBeenCalledTimes(1));
+    expect(bridge.close).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRestore(disconnectedFailure());
+      await restore;
     });
   });
 });

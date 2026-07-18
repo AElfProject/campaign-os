@@ -2147,7 +2147,7 @@ const emptyBrowserWalletComposition = (
   status: "disabled" | "unavailable",
 ): AelfWebLoginBrowserWalletComposition => Object.freeze({
   client: undefined,
-  options: Object.freeze([]),
+  options: Object.freeze([]) as readonly [],
   status,
 });
 

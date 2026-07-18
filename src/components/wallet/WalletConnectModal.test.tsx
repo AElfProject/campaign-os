@@ -3,9 +3,53 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { WalletSessionApiBridgeState } from "../../api/walletSessionApiBridge";
 import { createAelfWebLoginAdapterReadiness, walletOptions, walletSessions } from "../../domain";
-import { WalletConnectModal } from "./WalletConnectModal";
+import {
+  WalletConnectModal,
+  type LiveWalletModalAuthentication,
+} from "./WalletConnectModal";
 
 describe("WalletConnectModal locale coverage", () => {
+  const liveAuthentication = (
+    overrides: Partial<LiveWalletModalAuthentication> = {},
+  ): LiveWalletModalAuthentication => ({
+    onConnect: vi.fn(),
+    onLogout: vi.fn(),
+    onRetry: vi.fn(),
+    onRotate: vi.fn(),
+    options: [
+      {
+        accountType: "AA",
+        adapterId: "aa-primary",
+        label: "Primary AA wallet",
+        recommended: true,
+        status: "available",
+      },
+      {
+        accountType: "EOA",
+        adapterId: "eoa-browser",
+        label: "Browser EOA wallet",
+        recommended: false,
+        status: "available",
+      },
+      {
+        accountType: "EOA",
+        adapterId: "eoa-disabled",
+        label: "Disabled EOA wallet",
+        recommended: false,
+        status: "disabled",
+      },
+      {
+        accountType: "AA",
+        adapterId: "aa-unavailable",
+        label: "Unavailable AA wallet",
+        recommended: false,
+        status: "unavailable",
+      },
+    ],
+    state: { status: "disconnected" },
+    ...overrides,
+  });
+
   const apiBridgeState = (overrides: Partial<WalletSessionApiBridgeState> = {}): WalletSessionApiBridgeState => ({
     boundary: {
       "en-US":
@@ -377,5 +421,117 @@ describe("WalletConnectModal locale coverage", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders configured AA and EOA live actions without seeded or persona controls", () => {
+    const authentication = liveAuthentication();
+
+    render(
+      <WalletConnectModal
+        liveAuthentication={authentication}
+        locale="en-US"
+        onClose={vi.fn()}
+        options={walletOptions}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    const options = within(dialog).getByRole("region", { name: "Wallet options" });
+
+    expect(within(options).getByText("Primary AA wallet")).toBeInTheDocument();
+    expect(within(options).getByText("Browser EOA wallet")).toBeInTheDocument();
+    expect(within(options).getAllByText("AA").length).toBeGreaterThan(0);
+    expect(within(options).getAllByText("EOA").length).toBeGreaterThan(0);
+    expect(within(options).getByRole("button", { name: "Connect Primary AA wallet" })).toBeEnabled();
+    expect(within(options).getByRole("button", { name: "Connect Browser EOA wallet" })).toBeEnabled();
+    expect(within(options).getByRole("button", { name: /Disabled EOA wallet disabled/i })).toBeDisabled();
+    expect(within(options).getByRole("button", { name: /Unavailable AA wallet unavailable/i })).toBeDisabled();
+    expect(within(dialog).queryByRole("combobox", { name: "Review identity" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /seeded|connect as/i })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/fixture|persona/i)).not.toBeInTheDocument();
+
+    fireEvent.click(within(options).getByRole("button", { name: "Connect Primary AA wallet" }));
+    expect(authentication.onConnect).toHaveBeenCalledWith("aa-primary");
+  });
+
+  it("locks live option actions to the active adapter while authentication is busy", () => {
+    render(
+      <WalletConnectModal
+        liveAuthentication={liveAuthentication({
+          state: { activeAdapterId: "eoa-browser", status: "signing" },
+        })}
+        locale="en-US"
+        onClose={vi.fn()}
+        options={walletOptions}
+      />,
+    );
+
+    const options = screen.getByRole("region", { name: "Wallet options" });
+    expect(options).toHaveAttribute("aria-busy", "true");
+    expect(within(options).getByRole("button", { name: "Signing with Browser EOA wallet" })).toBeDisabled();
+    expect(within(options).getByRole("button", { name: "Connect Primary AA wallet" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Confirm the wallet signature");
+  });
+
+  it("shows only safe verified identity and lifecycle actions for a ready live session", () => {
+    const authentication = liveAuthentication({
+      state: {
+        status: "ready",
+        wallet: {
+          accountType: "AA",
+          address: "ELF_2sE7F1c6edA83D3Abcdef998877665544332211",
+          label: "Primary AA wallet",
+        },
+      },
+    });
+
+    render(
+      <WalletConnectModal
+        liveAuthentication={authentication}
+        locale="en-US"
+        onClose={vi.fn()}
+        options={walletOptions}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Connect Wallet" });
+    expect(within(dialog).getByText("ELF_2sE7...332211")).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("ELF_2sE7F1c6edA83D3Abcdef998877665544332211");
+    expect(within(dialog).getByText("Verified AA")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Refresh session" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect wallet" }));
+    expect(authentication.onRotate).toHaveBeenCalledTimes(1);
+    expect(authentication.onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes ready styling and presents one recovery action for a failed live session", () => {
+    const authentication = liveAuthentication({
+      state: {
+        diagnostic: {
+          code: "AUTH_DEPENDENCY_UNAVAILABLE",
+          traceId: "trace-live-recovery",
+        },
+        status: "unavailable",
+      },
+    });
+
+    render(
+      <WalletConnectModal
+        liveAuthentication={authentication}
+        locale="en-US"
+        onClose={vi.fn()}
+        options={walletOptions}
+      />,
+    );
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("data-auth-state", "unavailable");
+    expect(status).toHaveTextContent("Wallet service unavailable");
+    expect(status).toHaveTextContent("trace-live-recovery");
+    expect(screen.queryByText(/verified aa|verified eoa/i)).not.toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "Try wallet connection again" });
+    expect(screen.getAllByRole("button").filter((button) => /try wallet connection again/i.test(button.textContent ?? ""))).toHaveLength(1);
+    fireEvent.click(retry);
+    expect(authentication.onRetry).toHaveBeenCalledTimes(1);
   });
 });

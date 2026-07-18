@@ -7,6 +7,7 @@ import { campaignDetail, walletSessions, type NormalizedWalletSession } from "..
 import { loadCampaignDiscoveryApiBridgeState } from "../../../api/campaignDiscoveryApiBridge";
 import type {
   ParticipantCampaignFeedItem,
+  ParticipantJourneyDurableSession,
   ParticipantJourneyApiBridge,
   ParticipantJourneyFailure,
   ParticipantJourneyProjection,
@@ -1188,6 +1189,24 @@ const durableSession = (overrides: Partial<NormalizedWalletSession> = {}): Norma
   ...overrides,
 });
 
+const liveDurableSession = (
+  overrides: Partial<ParticipantJourneyDurableSession> = {},
+): ParticipantJourneyDurableSession => ({
+  absoluteExpiresAt: "2026-07-19T01:00:00.000Z",
+  accountType: "EOA",
+  capabilities: ["PARTICIPATE_CAMPAIGN"],
+  chainId: "AELF",
+  idleExpiresAt: "2026-07-18T22:00:00.000Z",
+  issuedAt: "2026-07-18T21:00:00.000Z",
+  network: "testnet",
+  roles: ["participant"],
+  sessionId: "live-participant-session",
+  status: "active",
+  walletAddress: "ELF_7A91C24F8899AABBCCDDEEFF0011223344556677",
+  walletSource: "PORTKEY_EOA_EXTENSION",
+  ...overrides,
+});
+
 const durableFeedItem = (
   campaignId: string,
   label: string,
@@ -1425,9 +1444,57 @@ describe("Durable Participant User App", () => {
     );
 
     expect(bridge.listCampaigns).not.toHaveBeenCalled();
-    expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Public Campaign" })).toHaveTextContent("Awaken Sprint");
     fireEvent.click(screen.getByRole("button", { name: "Reconnect wallet" }));
     expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a live durable session without projecting its full address or legacy authority", async () => {
+    const bridge = durableBridge();
+    const session = liveDurableSession();
+
+    render(
+      <UserAppPanel
+        bridge={bridge}
+        liveSession={session}
+        locale="en-US"
+        mode="durable"
+        onReconnect={vi.fn()}
+        session={null}
+        sessionReady
+      />,
+    );
+
+    expect(screen.getByText("Verified EOA · ELF_7A91...556677")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(session.walletAddress);
+    await waitFor(() => expect(bridge.listCampaigns).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(bridge.listCampaigns).mock.calls[0]?.[0]).toMatchObject({
+      mode: "durable",
+      session: null,
+    });
+  });
+
+  it("fails closed when a live session is supplied without ready authority", () => {
+    const bridge = durableBridge();
+    const session = liveDurableSession();
+
+    render(
+      <UserAppPanel
+        bridge={bridge}
+        liveSession={session}
+        locale="en-US"
+        mode="durable"
+        onReconnect={vi.fn()}
+        session={null}
+        sessionReady={false}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Campaign feed" })).toHaveTextContent(
+      "An API-issued wallet session is required.",
+    );
+    expect(document.body).not.toHaveTextContent(session.walletAddress);
+    expect(bridge.listCampaigns).not.toHaveBeenCalled();
   });
 
   it("starts one effective protected feed request under React StrictMode", async () => {
@@ -1458,7 +1525,8 @@ describe("Durable Participant User App", () => {
     expect(await screen.findByRole("button", { name: campaignAlphaCommandName })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: campaignBetaCommandName })).toBeInTheDocument();
     expect(bridge.getJourney).not.toHaveBeenCalled();
-    expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Public Campaign" })).toHaveTextContent("Awaken Sprint");
+    expect(screen.queryByRole("region", { name: "Participant journey" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: campaignAlphaCommandName }));
 
@@ -1991,7 +2059,8 @@ describe("Durable Participant User App", () => {
 
     expect(await screen.findByText("PERSISTENCE_UNAVAILABLE")).toBeInTheDocument();
     expect(screen.getByText("trace-feed-unavailable")).toBeInTheDocument();
-    expect(screen.queryByText("Awaken Sprint")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Public Campaign" })).toHaveTextContent("Awaken Sprint");
+    expect(within(screen.getByRole("region", { name: "Campaign feed" })).queryByText("Campaign Alpha")).not.toBeInTheDocument();
     expect(screen.queryByText("SECRET_SIGNATURE_MUST_NOT_RENDER")).not.toBeInTheDocument();
     expect(screen.queryByText("PRIVATE_RUNTIME_PATH_MUST_NOT_RENDER")).not.toBeInTheDocument();
     expect(vi.mocked(loadCampaignDiscoveryApiBridgeState)).not.toHaveBeenCalled();

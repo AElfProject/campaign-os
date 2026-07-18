@@ -990,3 +990,42 @@ h1 {
     margin-left: 27px;
   }
 }
+
+.live-wallet-status-spin {
+  animation: live-wallet-status-spin 900ms linear infinite;
+}
+
+@keyframes live-wallet-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-wallet-status-spin {
+    animation: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .wallet-connect-backdrop {
+    align-items: end !important;
+    padding: 0 !important;
+  }
+
+  .wallet-connect-dialog {
+    width: 100% !important;
+    max-height: min(88dvh, 760px) !important;
+    border-radius: 8px 8px 0 0 !important;
+    padding: 16px !important;
+  }
+
+  .live-wallet-option-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .live-wallet-option-action {
+    width: 100%;
+    min-width: 0 !important;
+  }
+}

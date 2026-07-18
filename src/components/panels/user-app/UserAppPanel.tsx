@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObjec
 import {
   createParticipantJourneyApiBridge,
   type ParticipantJourneyApiBridge,
+  type ParticipantJourneyDurableSession,
+  type ParticipantJourneyFailure,
   type ParticipantJourneyMode,
 } from "../../../api/participantJourneyApiBridge";
 import {
@@ -98,7 +100,9 @@ interface SeededUserAppPanelProps {
 
 export interface UserAppPanelProps extends SeededUserAppPanelProps {
   bridge?: ParticipantJourneyApiBridge;
+  liveSession?: ParticipantJourneyDurableSession | null;
   mode?: ParticipantJourneyMode;
+  onAuthenticationFailure?: (failure: ParticipantJourneyFailure) => void;
   onReconnect?: () => void;
   participantLifecycleEpoch?: number;
   session?: NormalizedWalletSession | null;
@@ -3329,8 +3333,10 @@ const unavailableParticipantJourneyBridge = createParticipantJourneyApiBridge();
 export const UserAppPanel = ({
   bridge,
   campaign,
+  liveSession = null,
   locale,
   mode = "seeded_preview",
+  onAuthenticationFailure,
   onReconnect = () => undefined,
   participant,
   participantLifecycleEpoch = 0,
@@ -3341,21 +3347,27 @@ export const UserAppPanel = ({
 }: UserAppPanelProps) => {
   if (mode === "durable") {
     const authoritySession = sessionReady ? session : null;
+    const activeLiveSession = sessionReady ? liveSession : null;
     const lifecycleEpoch = Number.isSafeInteger(participantLifecycleEpoch)
       && participantLifecycleEpoch >= 0
       ? participantLifecycleEpoch
       : 0;
-    const sessionKey = createParticipantSessionKey(authoritySession) ?? "no-session";
+    const sessionKey = activeLiveSession
+      ? `${activeLiveSession.sessionId}:${activeLiveSession.walletAddress}:${activeLiveSession.issuedAt}`
+      : createParticipantSessionKey(authoritySession) ?? "no-session";
 
     return (
       <DurableParticipantJourneyPanel
         bridge={bridge ?? unavailableParticipantJourneyBridge}
+        campaign={campaign ?? campaignDetail}
         key={`durable:${lifecycleEpoch}:${sessionKey}`}
+        liveSession={activeLiveSession}
         locale={locale}
         mode="durable"
+        onAuthenticationFailure={onAuthenticationFailure}
         onReconnect={onReconnect}
         session={authoritySession}
-        sessionReady={Boolean(authoritySession)}
+        sessionReady={Boolean(authoritySession || activeLiveSession)}
       />
     );
   }

@@ -17,12 +17,19 @@ import {
 } from "react";
 import type {
   ParticipantJourneyApiBridge,
+  ParticipantJourneyDurableSession,
   ParticipantJourneyFailure,
   ParticipantJourneyMode,
   ParticipantJourneyResult,
   ParticipantVerifyResult,
 } from "../../../api/participantJourneyApiBridge";
-import type { NormalizedWalletSession, SupportedLocale } from "../../../domain";
+import {
+  campaignDetail,
+  type CampaignShellDetail,
+  type NormalizedWalletSession,
+  type SupportedLocale,
+} from "../../../domain";
+import { truncateLiveWalletAddress } from "../../wallet/LiveWalletAuthenticationStatus";
 import {
   canPollParticipantJourneyTask,
   canReconnectParticipantJourney,
@@ -53,8 +60,11 @@ type BusinessContentLocale = Exclude<
 
 export interface DurableParticipantJourneyPanelProps {
   bridge: ParticipantJourneyApiBridge;
+  campaign?: CampaignShellDetail;
+  liveSession?: ParticipantJourneyDurableSession | null;
   locale: BusinessContentLocale;
   mode: Extract<ParticipantJourneyMode, "durable">;
+  onAuthenticationFailure?: (failure: ParticipantJourneyFailure) => void;
   onReconnect: () => void;
   session: NormalizedWalletSession | null;
   sessionReady: boolean;
@@ -87,6 +97,8 @@ const durableCopy = {
     noFurtherAction: "No further action",
     participantCount: "Participants",
     participantPreview: "Participant preview",
+    publicCampaign: "Public Campaign",
+    publicTasks: "Public Tasks",
     pendingDetail: "The provider result is still pending.",
     pendingStatus: "Verification pending",
     points: "Points",
@@ -137,6 +149,8 @@ const durableCopy = {
     noFurtherAction: "无需进一步操作",
     participantCount: "参与人数",
     participantPreview: "参与者预览",
+    publicCampaign: "公开活动",
+    publicTasks: "公开任务",
     pendingDetail: "服务商结果仍在处理中。",
     pendingStatus: "验证处理中",
     points: "积分",
@@ -187,6 +201,8 @@ const durableCopy = {
     noFurtherAction: "無需進一步操作",
     participantCount: "參與人數",
     participantPreview: "參與者預覽",
+    publicCampaign: "公開活動",
+    publicTasks: "公開任務",
     pendingDetail: "服務商結果仍在處理中。",
     pendingStatus: "驗證處理中",
     points: "積分",
@@ -363,15 +379,34 @@ type ParticipantJourneyTaskDisplayStatus = ParticipantJourneyTaskAttemptStatus |
 
 export const DurableParticipantJourneyPanel = ({
   bridge,
+  campaign = campaignDetail,
+  liveSession = null,
   locale,
   mode,
+  onAuthenticationFailure,
   onReconnect,
   session,
   sessionReady,
 }: DurableParticipantJourneyPanelProps) => {
   const copy = durableCopy[locale];
-  const authoritySession = sessionReady ? session : null;
-  const sessionKey = createParticipantSessionKey(authoritySession);
+  const activeLiveSession = sessionReady ? liveSession : null;
+  const legacySession = sessionReady ? session : null;
+  const authoritySession = activeLiveSession ?? legacySession;
+  const liveSessionKey = activeLiveSession
+    ? [
+        activeLiveSession.sessionId,
+        activeLiveSession.walletAddress,
+        activeLiveSession.accountType,
+        activeLiveSession.walletSource,
+        activeLiveSession.chainId,
+        activeLiveSession.network,
+        activeLiveSession.issuedAt,
+      ].map(encodeURIComponent).join(":")
+    : null;
+  const sessionKey = liveSessionKey ?? createParticipantSessionKey(legacySession);
+  const displayedAuthority = activeLiveSession
+    ? `Verified ${activeLiveSession.accountType} · ${truncateLiveWalletAddress(activeLiveSession.walletAddress)}`
+    : legacySession?.displayAddress ?? copy.sessionRequired;
   const [state, dispatch] = useReducer(
     participantJourneyWorkflowReducer,
     { mode, sessionKey },
@@ -386,6 +421,7 @@ export const DurableParticipantJourneyPanel = ({
   const journeyFocusPendingRef = useRef(false);
   const taskStatusFocusPendingRef = useRef<string | null>(null);
   const taskStatusRefs = useRef(new Map<string, HTMLDivElement>());
+  const reportedAuthenticationFailureRef = useRef<string | null>(null);
 
   stateRef.current = state;
 
@@ -439,9 +475,9 @@ export const DurableParticipantJourneyPanel = ({
   ) => ({
     mode,
     selectedCampaignId: token.campaignId,
-    session: authoritySession,
+    session: legacySession,
     signal,
-  }), [authoritySession, mode]);
+  }), [legacySession, mode]);
 
   const finishRequest = useCallback((
     operation: ParticipantJourneyReadOperation,
@@ -735,6 +771,26 @@ export const DurableParticipantJourneyPanel = ({
     }
   }, [state.diagnostic, state.journey, state.pendingOperation, state.selectedCampaignId]);
 
+  useEffect(() => {
+    const failure = state.diagnostic;
+    if (
+      !failure
+      || (!failure.reconnectRequired && failure.httpStatus !== 401 && failure.httpStatus !== 403)
+    ) {
+      if (!failure) {
+        reportedAuthenticationFailureRef.current = null;
+      }
+      return;
+    }
+
+    const failureKey = [failure.code, failure.httpStatus ?? "-", failure.traceId].join(":");
+    if (reportedAuthenticationFailureRef.current === failureKey) {
+      return;
+    }
+    reportedAuthenticationFailureRef.current = failureKey;
+    onAuthenticationFailure?.(failure);
+  }, [onAuthenticationFailure, state.diagnostic]);
+
   const selectCampaign = (campaignId: string) => {
     const current = stateRef.current;
     if (!canSelectParticipantCampaign(current, campaignId)) {
@@ -798,12 +854,32 @@ export const DurableParticipantJourneyPanel = ({
 
   return (
     <div data-participant-mode="durable" style={rootStyle}>
+      <section aria-label={copy.publicCampaign} style={bandStyle}>
+        <div style={{ alignItems: "start", display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "space-between" }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, margin: 0 }}>
+              {copy.publicCampaign}
+            </p>
+            <h2 style={{ fontSize: 20, margin: "4px 0 0", overflowWrap: "anywhere" }}>
+              {campaign.title[locale] ?? campaign.title["en-US"]}
+            </h2>
+            <p style={{ color: "#475569", margin: "6px 0 0", overflowWrap: "anywhere" }}>
+              {campaign.subtitle[locale] ?? campaign.subtitle["en-US"]}
+            </p>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <span style={badgeStyle("status")}>{campaign.status}</span>
+            <span style={badgeStyle("neutral")}>{copy.publicTasks}: {campaign.tasks.length}</span>
+          </div>
+        </div>
+      </section>
+
       <section aria-label={copy.campaignFeed} style={bandStyle}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "space-between" }}>
           <div style={{ minWidth: 0 }}>
             <h2 style={{ fontSize: 20, margin: 0 }}>{copy.campaignFeed}</h2>
             <p style={{ color: "#64748b", margin: "6px 0 0", overflowWrap: "anywhere" }}>
-              {authoritySession ? authoritySession.displayAddress : copy.sessionRequired}
+              {displayedAuthority}
             </p>
           </div>
           <span style={badgeStyle("neutral")}>{state.status}</span>

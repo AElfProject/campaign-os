@@ -14,12 +14,30 @@ import {
   type WalletOption,
 } from "../../domain";
 import { WalletBadge } from "../badges/Badges";
+import {
+  LiveWalletAuthenticationStatus,
+  type LiveWalletAuthenticationViewState,
+} from "./LiveWalletAuthenticationStatus";
+import {
+  LiveWalletOptionCards,
+  type LiveWalletOption,
+} from "./WalletOptionCards";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
+
+export interface LiveWalletModalAuthentication {
+  readonly onConnect: (adapterId: string) => void;
+  readonly onLogout: () => void;
+  readonly onRetry: () => void;
+  readonly onRotate: () => void;
+  readonly options: readonly LiveWalletOption[];
+  readonly state: LiveWalletAuthenticationViewState;
+}
 
 interface WalletConnectModalProps {
   adapterReadiness?: AelfWebLoginAdapterReadinessModel;
   connectorBoundary?: LiveWalletConnectorBoundary;
+  liveAuthentication?: LiveWalletModalAuthentication;
   locale: BusinessContentLocale;
   onClose: () => void;
   onPreviewConnect?: (reviewIdentity?: StageReviewIdentity) => void;
@@ -708,6 +726,7 @@ const WalletSessionBridgeSection = ({
 export const WalletConnectModal = ({
   adapterReadiness = createAelfWebLoginAdapterReadiness(walletSessions),
   connectorBoundary = createLiveWalletConnectorBoundary(),
+  liveAuthentication,
   locale,
   onClose,
   onPreviewConnect,
@@ -784,10 +803,11 @@ export const WalletConnectModal = ({
   }, [onClose]);
 
   return (
-    <div onClick={onClose} style={backdropStyle}>
+    <div className="wallet-connect-backdrop" onClick={onClose} style={backdropStyle}>
       <section
         aria-labelledby="wallet-connect-modal-title"
         aria-modal="true"
+        className="wallet-connect-dialog"
         onClick={(event) => event.stopPropagation()}
         ref={dialogRef}
         role="dialog"
@@ -797,7 +817,7 @@ export const WalletConnectModal = ({
         <div style={rowStyle}>
           <div>
             <p style={{ color: "#64748b", fontSize: 12, fontWeight: 800, margin: 0 }}>
-              {copy.adapterPreview}
+              {liveAuthentication ? "Live wallet authentication" : copy.adapterPreview}
             </p>
             <h2 id="wallet-connect-modal-title" style={{ fontSize: 26, lineHeight: 1.1, margin: "4px 0 0" }}>
               {copy.title}
@@ -818,7 +838,34 @@ export const WalletConnectModal = ({
           </button>
         </div>
 
-        {stageReviewMode ? (
+        {liveAuthentication ? (
+          <>
+            <LiveWalletAuthenticationStatus
+              locale={locale}
+              onLogout={liveAuthentication.onLogout}
+              onRetry={liveAuthentication.onRetry}
+              onRotate={liveAuthentication.onRotate}
+              state={liveAuthentication.state}
+            />
+            {liveAuthentication.state.status !== "ready"
+              && liveAuthentication.state.status !== "expired"
+              && liveAuthentication.state.status !== "revoked"
+              && liveAuthentication.state.status !== "unavailable"
+              && liveAuthentication.state.status !== "failed" ? (
+                <LiveWalletOptionCards
+                  activeAdapterId={liveAuthentication.state.activeAdapterId}
+                  authenticationStatus={liveAuthentication.state.status}
+                  locale={locale}
+                  onConnect={liveAuthentication.onConnect}
+                  options={liveAuthentication.options}
+                />
+              ) : null}
+            <footer aria-label="Wallet connection safety agreement" role="note" style={alertStyle}>
+              <span>{copy.verificationOnlyFooter}</span>
+              <span>{copy.privateKeyFooter}</span>
+            </footer>
+          </>
+        ) : stageReviewMode ? (
           <>
             <label style={reviewIdentityFieldStyle}>
               <span>{copy.reviewIdentity}</span>
