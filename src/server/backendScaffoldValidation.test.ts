@@ -180,6 +180,15 @@ const providerHttpReadyEnv = {
 } satisfies Record<string, unknown>;
 
 describe("backend scaffold public guardrails", () => {
+  it("fails the required wallet-auth PostgreSQL command closed until WP04 owns its suite", () => {
+    const requiredScript = packageJson.scripts["test:postgres:required"];
+
+    expect(requiredScript).toContain("existsSync");
+    expect(requiredScript).toContain("postgresWalletAuthenticationStore.test.ts");
+    expect(requiredScript).toContain("WP04");
+    expect(requiredScript.indexOf("existsSync")).toBeLessThan(requiredScript.indexOf("vitest run"));
+  });
+
   it("keeps production backend capabilities deferred or blocked in local review", () => {
     const report = createBackendServiceReadinessReport();
 

@@ -17,7 +17,7 @@
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
     "test:postgres": "vitest run src/server/postgresMigration.test.ts src/server/postgresCampaignDurableStore.test.ts src/server/postgresCampaignRuntime.integration.test.ts src/server/postgresAdminReviewStore.test.ts src/server/adminHttpPostgresAcceptance.test.ts",
-    "test:postgres:required": "vitest run src/server/postgresMigration.test.ts src/server/postgresWalletAuthenticationStore.test.ts",
+    "test:postgres:required": "node --input-type=module -e \"import { existsSync } from 'node:fs'; const suite = 'src/server/postgresWalletAuthenticationStore.test.ts'; if (!existsSync(suite)) { console.error('WP04 wallet authentication PostgreSQL suite is not implemented; required gate is blocked.'); process.exit(1); }\" && vitest run src/server/postgresMigration.test.ts src/server/postgresWalletAuthenticationStore.test.ts",
     "test:server:smoke": "npm run server:smoke"
   },
   "dependencies": {

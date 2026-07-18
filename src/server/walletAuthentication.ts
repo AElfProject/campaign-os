@@ -132,6 +132,8 @@ export interface PublicVerifiedWalletSubject {
   readonly walletSource: CanonicalLiveWalletSource;
 }
 
+export interface PersistedVerifiedWalletSubject extends VerifiedWalletSubjectInput {}
+
 const safeId = (value: unknown, maximum = 160): value is string =>
   typeof value === "string"
   && value.length > 0
@@ -236,6 +238,83 @@ export const projectVerifiedWalletSubject = (
     network: subject.network,
     walletAddress: subject.walletAddress,
     walletSource: subject.walletSource,
+  });
+};
+
+export const projectVerifiedWalletSubjectForPersistence = (
+  subject: VerifiedWalletSubject,
+): PersistedVerifiedWalletSubject => {
+  if (!isVerifiedWalletSubject(subject)) {
+    return failAuthority("WALLET_AUTH_TRUSTED_SUBJECT_REQUIRED", "subject");
+  }
+
+  return Object.freeze({
+    accountType: subject.accountType,
+    adapterId: subject.adapterId,
+    ...(subject.caHash === undefined ? {} : { caHash: subject.caHash }),
+    chainId: subject.chainId,
+    network: subject.network,
+    proofDigest: subject.proofDigest,
+    proofMethod: subject.proofMethod,
+    signerAddress: subject.signerAddress,
+    verifiedAt: subject.verifiedAt,
+    walletAddress: subject.walletAddress,
+    walletSource: subject.walletSource,
+  });
+};
+
+const persistedSubjectFields = new Set([
+  "accountType",
+  "adapterId",
+  "caHash",
+  "chainId",
+  "network",
+  "proofDigest",
+  "proofMethod",
+  "signerAddress",
+  "verifiedAt",
+  "walletAddress",
+  "walletSource",
+]);
+const requiredPersistedSubjectFields = [...persistedSubjectFields]
+  .filter((field) => field !== "caHash");
+
+export const restoreVerifiedWalletSubjectFromPersistence = (
+  snapshot: unknown,
+): VerifiedWalletSubject => {
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return failAuthority("WALLET_AUTH_SUBJECT_FIELD_INVALID", "subject");
+  }
+
+  const keys = Reflect.ownKeys(snapshot);
+  if (
+    keys.some((key) => typeof key !== "string" || !persistedSubjectFields.has(key))
+    || requiredPersistedSubjectFields.some((field) => !Object.prototype.hasOwnProperty.call(snapshot, field))
+  ) {
+    return failAuthority("WALLET_AUTH_SUBJECT_FIELD_INVALID", "subject");
+  }
+
+  const values = Object.fromEntries(keys.map((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(snapshot, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      return failAuthority("WALLET_AUTH_SUBJECT_FIELD_INVALID", "subject");
+    }
+
+    return [key, descriptor.value];
+  })) as unknown as PersistedVerifiedWalletSubject;
+
+  return issueVerifiedWalletSubject({
+    accountType: values.accountType,
+    adapterId: values.adapterId,
+    ...(values.caHash === undefined ? {} : { caHash: values.caHash }),
+    chainId: values.chainId,
+    network: values.network,
+    proofDigest: values.proofDigest,
+    proofMethod: values.proofMethod,
+    signerAddress: values.signerAddress,
+    verifiedAt: values.verifiedAt,
+    walletAddress: values.walletAddress,
+    walletSource: values.walletSource,
   });
 };
 
@@ -374,7 +453,7 @@ export interface DurableWalletSessionRecord {
   readonly membershipRevision: string;
   readonly roleIds: readonly string[];
   readonly status: DurableWalletSessionStatus;
-  readonly subject: PublicVerifiedWalletSubject;
+  readonly subject: PersistedVerifiedWalletSubject;
   readonly version: number;
 }
 

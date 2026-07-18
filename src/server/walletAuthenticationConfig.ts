@@ -91,6 +91,7 @@ export type WalletAuthenticationConfigDiagnosticCode =
   | "WALLET_AUTH_CSRF_SECRET_INVALID"
   | "WALLET_AUTH_PRODUCTION_HTTPS_REQUIRED"
   | "WALLET_AUTH_PRODUCTION_SECURE_COOKIE_REQUIRED"
+  | "WALLET_AUTH_PRODUCTION_ENABLED_BINDING_REQUIRED"
   | "WALLET_AUTH_PRODUCTION_ADAPTER_APPROVAL_REQUIRED"
   | "WALLET_AUTH_PRODUCTION_CA_PROVIDER_APPROVAL_REQUIRED"
   | "WALLET_AUTH_POSTGRES_REQUIRED";
@@ -339,6 +340,11 @@ const parseEnvironment = (value: string | undefined): WalletAuthenticationEnviro
 
   return fail("WALLET_AUTH_ENVIRONMENT_INVALID", "CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT");
 };
+
+const projectDisabledEnvironment = (
+  value: string | undefined,
+): WalletAuthenticationEnvironment =>
+  value === "stage" || value === "production" ? value : "local";
 
 const parseGlobalEnablement = (value: string | undefined): boolean => {
   if (value === undefined || value === "" || value === "0" || value === "false") {
@@ -892,10 +898,11 @@ export const resolveWalletAuthenticationConfig = ({
   let environment: WalletAuthenticationEnvironment = "local";
 
   try {
-    environment = parseEnvironment(env.CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT);
     if (!parseGlobalEnablement(env.CAMPAIGN_OS_WALLET_AUTH_ENABLED)) {
+      environment = projectDisabledEnvironment(env.CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT);
       return createConfig({ environment, status: "disabled" });
     }
+    environment = parseEnvironment(env.CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT);
 
     const bindings = parseJsonArray({
       field: "CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON",
@@ -957,6 +964,7 @@ export const resolveWalletAuthenticationConfig = ({
       env.CAMPAIGN_OS_CAMPAIGN_DB_MODE === "postgres" ? "postgres" : "memory";
     const productionFailures: WalletAuthenticationConfigFailure[] = [];
     if (environment === "production") {
+      const enabledBindings = bindings.filter(({ enabled }) => enabled);
       if (storeMode !== "postgres") {
         productionFailures.push(new WalletAuthenticationConfigFailure(
           "WALLET_AUTH_POSTGRES_REQUIRED",
@@ -969,7 +977,13 @@ export const resolveWalletAuthenticationConfig = ({
           "CAMPAIGN_OS_WALLET_AUTH_COOKIE_SECURE",
         ));
       }
-      for (const binding of bindings.filter(({ enabled }) => enabled)) {
+      if (enabledBindings.length === 0) {
+        productionFailures.push(new WalletAuthenticationConfigFailure(
+          "WALLET_AUTH_PRODUCTION_ENABLED_BINDING_REQUIRED",
+          "bindings[].enabled",
+        ));
+      }
+      for (const binding of enabledBindings) {
         if (!binding.productionApproved) {
           productionFailures.push(new WalletAuthenticationConfigFailure(
             "WALLET_AUTH_PRODUCTION_ADAPTER_APPROVAL_REQUIRED",

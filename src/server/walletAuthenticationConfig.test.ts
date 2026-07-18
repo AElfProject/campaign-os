@@ -108,6 +108,29 @@ describe("wallet authentication config", () => {
   });
 
   it.each([
+    ["missing", undefined],
+    ["blank", ""],
+    ["false", "false"],
+    ["zero", "0"],
+  ])("short-circuits a %s disabled flag before malformed optional environment", (_label, enabled) => {
+    const config = resolveWalletAuthenticationConfig({
+      env: {
+        CAMPAIGN_OS_WALLET_AUTH_ENABLED: enabled,
+        CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT: "malformed-environment",
+      },
+    });
+
+    expect(config).toMatchObject({
+      diagnostics: [],
+      enabled: false,
+      environment: "local",
+      productionReady: false,
+      status: "disabled",
+      valid: true,
+    });
+  });
+
+  it.each([
     ["bindings malformed", { CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: "[{" }, "WALLET_AUTH_JSON_INVALID"],
     ["bindings wrong shape", { CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: "{}" }, "WALLET_AUTH_JSON_SHAPE_INVALID"],
     [
@@ -232,6 +255,37 @@ describe("wallet authentication config", () => {
 
     expect(config).toMatchObject({ enabled: false, productionReady: false, status: "invalid", valid: false });
     expect(config.diagnostics.map(({ code: actualCode }) => actualCode)).toContain(code);
+  });
+
+  it.each([
+    ["empty", []],
+    ["all disabled", [{
+      ...eoaBinding,
+      enabled: false,
+      network: "mainnet",
+      productionApproved: true,
+    }]],
+  ])("fails production closed for an %s enabled-binding set", (_label, bindings) => {
+    const config = resolveWalletAuthenticationConfig({
+      env: stageEnv({
+        CAMPAIGN_OS_PORTKEY_CA_RELATION_PROVIDERS_JSON: "[]",
+        CAMPAIGN_OS_WALLET_AUTH_ALLOWED_ORIGINS: "https://wallet.example.com",
+        CAMPAIGN_OS_WALLET_AUTH_ALLOW_INSECURE_LOOPBACK_COOKIE: "0",
+        CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: JSON.stringify(bindings),
+        CAMPAIGN_OS_WALLET_AUTH_COOKIE_SECURE: "1",
+        CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT: "production",
+      }),
+    });
+
+    expect(config).toMatchObject({
+      enabled: false,
+      productionReady: false,
+      status: "invalid",
+      valid: false,
+    });
+    expect(config.diagnostics.map(({ code }) => code)).toContain(
+      "WALLET_AUTH_PRODUCTION_ENABLED_BINDING_REQUIRED",
+    );
   });
 
   it("rejects a 127-prefix DNS hostname while accepting actual loopback hosts", () => {

@@ -151,6 +151,68 @@ describe("WalletClient port", () => {
     });
   });
 
+  it("enforces one aggregate byte budget across the complete wallet proof", async () => {
+    const exactLimit = createHarness({
+      generateProof: async () => ({
+        adapterProof: {
+          left: new Uint8Array(131_071),
+          right: new Uint8Array(131_072),
+        },
+        signature: new Uint8Array([1]),
+      }),
+    });
+    await exactLimit.client.connect("ephemeral-eoa");
+
+    await expect(exactLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).resolves.toMatchObject({
+      signature: new Uint8Array([1]),
+    });
+
+    const overLimit = createHarness({
+      generateProof: async () => ({
+        adapterProof: {
+          left: new Uint8Array(131_071),
+          right: new Uint8Array(131_073),
+        },
+        signature: new Uint8Array([1]),
+      }),
+    });
+    await overLimit.client.connect("ephemeral-eoa");
+
+    await expect(overLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).rejects.toMatchObject({
+      code: "WALLET_CLIENT_SIGN_FAILED",
+      name: "WalletClientError",
+    });
+  });
+
+  it("enforces one aggregate entry budget across nested adapter proof containers", async () => {
+    const createEntryHarness = (entryCount: number) => createHarness({
+      generateProof: async () => ({
+        adapterProof: {
+          entries: Array.from({ length: entryCount }, () => null),
+        },
+        signature: new Uint8Array([1]),
+      }),
+    });
+    const exactLimit = createEntryHarness(255);
+    await exactLimit.client.connect("ephemeral-eoa");
+    await expect(exactLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).resolves.toBeDefined();
+
+    const overLimit = createEntryHarness(256);
+    await overLimit.client.connect("ephemeral-eoa");
+    await expect(overLimit.client.signMessage({
+      exactMessageBytes: new Uint8Array([9]),
+    })).rejects.toMatchObject({
+      code: "WALLET_CLIENT_SIGN_FAILED",
+      name: "WalletClientError",
+    });
+  });
+
   it("returns an idempotent unsubscribe and emits bounded account/chain events", async () => {
     const listener = vi.fn();
     const { client, emit } = createInMemoryWalletClient({
@@ -362,5 +424,58 @@ describe("WalletClient port", () => {
     await expect(client.signMessage({
       exactMessageBytes: new Uint8Array([1]),
     })).rejects.toMatchObject({ code: "WALLET_CLIENT_CLOSED" });
+  });
+
+  it("waits for an in-flight disconnect before close settles", async () => {
+    let releaseDisconnect: (() => void) | undefined;
+    const disconnect = vi.fn(() => new Promise<void>((resolve) => {
+      releaseDisconnect = resolve;
+    }));
+    const { client } = createHarness({ disconnect });
+    await client.connect("ephemeral-eoa");
+
+    const disconnectPromise = client.disconnect();
+    const closePromise = client.close();
+    const closeState = await Promise.race([
+      closePromise.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => {
+        setTimeout(() => resolve("pending"), 10);
+      }),
+    ]);
+
+    expect(closeState).toBe("pending");
+    expect(disconnect).toHaveBeenCalledTimes(1);
+
+    releaseDisconnect?.();
+    await expect(disconnectPromise).resolves.toBeUndefined();
+    await expect(closePromise).resolves.toBeUndefined();
+  });
+
+  it("rejects reconnect while disconnect cleanup is in flight and allows it after cleanup", async () => {
+    let releaseDisconnect: (() => void) | undefined;
+    const disconnect = vi.fn(() => new Promise<void>((resolve) => {
+      releaseDisconnect = resolve;
+    }));
+    const { client } = createHarness({ disconnect });
+    await client.connect("ephemeral-eoa");
+
+    const disconnectPromise = client.disconnect();
+    const reconnectResult = await client.connect("ephemeral-eoa").then(
+      () => ({ status: "resolved" as const }),
+      (error: unknown) => ({ error, status: "rejected" as const }),
+    );
+    releaseDisconnect?.();
+    await disconnectPromise;
+
+    expect(reconnectResult).toMatchObject({
+      error: expect.objectContaining({
+        code: "WALLET_CLIENT_DISCONNECT_IN_PROGRESS",
+        name: "WalletClientError",
+      }),
+      status: "rejected",
+    });
+    await expect(client.connect("ephemeral-eoa")).resolves.toMatchObject({
+      adapterId: "ephemeral-eoa",
+    });
   });
 });

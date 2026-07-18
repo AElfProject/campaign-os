@@ -1,12 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   createWalletAuthenticationDiagnostic,
   isResolvedWalletSessionAuthority,
   isVerifiedWalletSubject,
   issueResolvedWalletSessionAuthority,
   issueVerifiedWalletSubject,
+  projectVerifiedWalletSubjectForPersistence,
   projectResolvedWalletSession,
   projectVerifiedWalletSubject,
+  restoreVerifiedWalletSubjectFromPersistence,
+  type DurableWalletSessionRecord,
+  type PersistedVerifiedWalletSubject,
   type PortkeyCaRelationProvider,
   type WalletAuthenticationClock,
   type WalletAuthenticationRandom,
@@ -75,6 +79,30 @@ describe("wallet authentication authority contracts", () => {
     expect(projection).not.toHaveProperty("proofDigest");
     expect(projection).not.toHaveProperty("signerAddress");
     expect(Object.isFrozen(projection)).toBe(true);
+  });
+
+  it("persists safe proof lineage and reconstructs trusted authority after restart", () => {
+    const subject = issueVerifiedWalletSubject(verifiedSubjectInput());
+    const persisted = projectVerifiedWalletSubjectForPersistence(subject);
+    const serialized = JSON.stringify(persisted);
+    const restartedInput = JSON.parse(serialized) as ReturnType<typeof verifiedSubjectInput>;
+    const restored = restoreVerifiedWalletSubjectFromPersistence(restartedInput);
+
+    restartedInput.walletAddress = "ELF_mutated_after_restore";
+
+    expectTypeOf<DurableWalletSessionRecord["subject"]>()
+      .toEqualTypeOf<PersistedVerifiedWalletSubject>();
+    expect(persisted).toEqual(verifiedSubjectInput());
+    expect(Object.isFrozen(persisted)).toBe(true);
+    expect(isVerifiedWalletSubject(restored)).toBe(true);
+    expect(restored).toMatchObject({
+      proofDigest: "a".repeat(64),
+      proofMethod: "AELF_EOA_RECOVERABLE",
+      signerAddress: "ELF_verified_signer",
+      verifiedAt: "2026-07-18T00:00:00.000Z",
+      walletAddress: "ELF_verified_signer",
+    });
+    expect(projectVerifiedWalletSubject(restored)).not.toHaveProperty("proofDigest");
   });
 
   it("issues trusted session authority only from a branded subject", () => {

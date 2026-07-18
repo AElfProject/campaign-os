@@ -9,6 +9,7 @@ export type WalletClientErrorCode =
   | "WALLET_CLIENT_CONNECT_FAILED"
   | "WALLET_CLIENT_SIGN_FAILED"
   | "WALLET_CLIENT_DISCONNECT_FAILED"
+  | "WALLET_CLIENT_DISCONNECT_IN_PROGRESS"
   | "WALLET_CLIENT_INPUT_INVALID"
   | "WALLET_CLIENT_CLOSED";
 
@@ -101,6 +102,7 @@ const WALLET_CLIENT_MAX_ADAPTERS = 16;
 const WALLET_CLIENT_ADAPTER_LABEL_MAX_LENGTH = 80;
 const WALLET_CLIENT_ADAPTER_PROOF_MAX_DEPTH = 8;
 const WALLET_CLIENT_ADAPTER_PROOF_MAX_ENTRIES = 256;
+const WALLET_CLIENT_ADAPTER_PROOF_MAX_NODES = WALLET_CLIENT_ADAPTER_PROOF_MAX_ENTRIES + 1;
 const WALLET_CLIENT_ADAPTER_PROOF_STRING_MAX_LENGTH = 65_536;
 const WALLET_CLIENT_PROOF_BYTES_MAX = 262_144;
 const WALLET_CLIENT_PUBLIC_KEY_BYTES_MAX = 4_096;
@@ -212,15 +214,55 @@ const cloneConnectionHint = (
   });
 };
 
+interface WalletClientProofBudget {
+  bytes: number;
+  entries: number;
+  nodes: number;
+}
+
+const consumeProofBytes = (
+  budget: WalletClientProofBudget,
+  byteLength: number,
+  adapterId: string,
+): void => {
+  budget.bytes += byteLength;
+  if (budget.bytes > WALLET_CLIENT_PROOF_BYTES_MAX) {
+    throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
+  }
+};
+
+const consumeAdapterProofEntries = (
+  budget: WalletClientProofBudget,
+  count: number,
+  adapterId: string,
+): void => {
+  budget.entries += count;
+  if (budget.entries > WALLET_CLIENT_ADAPTER_PROOF_MAX_ENTRIES) {
+    throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
+  }
+};
+
+const consumeAdapterProofNode = (
+  budget: WalletClientProofBudget,
+  adapterId: string,
+): void => {
+  budget.nodes += 1;
+  if (budget.nodes > WALLET_CLIENT_ADAPTER_PROOF_MAX_NODES) {
+    throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
+  }
+};
+
 const cloneAdapterProofValue = (
   value: unknown,
   adapterId: string,
+  budget: WalletClientProofBudget,
   depth = 0,
   ancestors = new Set<object>(),
 ): unknown => {
   if (depth > WALLET_CLIENT_ADAPTER_PROOF_MAX_DEPTH) {
     throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
   }
+  consumeAdapterProofNode(budget, adapterId);
 
   if (
     value === null
@@ -244,14 +286,12 @@ const cloneAdapterProofValue = (
       throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
     }
 
+    consumeProofBytes(budget, new TextEncoder().encode(value).byteLength, adapterId);
     return value;
   }
 
   if (value instanceof Uint8Array) {
-    if (value.byteLength > WALLET_CLIENT_PROOF_BYTES_MAX) {
-      throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
-    }
-
+    consumeProofBytes(budget, value.byteLength, adapterId);
     return new Uint8Array(value);
   }
 
@@ -262,12 +302,10 @@ const cloneAdapterProofValue = (
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      if (value.length > WALLET_CLIENT_ADAPTER_PROOF_MAX_ENTRIES) {
-        throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
-      }
+      consumeAdapterProofEntries(budget, value.length, adapterId);
 
       return Object.freeze(value.map((entry) =>
-        cloneAdapterProofValue(entry, adapterId, depth + 1, ancestors)));
+        cloneAdapterProofValue(entry, adapterId, budget, depth + 1, ancestors)));
     }
 
     if (!isPlainRecord(value)) {
@@ -281,6 +319,7 @@ const cloneAdapterProofValue = (
     ) {
       throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
     }
+    consumeAdapterProofEntries(budget, keys.length, adapterId);
 
     const cloned: Record<string, unknown> = {};
     for (const key of keys as string[]) {
@@ -291,7 +330,7 @@ const cloneAdapterProofValue = (
 
       Object.defineProperty(cloned, key, {
         enumerable: true,
-        value: cloneAdapterProofValue(descriptor.value, adapterId, depth + 1, ancestors),
+        value: cloneAdapterProofValue(descriptor.value, adapterId, budget, depth + 1, ancestors),
       });
     }
 
@@ -333,10 +372,22 @@ const cloneProof = (proof: unknown, adapterId: string): WalletClientProof => {
     throw new WalletClientError("WALLET_CLIENT_SIGN_FAILED", { adapterId });
   }
 
+  const budget: WalletClientProofBudget = { bytes: 0, entries: 0, nodes: 0 };
+  consumeProofBytes(budget, signature.byteLength, adapterId);
+  if (publicKey !== undefined) {
+    consumeProofBytes(budget, publicKey.byteLength, adapterId);
+  }
+
   return Object.freeze({
     ...(adapterProof === undefined
       ? {}
-      : { adapterProof: cloneAdapterProofValue(adapterProof, adapterId) as Readonly<Record<string, unknown>> }),
+      : {
+        adapterProof: cloneAdapterProofValue(
+          adapterProof,
+          adapterId,
+          budget,
+        ) as Readonly<Record<string, unknown>>,
+      }),
     ...(publicKey === undefined
       ? {}
       : { publicKey: new Uint8Array(publicKey) }),
@@ -403,22 +454,46 @@ export const createInMemoryWalletClient = (
   let closed = false;
   let closeInFlight: Promise<void> | undefined;
   let connectedAdapterId: string | undefined;
+  let disconnectInFlight: Promise<void> | undefined;
   let disconnected = false;
   let pendingConnection: Promise<RequestedWalletConnectionHint> | undefined;
 
-  const disconnectOnce = async (): Promise<void> => {
+  const disconnectOnce = (): Promise<void> => {
+    if (disconnectInFlight) {
+      return disconnectInFlight;
+    }
+
     if (disconnected) {
-      return;
+      return Promise.resolve();
     }
 
-    disconnected = true;
-    connectedAdapterId = undefined;
+    const connection = pendingConnection;
+    const operation = (async () => {
+      await connection?.catch(() => undefined);
+      disconnected = true;
+      connectedAdapterId = undefined;
 
-    try {
-      await options.disconnect?.();
-    } catch {
-      throw new WalletClientError("WALLET_CLIENT_DISCONNECT_FAILED");
-    }
+      try {
+        await options.disconnect?.();
+      } catch {
+        throw new WalletClientError("WALLET_CLIENT_DISCONNECT_FAILED");
+      }
+    })();
+    disconnectInFlight = operation;
+    void operation.then(
+      () => {
+        if (disconnectInFlight === operation) {
+          disconnectInFlight = undefined;
+        }
+      },
+      () => {
+        if (disconnectInFlight === operation) {
+          disconnectInFlight = undefined;
+        }
+      },
+    );
+
+    return operation;
   };
 
   const requireOpen = (adapterId?: string) => {
@@ -439,6 +514,10 @@ export const createInMemoryWalletClient = (
 
       if (!safeIdentifier(adapterId)) {
         throw new WalletClientError("WALLET_CLIENT_INPUT_INVALID");
+      }
+
+      if (disconnectInFlight) {
+        throw new WalletClientError("WALLET_CLIENT_DISCONNECT_IN_PROGRESS", { adapterId });
       }
 
       const adapter = adapterById.get(adapterId);
@@ -542,10 +621,9 @@ export const createInMemoryWalletClient = (
       };
     },
 
-    async disconnect() {
+    disconnect() {
       requireOpen(connectedAdapterId);
-      await pendingConnection?.catch(() => undefined);
-      await disconnectOnce();
+      return disconnectOnce();
     },
 
     async close() {
