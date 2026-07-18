@@ -2752,6 +2752,7 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
       "0002_admin_review_export",
       "0003_admin_review_rank_projection",
       "0004_live_provider_task_verification",
+      "0005_participant_wallet_authentication",
     ]);
     const migration = await runPostgresMigrations({
       approved: true,
