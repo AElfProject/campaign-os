@@ -1,6 +1,7 @@
 export * from "./apiSkillContracts";
 export * from "./builder";
 export * from "./campaign";
+export * from "./campaignAnalytics";
 export * from "./campaignService";
 export * from "./fixtures";
 export * from "./locale";
