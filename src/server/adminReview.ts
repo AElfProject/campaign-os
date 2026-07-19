@@ -21,6 +21,10 @@ import {
   type AdminReviewStore,
   type AdminReviewTaskRow,
 } from "./adminReviewStore";
+import {
+  resolveCampaignAnalyticsReviewDecision,
+  sortCampaignAnalyticsReviewDecisions,
+} from "./campaignAnalyticsReviewProjection";
 import { isParticipantAccountTypeCompatible } from "./participantJourney";
 
 const MAX_CANONICAL_BYTES = 10 * 1024 * 1024;
@@ -1124,27 +1128,39 @@ const normalizeDecisionHistory = (
     versions.add(decision.version);
     ids.add(decision.id);
   }
-  return normalized.sort((left, right) =>
-    right.version - left.version
-    || compareCanonicalText(right.decidedAt, left.decidedAt)
-    || compareCanonicalText(left.id, right.id));
+  return sortCampaignAnalyticsReviewDecisions(normalized);
 };
 
 export const resolveAdminReviewState = (
   currentFingerprint: string,
   decisions: readonly AdminReviewDecisionRecord[],
-  context: { traceId: string },
+  context: { currentManifest?: AdminReviewJsonObject; traceId: string },
 ): AdminReviewStateResolution => {
   const traceId = safeContextValue(context.traceId, "trace-unavailable");
   assertSha256(currentFingerprint, "currentFingerprint", traceId);
-  const latestDecision = normalizeDecisionHistory(decisions, traceId)[0];
-  if (!latestDecision) {
+  const resolution = resolveCampaignAnalyticsReviewDecision(
+    {
+      fingerprint: currentFingerprint,
+      ...(context.currentManifest === undefined ? {} : { manifest: context.currentManifest }),
+    },
+    normalizeDecisionHistory(decisions, traceId),
+  );
+  if (resolution.state === "unreviewed") {
     return { latestDecision: undefined, state: "pending_review" };
   }
-  if (latestDecision.snapshotFingerprint !== currentFingerprint) {
-    return { latestDecision, state: "stale" };
+  if (resolution.state === "stale") {
+    return { latestDecision: resolution.latestDecision, state: "stale" };
   }
-  return { latestDecision, state: CURRENT_REVIEW_STATE[latestDecision.decision] };
+  if (resolution.state === "invalid" || !resolution.latestDecision) {
+    return fail("ADMIN_REVIEW_DOMAIN_INVALID_FACTS", { field: "decision", traceId });
+  }
+  const decisionState = resolution.state === "needsReview"
+    ? "needs_review"
+    : resolution.state;
+  return {
+    latestDecision: resolution.latestDecision,
+    state: CURRENT_REVIEW_STATE[decisionState],
+  };
 };
 
 const toDecisionSummary = (
@@ -1233,7 +1249,10 @@ export const projectAdminReviewQueue = (
       const resolution = resolveAdminReviewState(
         snapshot.fingerprint,
         decisionsByParticipant.get(participant.id) ?? [],
-        { traceId },
+        {
+          currentManifest: snapshot.manifest as unknown as AdminReviewJsonObject,
+          traceId,
+        },
       );
       return {
         campaignId: snapshot.manifest.campaign.id,
@@ -1276,7 +1295,10 @@ export const projectAdminReviewDetail = (
       return fail("ADMIN_REVIEW_DOMAIN_INVALID_FACTS", { field: "participantId", traceId });
     }
   }
-  const resolution = resolveAdminReviewState(snapshot.fingerprint, history, { traceId });
+  const resolution = resolveAdminReviewState(snapshot.fingerprint, history, {
+    currentManifest: snapshot.manifest as unknown as AdminReviewJsonObject,
+    traceId,
+  });
   const projectedHistory = history.slice(0, historyLimit).map(toDecisionDetail);
   return {
     history: projectedHistory,
@@ -1702,7 +1724,10 @@ export const projectAdminReviewWinnerSource = (
     const resolution = resolveAdminReviewState(
       snapshot.fingerprint,
       decisionsByParticipant.get(participant.id) ?? [],
-      { traceId },
+      {
+        currentManifest: snapshot.manifest as unknown as AdminReviewJsonObject,
+        traceId,
+      },
     );
     const latestDecision = resolution.latestDecision;
     if (

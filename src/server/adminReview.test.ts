@@ -783,6 +783,19 @@ describe("Admin review queue and detail state", () => {
     });
   });
 
+  it("marks a decision stale when its manifest differs despite a matching fingerprint", () => {
+    const snapshot = createSnapshot();
+    const mismatchedManifest = structuredClone(snapshot.manifest) as unknown as AdminReviewJsonObject;
+    (mismatchedManifest.participant as Record<string, unknown>).rank = 99;
+
+    expect(resolveAdminReviewState(snapshot.fingerprint, [createDecision(snapshot, {
+      snapshotManifest: mismatchedManifest,
+    })], {
+      currentManifest: snapshot.manifest as unknown as AdminReviewJsonObject,
+      traceId: "trace-review-manifest-mismatch",
+    })).toMatchObject({ state: "stale" });
+  });
+
   it("projects bounded queue summaries and stable Participant order", () => {
     const rows = createRows();
     const second = cloneRows(rows);
