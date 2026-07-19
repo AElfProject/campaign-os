@@ -67,6 +67,47 @@ const aggregateInput = (
 const partialSnapshot = (): CampaignAnalyticsSnapshot =>
   createCampaignAnalyticsSnapshot(aggregateInput());
 
+const reconciliationInput = (
+  partialDimensions = false,
+): CampaignAnalyticsAggregateInput => aggregateInput({
+  participants: {
+    unique: 2,
+    riskFlagged: 1,
+    accountTypes: [{ id: "AA", count: partialDimensions ? 1 : 2 }],
+    locales: [{ id: "en-US", count: partialDimensions ? 1 : 2 }],
+  },
+  tasks: [{
+    taskId: "task-01",
+    templateCode: "social.follow",
+    required: true,
+    activityParticipants: 1,
+    verifiedParticipants: 1,
+  }],
+  completions: { pending: 0, completed: 1, failed: 0, manualReview: 0, verified: 1 },
+  review: {
+    approved: 1,
+    rejected: 0,
+    needsReview: 0,
+    stale: 0,
+    invalid: 0,
+    unreviewed: 1,
+    totalParticipants: 2,
+  },
+  points: {
+    completionAwarded: 10,
+    participantAwarded: 10,
+    participantsWithPoints: 1,
+    participantsWithoutPoints: 1,
+  },
+  referrals: { availability: "available", total: 2, qualified: 1 },
+});
+
+const reconciliationSnapshot = (): CampaignAnalyticsSnapshot =>
+  createCampaignAnalyticsSnapshot(reconciliationInput());
+
+const partialDimensionSnapshot = (): CampaignAnalyticsSnapshot =>
+  createCampaignAnalyticsSnapshot(reconciliationInput(true));
+
 const emptySnapshot = (): CampaignAnalyticsSnapshot =>
   createCampaignAnalyticsSnapshot(aggregateInput({
     participants: { unique: 0, riskFlagged: 0, accountTypes: [], locales: [] },
@@ -114,6 +155,18 @@ const successBody = (snapshot: CampaignAnalyticsSnapshot = partialSnapshot()) =>
   data: snapshot,
   traceId: snapshot.traceId,
 });
+
+const mutableMetric = (
+  snapshot: Record<string, unknown>,
+  metricId: string,
+): Record<string, unknown> => {
+  const metric = (snapshot.metrics as Array<Record<string, unknown>>).find((candidate) =>
+    (candidate.definition as Record<string, unknown>).id === metricId);
+  if (!metric) {
+    throw new Error(`Missing test metric: ${metricId}`);
+  }
+  return metric;
+};
 
 const jsonResponse = (
   body: unknown,
@@ -391,6 +444,101 @@ describe("campaign analytics API bridge strict decoding", () => {
     }
   });
 
+  it("accepts unchanged WP01 snapshots with partial account-type and locale coverage", async () => {
+    const snapshot = partialDimensionSnapshot();
+    expect(snapshot.accountTypeBreakdown).toEqual([{ id: "AA", count: 1, percentage: 0.5 }]);
+    expect(snapshot.localeBreakdown).toEqual([{ id: "en-US", count: 1, percentage: 0.5 }]);
+
+    const result = await bridgeWithResponse(jsonResponse(successBody(snapshot))).bridge.read(request());
+
+    expect(result).toEqual({ ok: true, data: snapshot, httpStatus: 200, traceId });
+  });
+
+  it.each(["accountTypeBreakdown", "localeBreakdown"] as const)(
+    "rejects %s totals above participants.unique",
+    async (field) => {
+      const snapshot = structuredClone(partialDimensionSnapshot()) as unknown as Record<string, unknown>;
+      (snapshot[field] as Array<Record<string, unknown>>).push({
+        id: field === "accountTypeBreakdown" ? "EOA" : "zh-CN",
+        count: 2,
+        percentage: 1,
+      });
+
+      const result = await bridgeWithResponse(jsonResponse(successBody(
+        snapshot as unknown as CampaignAnalyticsSnapshot,
+      ))).bridge.read(request());
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        code: "CAMPAIGN_ANALYTICS_BRIDGE_INVALID_RESPONSE",
+      }));
+    },
+  );
+
+  it("accepts an unchanged WP01 snapshot with canonical cross-metric values", async () => {
+    const snapshot = reconciliationSnapshot();
+    const result = await bridgeWithResponse(jsonResponse(successBody(snapshot))).bridge.read(request());
+    expect(result).toEqual({ ok: true, data: snapshot, httpStatus: 200, traceId });
+  });
+
+  it.each([
+    ["completion numerator", (snapshot: Record<string, unknown>) => {
+      Object.assign(mutableMetric(snapshot, "completions.rate"), { numerator: 0, value: 0 });
+    }],
+    ["completion denominator", (snapshot: Record<string, unknown>) => {
+      Object.assign(mutableMetric(snapshot, "completions.rate"), { denominator: 1, value: 1 });
+    }],
+    ["referral numerator", (snapshot: Record<string, unknown>) => {
+      Object.assign(mutableMetric(snapshot, "referrals.conversion"), { numerator: 0, value: 0 });
+    }],
+    ["referral denominator", (snapshot: Record<string, unknown>) => {
+      Object.assign(mutableMetric(snapshot, "referrals.conversion"), { denominator: 1, value: 1 });
+    }],
+    ["risk numerator", (snapshot: Record<string, unknown>) => {
+      Object.assign(mutableMetric(snapshot, "risk.flagged_rate"), { numerator: 0, value: 0 });
+    }],
+    ["risk denominator", (snapshot: Record<string, unknown>) => {
+      Object.assign(mutableMetric(snapshot, "risk.flagged_rate"), { denominator: 1, value: 1 });
+    }],
+    ["points Participant partition", (snapshot: Record<string, unknown>) => {
+      mutableMetric(snapshot, "points.participants_without_points").value = 2;
+    }],
+    ["points Participant partition with unavailable awarded total", (snapshot: Record<string, unknown>) => {
+      const awarded = mutableMetric(snapshot, "points.awarded");
+      Object.keys(awarded).forEach((key) => delete awarded[key]);
+      Object.assign(awarded, {
+        availability: "unavailable",
+        definition: campaignAnalyticsMetricDictionary.find(
+          (definition) => definition.id === "points.awarded",
+        ),
+        reasonCode: "SOURCE_INTEGRITY_UNAVAILABLE",
+      });
+      mutableMetric(snapshot, "points.participants_without_points").value = 2;
+    }],
+    ["points awarded relation", (snapshot: Record<string, unknown>) => {
+      mutableMetric(snapshot, "points.awarded").value = 0;
+    }],
+    ["Tasks with activity", (snapshot: Record<string, unknown>) => {
+      mutableMetric(snapshot, "tasks.with_activity").value = 0;
+    }],
+    ["Task verified total", (snapshot: Record<string, unknown>) => {
+      const row = ((snapshot.taskBreakdown as Record<string, unknown>).rows as Array<Record<string, unknown>>)[0];
+      Object.assign(row, { verifiedParticipants: 0, completionRate: 0 });
+    }],
+  ])("rejects canonical %s drift", async (_label, mutate) => {
+    const snapshot = structuredClone(reconciliationSnapshot()) as unknown as Record<string, unknown>;
+    mutate(snapshot);
+
+    const result = await bridgeWithResponse(jsonResponse(successBody(
+      snapshot as unknown as CampaignAnalyticsSnapshot,
+    ))).bridge.read(request());
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      code: "CAMPAIGN_ANALYTICS_BRIDGE_INVALID_RESPONSE",
+    }));
+  });
+
   it.each([
     ["unknown envelope key", (body: Record<string, unknown>) => { body.detail = "hidden"; }],
     ["unknown version", (body: Record<string, unknown>) => {
@@ -469,7 +617,6 @@ describe("campaign analytics API bridge strict decoding", () => {
     ["duplicate dimension", (snapshot: Record<string, unknown>) => {
       (snapshot.accountTypeBreakdown as unknown[]).push({ id: "AA", count: 0, percentage: 0 });
     }],
-    ["dimension total", (snapshot: Record<string, unknown>) => { snapshot.localeBreakdown = []; }],
     ["source schema version", (snapshot: Record<string, unknown>) => {
       ((snapshot.sourceCapabilities as Array<Record<string, unknown>>)[0]).schemaVersion = "unsafe schema";
     }],

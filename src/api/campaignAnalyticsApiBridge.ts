@@ -659,23 +659,108 @@ function validateSnapshot(
   const sourceCapabilities = validateSourceCapabilities(value.sourceCapabilities);
   validateSourceMetricConsistency(metrics, sourceCapabilities);
   validateStatusSemantics(value.status, metrics, participantCount);
+  validateCanonicalMetricReconciliation(metrics, participantCount, taskCount, verifiedCount);
 
   if (!value.taskBreakdown.truncated) {
     const activityTotal = value.taskBreakdown.rows.reduce(
       (sum, row) => checkedAdd(sum, row.activityParticipants),
       0,
     );
+    const verifiedTotal = value.taskBreakdown.rows.reduce(
+      (sum, row) => checkedAdd(sum, row.verifiedParticipants),
+      0,
+    );
+    const tasksWithActivity = value.taskBreakdown.rows.filter(
+      (row) => row.activityParticipants > 0,
+    ).length;
     const completionTotal = checkedSum([
       value.completionBreakdown.pending,
       value.completionBreakdown.completed,
       value.completionBreakdown.failed,
       value.completionBreakdown.manualReview,
     ]);
-    if (activityTotal !== completionTotal) {
+    if (
+      activityTotal !== completionTotal
+      || verifiedTotal !== verifiedCount
+      || metricValue(metrics, "tasks.with_activity") !== tasksWithActivity
+    ) {
       throw new DecodeFailure("invalid");
     }
   }
 }
+
+const validateCanonicalMetricReconciliation = (
+  metrics: readonly Record<string, unknown>[],
+  participantCount: number,
+  taskCount: number,
+  verifiedCount: number,
+): void => {
+  validateAvailableRatio(
+    metrics,
+    "completions.rate",
+    verifiedCount,
+    checkedMultiply(participantCount, taskCount),
+  );
+
+  const referralConversion = metricById(metrics, "referrals.conversion");
+  if (referralConversion.availability === "available") {
+    validateAvailableRatio(
+      metrics,
+      "referrals.conversion",
+      requiredMetricValue(metrics, "referrals.qualified"),
+      requiredMetricValue(metrics, "referrals.total"),
+    );
+  }
+
+  const flaggedRate = metricById(metrics, "risk.flagged_rate");
+  if (flaggedRate.availability === "available") {
+    validateAvailableRatio(
+      metrics,
+      "risk.flagged_rate",
+      requiredMetricValue(metrics, "risk.flagged_participants"),
+      participantCount,
+    );
+  }
+
+  const pointsAwarded = metricValue(metrics, "points.awarded");
+  const participantsWithPoints = metricValue(metrics, "points.participants_with_points");
+  const participantsWithoutPoints = metricValue(metrics, "points.participants_without_points");
+  if (
+    participantsWithPoints !== undefined
+    && participantsWithoutPoints !== undefined
+    && checkedSum([participantsWithPoints, participantsWithoutPoints]) !== participantCount
+  ) {
+    throw new DecodeFailure("invalid");
+  }
+  if (
+    pointsAwarded !== undefined
+    && participantsWithPoints !== undefined
+    && (
+      pointsAwarded < participantsWithPoints
+      || (pointsAwarded === 0) !== (participantsWithPoints === 0)
+    )
+  ) {
+    throw new DecodeFailure("invalid");
+  }
+};
+
+const validateAvailableRatio = (
+  metrics: readonly Record<string, unknown>[],
+  ratioId: CampaignAnalyticsMetricDefinition["id"],
+  expectedNumerator: number,
+  expectedDenominator: number,
+): void => {
+  const ratio = metricById(metrics, ratioId);
+  if (ratio.availability !== "available") {
+    return;
+  }
+  if (
+    ratio.numerator !== expectedNumerator
+    || ratio.denominator !== expectedDenominator
+  ) {
+    throw new DecodeFailure("invalid");
+  }
+};
 
 const validateMetrics = (value: unknown): readonly Record<string, unknown>[] => {
   if (!Array.isArray(value) || value.length !== campaignAnalyticsMetricDictionary.length) {
@@ -893,7 +978,7 @@ const validateDimensionBreakdown = (
     countTotal = checkedAdd(countTotal, row.count);
   }
 
-  if (countTotal !== participantCount) {
+  if (countTotal > participantCount) {
     throw new DecodeFailure("invalid");
   }
 };
@@ -982,13 +1067,35 @@ const metricValue = (
   metrics: readonly Record<string, unknown>[],
   id: CampaignAnalyticsMetricDefinition["id"],
 ): number | undefined => {
+  const metric = metricById(metrics, id);
+  return metric?.availability === "available" && typeof metric.value === "number"
+    ? metric.value
+    : undefined;
+};
+
+const requiredMetricValue = (
+  metrics: readonly Record<string, unknown>[],
+  id: CampaignAnalyticsMetricDefinition["id"],
+): number => {
+  const value = metricValue(metrics, id);
+  if (value === undefined) {
+    throw new DecodeFailure("invalid");
+  }
+  return value;
+};
+
+const metricById = (
+  metrics: readonly Record<string, unknown>[],
+  id: CampaignAnalyticsMetricDefinition["id"],
+): Record<string, unknown> => {
   const metric = metrics.find((item) => {
     const definition = isRecord(item.definition) ? item.definition : undefined;
     return definition?.id === id;
   });
-  return metric?.availability === "available" && typeof metric.value === "number"
-    ? metric.value
-    : undefined;
+  if (!metric) {
+    throw new DecodeFailure("invalid");
+  }
+  return metric;
 };
 
 const isSnapshotStatus = (value: unknown): value is CampaignAnalyticsSnapshotStatus =>
@@ -1018,6 +1125,14 @@ const isNonNegativeSafeInteger = (value: unknown): value is number =>
 
 const checkedAdd = (left: number, right: number): number => {
   const result = left + right;
+  if (!Number.isSafeInteger(result)) {
+    throw new DecodeFailure("invalid");
+  }
+  return result;
+};
+
+const checkedMultiply = (left: number, right: number): number => {
+  const result = left * right;
   if (!Number.isSafeInteger(result)) {
     throw new DecodeFailure("invalid");
   }
