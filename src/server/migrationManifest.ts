@@ -76,6 +76,7 @@ export interface PostgresMigrationManifestEntry {
 export type PostgresMigrationManifestIssueCode =
   | "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT"
   | "POSTGRES_MIGRATION_MANIFEST_DUPLICATE_ID"
+  | "POSTGRES_MIGRATION_MANIFEST_EXTRA_ENTRY"
   | "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY"
   | "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT"
   | "POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT";
@@ -121,7 +122,7 @@ export const postgresMigrationFileManifest = Object.freeze([
     upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
   }),
   postgresMigrationEntry({
-    checksum: "05142cee6dc93fc093ac56593670f9c4a9c2f0a18d670bd6e29444509e9c8037",
+    checksum: "421d5944d5203c419d5967e80399134237aad897cef9da184eed5c17066cd0de",
     downPath: "db/migrations/0006_durable_task_template_catalog.down.sql",
     id: "0006_durable_task_template_catalog",
     upPath: "db/migrations/0006_durable_task_template_catalog.up.sql",
@@ -184,7 +185,7 @@ export const validatePostgresMigrationFileManifest = (
   if (entries.length > postgresMigrationFileManifest.length) {
     for (const extra of entries.slice(postgresMigrationFileManifest.length)) {
       issues.push({
-        code: "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT",
+        code: "POSTGRES_MIGRATION_MANIFEST_EXTRA_ENTRY",
         field: extra.id,
       });
     }

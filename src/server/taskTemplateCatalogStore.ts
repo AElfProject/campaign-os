@@ -75,6 +75,7 @@ export class TaskTemplateCatalogError extends Error {
     this.operation = options.operation;
     this.retryable = RETRYABLE_CODES.has(options.code);
     this.traceId = options.traceId;
+    delete this.stack;
   }
 }
 

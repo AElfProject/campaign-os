@@ -60,7 +60,7 @@ describe("migration manifest", () => {
       "0006_durable_task_template_catalog",
     ]);
     expect(postgresMigrationFileManifest[5]).toMatchObject({
-      checksum: "05142cee6dc93fc093ac56593670f9c4a9c2f0a18d670bd6e29444509e9c8037",
+      checksum: "421d5944d5203c419d5967e80399134237aad897cef9da184eed5c17066cd0de",
       downPath: "db/migrations/0006_durable_task_template_catalog.down.sql",
       id: "0006_durable_task_template_catalog",
       upPath: "db/migrations/0006_durable_task_template_catalog.up.sql",
@@ -75,6 +75,19 @@ describe("migration manifest", () => {
       "missing",
       postgresMigrationFileManifest.slice(0, -1),
       "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY",
+    ],
+    [
+      "extra",
+      [
+        ...postgresMigrationFileManifest,
+        {
+          checksum: "0".repeat(64),
+          downPath: "db/migrations/0007_unexpected.down.sql",
+          id: "0007_unexpected",
+          upPath: "db/migrations/0007_unexpected.up.sql",
+        },
+      ],
+      "POSTGRES_MIGRATION_MANIFEST_EXTRA_ENTRY",
     ],
     [
       "duplicate",

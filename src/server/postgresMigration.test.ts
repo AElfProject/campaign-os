@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import pg, { type PoolClient } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -26,6 +26,7 @@ import {
   runPostgresMigrationCli,
   type PostgresMigrationPoolConfig,
 } from "./postgresMigrationCli";
+import { postgresMigrationFileManifest } from "./migrationManifest";
 import { taskTemplateCatalogManifestV1 } from "./taskTemplateCatalogManifest";
 
 interface QueryCall {
@@ -240,6 +241,51 @@ const migration = async (
     ...overrides,
   };
 };
+
+interface ManifestApplyDriftScenario {
+  readonly code:
+    | "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT"
+    | "POSTGRES_MIGRATION_MANIFEST_EXTRA_ENTRY"
+    | "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY"
+    | "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT";
+  readonly label: string;
+  readonly mutate: (
+    migrations: PostgresMigrationDefinition[],
+  ) => Promise<unknown> | unknown;
+}
+
+const manifestApplyDriftScenarios: readonly ManifestApplyDriftScenario[] = [
+  {
+    code: "POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY",
+    label: "missing migration",
+    mutate: (migrations) => migrations.pop(),
+  },
+  {
+    code: "POSTGRES_MIGRATION_MANIFEST_EXTRA_ENTRY",
+    label: "extra migration",
+    mutate: async (migrations) => migrations.push(await migration({
+      id: "0007_unexpected",
+      upSql: "CREATE TABLE campaign_os.unexpected (id text PRIMARY KEY);\n",
+    })),
+  },
+  {
+    code: "POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT",
+    label: "reordered migrations",
+    mutate: (migrations) => {
+      [migrations[0], migrations[1]] = [migrations[1]!, migrations[0]!];
+    },
+  },
+  {
+    code: "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT",
+    label: "checksum drift",
+    mutate: (migrations) => {
+      migrations[5] = {
+        ...migrations[5]!,
+        checksum: "0".repeat(64),
+      };
+    },
+  },
+];
 
 describe("PostgreSQL migration runtime", () => {
   it("loads committed additive migrations with stable checksums and owned down contracts", async () => {
@@ -540,6 +586,8 @@ describe("PostgreSQL migration runtime", () => {
       "ADD COLUMN template_adoption_idempotency_key text",
       "campaign_tasks_template_snapshot_all_or_none",
       "campaign_tasks_template_catalog_fk",
+      "campaign_task_template_adoption_immutable_guard",
+      "CAMPAIGN TASK TEMPLATE ADOPTION IS IMMUTABLE",
       "ON DELETE RESTRICT",
       "campaign_tasks_template_idempotency_key",
     ]) {
@@ -555,9 +603,26 @@ describe("PostgreSQL migration runtime", () => {
     expect(durableTaskTemplateCatalog?.downSql).toContain(
       "DROP TABLE IF EXISTS campaign_os.task_template_catalog_versions",
     );
+    const durableDownSql = durableTaskTemplateCatalog?.downSql ?? "";
+    const referenceGuardIndex = durableDownSql.indexOf(
+      "TASK TEMPLATE CATALOG REFERENCES EXIST",
+    );
+    const adoptionTriggerDropIndex = durableDownSql.indexOf(
+      "DROP TRIGGER IF EXISTS campaign_task_template_adoption_immutable_guard",
+    );
+    const adoptionFunctionDropIndex = durableDownSql.indexOf(
+      "DROP FUNCTION IF EXISTS campaign_os.protect_campaign_task_template_adoption()",
+    );
+    const taskColumnDropIndex = durableDownSql.indexOf(
+      "ALTER TABLE campaign_os.campaign_tasks",
+    );
+    expect(referenceGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(adoptionTriggerDropIndex).toBeGreaterThan(referenceGuardIndex);
+    expect(adoptionFunctionDropIndex).toBeGreaterThan(adoptionTriggerDropIndex);
+    expect(taskColumnDropIndex).toBeGreaterThan(adoptionFunctionDropIndex);
     expect(durableTaskTemplateCatalog?.downSql).not.toMatch(/\bCASCADE\b/i);
     expect(durableTaskTemplateCatalog?.checksum).toBe(
-      "05142cee6dc93fc093ac56593670f9c4a9c2f0a18d670bd6e29444509e9c8037",
+      "421d5944d5203c419d5967e80399134237aad897cef9da184eed5c17066cd0de",
     );
 
     const factTables = [
@@ -676,6 +741,60 @@ describe("PostgreSQL migration runtime", () => {
       } finally {
         await rm(directory, { force: true, recursive: true });
       }
+    },
+  );
+
+  it("rejects migration discovery from paths outside the fixed manifest", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "campaign-os-migration-path-drift-"));
+
+    try {
+      for (const entry of postgresMigrationFileManifest) {
+        for (const manifestPath of [entry.upPath, entry.downPath]) {
+          await copyFile(
+            resolve(process.cwd(), manifestPath),
+            join(directory, basename(manifestPath)),
+          );
+        }
+      }
+
+      const failure = loadPostgresMigrations(directory, "trace-path-drift");
+      await expect(failure).rejects.toBeInstanceOf(PostgresMigrationError);
+      await expect(failure).rejects.toMatchObject({
+        code: "POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT",
+        operation: "discover",
+        traceId: "trace-path-drift",
+      });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each(manifestApplyDriftScenarios)(
+    "rejects $label from the production-loaded catalog before connecting",
+    async ({ code, mutate }) => {
+      const migrations = await loadPostgresMigrations();
+      const pool = new TranscriptPool(new TranscriptClient());
+      await mutate(migrations);
+
+      const failure = runPostgresMigrations({
+        approved: true,
+        migrations,
+        mode: "apply",
+        pool,
+        traceId: "trace-manifest-drift",
+      });
+
+      await expect(failure).rejects.toBeInstanceOf(PostgresMigrationError);
+      await expect(failure).rejects.toMatchObject({
+        code,
+        operation: "apply",
+        traceId: "trace-manifest-drift",
+      });
+      await expect(failure).rejects.not.toHaveProperty(
+        "message",
+        expect.stringContaining("CREATE TABLE"),
+      );
+      expect(pool.connect).not.toHaveBeenCalled();
     },
   );
 
@@ -2587,6 +2706,63 @@ postgresMigrationSqlSuite("PostgreSQL 0006 durable task template catalog invaria
           "idem-m246-valid",
         ] as const;
         await client.query(adoptedTaskInsertSql, [...adoptedValues]);
+        const adoptedBeforeMutation = await client.query(
+          `SELECT to_jsonb(task_row) AS task_projection
+           FROM campaign_os.campaign_tasks AS task_row
+           WHERE id = $1`,
+          [adoptedValues[0]],
+        );
+        const adoptedBytesBeforeMutation = digestTestValue(
+          adoptedBeforeMutation.rows[0]?.task_projection,
+        );
+
+        await client.query(
+          `UPDATE campaign_os.campaign_tasks
+           SET template_version = template_version,
+             template_checksum = template_checksum,
+             template_snapshot = template_snapshot,
+             template_adoption_idempotency_key = template_adoption_idempotency_key
+           WHERE id = $1`,
+          [adoptedValues[0]],
+        );
+
+        for (const immutableMutation of [
+          `UPDATE campaign_os.campaign_tasks
+           SET template_version = NULL,
+             template_checksum = NULL,
+             template_snapshot = NULL,
+             template_adoption_idempotency_key = NULL
+           WHERE id = $1`,
+          `UPDATE campaign_os.campaign_tasks
+           SET template_snapshot = jsonb_set(template_snapshot, '{points}', '41'::jsonb)
+           WHERE id = $1`,
+          `UPDATE campaign_os.campaign_tasks
+           SET template_checksum = repeat('a', 64)
+           WHERE id = $1`,
+          `UPDATE campaign_os.campaign_tasks
+           SET template_version = 2
+           WHERE id = $1`,
+          `UPDATE campaign_os.campaign_tasks
+           SET template_adoption_idempotency_key = 'idem-m246-changed'
+           WHERE id = $1`,
+        ]) {
+          await expectSqlState(
+            client,
+            immutableMutation,
+            [adoptedValues[0]],
+            "55000",
+          );
+        }
+
+        const adoptedAfterMutation = await client.query(
+          `SELECT to_jsonb(task_row) AS task_projection
+           FROM campaign_os.campaign_tasks AS task_row
+           WHERE id = $1`,
+          [adoptedValues[0]],
+        );
+        expect(digestTestValue(adoptedAfterMutation.rows[0]?.task_projection)).toBe(
+          adoptedBytesBeforeMutation,
+        );
         await expectSqlState(
           client,
           adoptedTaskInsertSql,
@@ -2603,6 +2779,16 @@ postgresMigrationSqlSuite("PostgreSQL 0006 durable task template catalog invaria
 
         const migration0006 = requiredMigration(migrations, M246_MIGRATION_ID);
         await expectSqlState(client, migration0006.downSql, [], "55000");
+
+        const adoptedAfterBlockedDown = await client.query(
+          `SELECT to_jsonb(task_row) AS task_projection
+           FROM campaign_os.campaign_tasks AS task_row
+           WHERE id = $1`,
+          [adoptedValues[0]],
+        );
+        expect(digestTestValue(adoptedAfterBlockedDown.rows[0]?.task_projection)).toBe(
+          adoptedBytesBeforeMutation,
+        );
 
         const protectedFacts = await client.query(
           `SELECT
@@ -2687,18 +2873,26 @@ SELECT * FROM campaign_os.m246_forced_failure_target;
         `SELECT
            to_regclass($1) AS catalog_relation,
            to_regclass($2) AS campaigns_relation,
+           to_regprocedure($3) AS adoption_guard_function,
+           (SELECT COUNT(*)::integer
+            FROM pg_trigger
+            WHERE tgname = $4 AND NOT tgisinternal) AS adoption_guard_trigger_count,
            (SELECT COUNT(*)::integer
             FROM information_schema.columns
             WHERE table_schema = 'campaign_os'
               AND table_name = 'campaign_tasks'
-              AND column_name = ANY($3::text[])) AS additive_column_count`,
+              AND column_name = ANY($5::text[])) AS additive_column_count`,
         [
           "campaign_os.task_template_catalog_versions",
           "campaign_os.campaigns",
+          "campaign_os.protect_campaign_task_template_adoption()",
+          "campaign_task_template_adoption_immutable_guard",
           M246_TASK_COLUMNS,
         ],
       );
       expect(rollbackFacts.rows[0]).toEqual({
+        adoption_guard_function: null,
+        adoption_guard_trigger_count: 0,
         additive_column_count: 0,
         campaigns_relation: "campaign_os.campaigns",
         catalog_relation: null,
@@ -2741,8 +2935,13 @@ describe("PostgreSQL migration CLI", () => {
         "utf8",
       );
       const probe = spawnSync(
-        resolve(process.cwd(), "node_modules/.bin/vite-node"),
-        ["--script", probePath, "--run"],
+        process.execPath,
+        [
+          resolve(process.cwd(), "node_modules/vite-node/vite-node.mjs"),
+          "--script",
+          probePath,
+          "--run",
+        ],
         {
           cwd: process.cwd(),
           encoding: "utf8",

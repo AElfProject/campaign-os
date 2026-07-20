@@ -16,6 +16,11 @@ BEGIN
 END
 $guard$;
 
+DROP TRIGGER IF EXISTS campaign_task_template_adoption_immutable_guard
+  ON campaign_os.campaign_tasks;
+
+DROP FUNCTION IF EXISTS campaign_os.protect_campaign_task_template_adoption();
+
 DROP INDEX IF EXISTS campaign_os.campaign_tasks_template_idempotency_key;
 
 ALTER TABLE campaign_os.campaign_tasks

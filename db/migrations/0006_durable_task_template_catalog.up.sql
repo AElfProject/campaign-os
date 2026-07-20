@@ -729,3 +729,28 @@ CREATE UNIQUE INDEX campaign_tasks_template_idempotency_key
     template_adoption_idempotency_key
   )
   WHERE template_adoption_idempotency_key IS NOT NULL;
+
+CREATE FUNCTION campaign_os.protect_campaign_task_template_adoption()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $function$
+BEGIN
+  IF NEW.template_version IS DISTINCT FROM OLD.template_version
+    OR NEW.template_checksum IS DISTINCT FROM OLD.template_checksum
+    OR NEW.template_snapshot IS DISTINCT FROM OLD.template_snapshot
+    OR NEW.template_adoption_idempotency_key
+      IS DISTINCT FROM OLD.template_adoption_idempotency_key
+  THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'CAMPAIGN TASK TEMPLATE ADOPTION IS IMMUTABLE';
+  END IF;
+
+  RETURN NEW;
+END
+$function$;
+
+CREATE TRIGGER campaign_task_template_adoption_immutable_guard
+BEFORE UPDATE ON campaign_os.campaign_tasks
+FOR EACH ROW EXECUTE FUNCTION campaign_os.protect_campaign_task_template_adoption();

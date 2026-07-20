@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
+import {
+  validatePostgresMigrationFileManifest,
+  type PostgresMigrationManifestEntry,
+  type PostgresMigrationManifestIssueCode,
+} from "./migrationManifest";
 
 export const POSTGRES_MIGRATION_ADVISORY_LOCK_KEY = 239_000_001;
 
@@ -11,6 +16,8 @@ const MIGRATION_FILE_PATTERN = /^(\d{4}_[a-z0-9]+(?:_[a-z0-9]+)*)\.(up|down)\.sq
 const MIGRATION_ID_PATTERN = /^\d{4}_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
 const TRACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// Array-level provenance lets apply revalidate discovery without widening each SQL definition.
+const POSTGRES_MIGRATION_FILE_MANIFEST = Symbol("postgresMigrationFileManifest");
 
 export type PostgresMigrationMode = "plan" | "validate" | "apply";
 export type PostgresMigrationStatus = "ready" | "pending" | "blocked" | "failed";
@@ -21,6 +28,7 @@ export type PostgresMigrationOperation =
   | "discover"
   | "parse";
 export type PostgresMigrationDiagnosticCode =
+  | PostgresMigrationManifestIssueCode
   | "POSTGRES_MIGRATION_APPROVAL_REQUIRED"
   | "POSTGRES_MIGRATION_ARGUMENT_INVALID"
   | "POSTGRES_MIGRATION_CHECKSUM_DRIFT"
@@ -57,6 +65,10 @@ export interface PostgresMigrationDefinition {
   id: string;
   upSql: string;
 }
+
+type ManifestBoundMigrationDefinitions = PostgresMigrationDefinition[] & {
+  readonly [POSTGRES_MIGRATION_FILE_MANIFEST]: readonly PostgresMigrationManifestEntry[];
+};
 
 export interface PostgresMigrationResult {
   appliedMigrationIds: string[];
@@ -96,6 +108,18 @@ const SAFE_ERROR_MESSAGES: Record<Exclude<PostgresMigrationDiagnosticCode, "POST
   POSTGRES_MIGRATION_EXECUTION_FAILED: "PostgreSQL migration execution failed.",
   POSTGRES_MIGRATION_LEDGER_INVALID: "PostgreSQL migration ledger is invalid.",
   POSTGRES_MIGRATION_LOCK_UNAVAILABLE: "PostgreSQL migration lock is unavailable.",
+  POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT:
+    "PostgreSQL migration manifest checksum drift was detected.",
+  POSTGRES_MIGRATION_MANIFEST_DUPLICATE_ID:
+    "PostgreSQL migration manifest contains a duplicate ID.",
+  POSTGRES_MIGRATION_MANIFEST_EXTRA_ENTRY:
+    "PostgreSQL migration manifest contains an unexpected entry.",
+  POSTGRES_MIGRATION_MANIFEST_MISSING_ENTRY:
+    "PostgreSQL migration manifest is missing an entry.",
+  POSTGRES_MIGRATION_MANIFEST_ORDER_DRIFT:
+    "PostgreSQL migration manifest order drift was detected.",
+  POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT:
+    "PostgreSQL migration manifest path drift was detected.",
   POSTGRES_MIGRATION_QUERY_FAILED: "PostgreSQL migration query failed.",
 };
 
@@ -138,6 +162,64 @@ const migrationError = (
   cause?: unknown,
 ) => new PostgresMigrationError({ cause, code, field, operation, traceId });
 
+const toManifestPath = (filePath: string) =>
+  relative(process.cwd(), filePath).split(sep).join("/");
+
+const assertPostgresMigrationFileManifest = (
+  entries: readonly PostgresMigrationManifestEntry[],
+  operation: PostgresMigrationOperation,
+  traceId: string,
+) => {
+  const issue = validatePostgresMigrationFileManifest(entries)[0];
+
+  if (issue) {
+    throw migrationError(issue.code, issue.field, operation, traceId);
+  }
+};
+
+const bindPostgresMigrationFileManifest = (
+  definitions: PostgresMigrationDefinition[],
+  entries: readonly PostgresMigrationManifestEntry[],
+) => {
+  const snapshot = Object.freeze(entries.map((entry) => Object.freeze({ ...entry })));
+
+  Object.defineProperty(definitions, POSTGRES_MIGRATION_FILE_MANIFEST, {
+    configurable: false,
+    enumerable: false,
+    value: snapshot,
+    writable: false,
+  });
+
+  return definitions as ManifestBoundMigrationDefinitions;
+};
+
+const manifestForBoundMigrationDefinitions = (
+  definitions: readonly PostgresMigrationDefinition[],
+): PostgresMigrationManifestEntry[] | undefined => {
+  const sourceEntries = (
+    definitions as Partial<ManifestBoundMigrationDefinitions>
+  )[POSTGRES_MIGRATION_FILE_MANIFEST];
+
+  if (!sourceEntries) {
+    return undefined;
+  }
+
+  const sourceById = new Map(sourceEntries.map((entry) => [entry.id, entry]));
+
+  return definitions.map((definition) => {
+    const candidate = definition as Partial<PostgresMigrationDefinition> | undefined;
+    const id = typeof candidate?.id === "string" ? candidate.id : "";
+    const source = sourceById.get(id);
+
+    return {
+      checksum: typeof candidate?.checksum === "string" ? candidate.checksum : "",
+      downPath: source?.downPath ?? "",
+      id,
+      upPath: source?.upPath ?? "",
+    };
+  });
+};
+
 const normalizeMigrationSql = (sql: string) => `${sql.replace(/\r\n?/g, "\n").trimEnd()}\n`;
 
 export const calculatePostgresMigrationChecksum = async (sql: string): Promise<string> =>
@@ -157,7 +239,8 @@ export const loadPostgresMigrations = async (
   }
 
   try {
-    const entries = await readdir(directoryPath, { withFileTypes: true });
+    const resolvedDirectoryPath = resolve(directoryPath);
+    const entries = await readdir(resolvedDirectoryPath, { withFileTypes: true });
     const pairs = new Map<string, { downPath?: string; upPath?: string }>();
 
     for (const entry of entries) {
@@ -175,9 +258,9 @@ export const loadPostgresMigrations = async (
       const pair = pairs.get(id) ?? {};
 
       if (direction === "up") {
-        pair.upPath = `${directoryPath}/${entry.name}`;
+        pair.upPath = resolve(resolvedDirectoryPath, entry.name);
       } else {
-        pair.downPath = `${directoryPath}/${entry.name}`;
+        pair.downPath = resolve(resolvedDirectoryPath, entry.name);
       }
 
       pairs.set(id, pair);
@@ -193,6 +276,7 @@ export const loadPostgresMigrations = async (
     }
 
     const definitions: PostgresMigrationDefinition[] = [];
+    const discoveredManifest: PostgresMigrationManifestEntry[] = [];
 
     for (const [id, pair] of [...pairs].sort(([left], [right]) => left.localeCompare(right))) {
       if (!pair.upPath || !pair.downPath) {
@@ -209,16 +293,25 @@ export const loadPostgresMigrations = async (
         readFile(pair.downPath, "utf8"),
       ]);
       const normalizedUpSql = normalizeMigrationSql(upSql);
+      const checksum = await calculatePostgresMigrationChecksum(normalizedUpSql);
 
       definitions.push({
-        checksum: await calculatePostgresMigrationChecksum(normalizedUpSql),
+        checksum,
         downSql: normalizeMigrationSql(downSql),
         id,
         upSql: normalizedUpSql,
       });
+      discoveredManifest.push({
+        checksum,
+        downPath: toManifestPath(pair.downPath),
+        id,
+        upPath: toManifestPath(pair.upPath),
+      });
     }
 
-    return definitions;
+    assertPostgresMigrationFileManifest(discoveredManifest, "discover", traceId);
+
+    return bindPostgresMigrationFileManifest(definitions, discoveredManifest);
   } catch (error) {
     if (error instanceof PostgresMigrationError) {
       throw error;
@@ -760,6 +853,12 @@ export const runPostgresMigrations = async (
       "apply",
       traceId,
     );
+  }
+
+  const boundManifest = manifestForBoundMigrationDefinitions(options.migrations);
+
+  if (boundManifest) {
+    assertPostgresMigrationFileManifest(boundManifest, options.mode, traceId);
   }
 
   const migrations = await validateMigrationDefinitions(

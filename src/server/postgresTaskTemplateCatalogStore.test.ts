@@ -14,6 +14,7 @@ import {
   createPostgresTaskTemplateCatalogStore,
   type PostgresTaskTemplateCatalogClient,
   type PostgresTaskTemplateCatalogPool,
+  type PostgresTaskTemplateCatalogQueryInput,
   type PostgresTaskTemplateCatalogQueryResult,
 } from "./postgresTaskTemplateCatalogStore";
 
@@ -29,12 +30,56 @@ if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
 
 const postgresSuite = TEST_DATABASE_URL ? describe : describe.skip;
 const CURSOR_KEY = Buffer.alloc(32, 7);
+
+const queryText = (input: unknown): string => typeof input === "string"
+  ? input
+  : typeof input === "object"
+    && input !== null
+    && typeof Object.getOwnPropertyDescriptor(input, "text")?.value === "string"
+    ? Object.getOwnPropertyDescriptor(input, "text")!.value as string
+    : "";
+
+const queryValues = (
+  input: unknown,
+  legacyValues: unknown = [],
+): readonly unknown[] => {
+  if (typeof input === "string") {
+    return Array.isArray(legacyValues) ? legacyValues : [];
+  }
+  if (typeof input !== "object" || input === null) {
+    return [];
+  }
+  const values = Object.getOwnPropertyDescriptor(input, "values")?.value;
+  return Array.isArray(values) ? values : [];
+};
+
+const queryTimeout = (input: unknown): number | undefined => {
+  if (typeof input !== "object" || input === null) {
+    return undefined;
+  }
+  const value = Object.getOwnPropertyDescriptor(input, "query_timeout")?.value;
+  return typeof value === "number" ? value : undefined;
+};
+
 const directTemplate = taskTemplateCatalogManifestV1.find(
   ({ adoptionMode }) => adoptionMode === "direct",
 )!;
 const secondDirectTemplate = taskTemplateCatalogManifestV1.find(
   ({ adoptionMode, templateCode }) =>
     adoptionMode === "direct" && templateCode !== directTemplate.templateCode,
+)!;
+const staleDirectTemplate = taskTemplateCatalogManifestV1.find(
+  ({ adoptionMode, templateCode }) =>
+    adoptionMode === "direct"
+    && templateCode !== directTemplate.templateCode
+    && templateCode !== secondDirectTemplate.templateCode,
+)!;
+const replayAfterDeprecationTemplate = taskTemplateCatalogManifestV1.find(
+  ({ adoptionMode, templateCode }) =>
+    adoptionMode === "direct"
+    && templateCode !== directTemplate.templateCode
+    && templateCode !== secondDirectTemplate.templateCode
+    && templateCode !== staleDirectTemplate.templateCode,
 )!;
 const manualTemplate = taskTemplateCatalogManifestV1.find(
   ({ adoptionMode }) => adoptionMode === "manual_review",
@@ -174,12 +219,17 @@ const transactionPool = ({
   const events: string[] = [];
   let existingRead = 0;
   const query = vi.fn(async (
-    text: string,
-    _values: readonly unknown[] = [],
+    input: unknown,
+    _legacyValues: readonly unknown[] = [],
   ): Promise<PostgresTaskTemplateCatalogQueryResult> => {
+    const text = queryText(input);
     if (text === "BEGIN") {
       events.push("BEGIN");
       return { rows: [] };
+    }
+    if (text.includes("set_config('statement_timeout'")) {
+      events.push("TRANSACTION_TIMEOUT");
+      return { rows: [{ statement_timeout: queryValues(input)[0] }] };
     }
     if (text === "COMMIT") {
       events.push("COMMIT");
@@ -222,7 +272,8 @@ const transactionPool = ({
 describe("PostgreSQL task template catalog reads", () => {
   it("uses bounded stable keyset pagination and binds the cursor to normalized filters", async () => {
     let listRead = 0;
-    const query = vi.fn(async (text: string) => {
+    const query = vi.fn(async (input: unknown) => {
+      const text = queryText(input);
       if (text.includes("COUNT(*)")) {
         return { rows: [{ total_active: 12 }] };
       }
@@ -247,11 +298,11 @@ describe("PostgreSQL task template catalog reads", () => {
     expect(first.snapshotAt).toBe(NOW);
     expect(first.totalActive).toBe(12);
     expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls[0]?.[0]).toMatch(
+    expect(queryText(query.mock.calls[0]?.[0])).toMatch(
       /ORDER BY\s+template_code COLLATE "C" ASC,\s+version ASC/,
     );
-    expect(query.mock.calls[0]?.[0]).not.toContain("OFFSET");
-    expect(query.mock.calls[0]?.[0]).not.toContain(`category = '${directTemplate.category}'`);
+    expect(queryText(query.mock.calls[0]?.[0])).not.toContain("OFFSET");
+    expect(queryText(query.mock.calls[0]?.[0])).not.toContain(`category = '${directTemplate.category}'`);
 
     const second = await store.list({
       categories: [directTemplate.category],
@@ -261,7 +312,7 @@ describe("PostgreSQL task template catalog reads", () => {
 
     expect(second.items).toEqual([secondDirectTemplate]);
     expect(second.page.nextCursor).toBeNull();
-    expect(query.mock.calls[2]?.[0]).toMatch(
+    expect(queryText(query.mock.calls[2]?.[0])).toMatch(
       /\(template_code, version\) > \(\$\d+::text COLLATE "C", \$\d+::integer\)/,
     );
     expect(query).toHaveBeenCalledTimes(4);
@@ -283,7 +334,7 @@ describe("PostgreSQL task template catalog reads", () => {
 
   it("rejects tampered and expired cursors before querying PostgreSQL", async () => {
     let clock = new Date(NOW);
-    const query = vi.fn(async (text: string, _values?: readonly unknown[]) => text.includes("COUNT(*)")
+    const query = vi.fn(async (input: unknown, _values?: readonly unknown[]) => queryText(input).includes("COUNT(*)")
       ? { rows: [{ total_active: 12 }] }
       : { rows: [catalogRow(directTemplate), catalogRow(secondDirectTemplate)] });
     const store = createStore(emptyPool({ query }), {
@@ -307,13 +358,13 @@ describe("PostgreSQL task template catalog reads", () => {
   });
 
   it("defaults to active rows and gates historical filters with a server-only flag", async () => {
-    const query = vi.fn(async (text: string, _values?: readonly unknown[]) => text.includes("COUNT(*)")
+    const query = vi.fn(async (input: unknown, _values?: readonly unknown[]) => queryText(input).includes("COUNT(*)")
       ? { rows: [{ total_active: 12 }] }
       : { rows: [] });
     const store = createStore(emptyPool({ query }));
 
     await store.list({}, { traceId: "trace-active-list" });
-    expect(query.mock.calls[0]?.[1]).toContainEqual(["active"]);
+    expect(queryValues(query.mock.calls[0]?.[0], query.mock.calls[0]?.[1])).toContainEqual(["active"]);
 
     await expect(store.list({ statuses: ["deprecated"] }, {
       traceId: "trace-history-denied",
@@ -329,17 +380,23 @@ describe("PostgreSQL task template catalog reads", () => {
   });
 
   it("decodes an exact detail and recomputes the canonical checksum", async () => {
-    const query = vi.fn(async () => ({ rows: [catalogRow(directTemplate)] }));
+    const query = vi.fn(async (
+      _input: unknown,
+      _values?: readonly unknown[],
+    ) => ({ rows: [catalogRow(directTemplate)] }));
     const store = createStore(emptyPool({ query }));
 
     await expect(store.get({
       templateCode: directTemplate.templateCode,
       version: directTemplate.version,
     }, { traceId: "trace-catalog-detail" })).resolves.toEqual(directTemplate);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringMatching(/WHERE template_code = \$1 AND version = \$2/),
-      [directTemplate.templateCode, directTemplate.version],
-    );
+    const detailCall = query.mock.calls.find(([input]) =>
+      queryText(input).includes("WHERE template_code = $1 AND version = $2"));
+    expect(queryText(detailCall?.[0])).toMatch(/WHERE template_code = \$1 AND version = \$2/);
+    expect(queryValues(detailCall?.[0], detailCall?.[1])).toEqual([
+      directTemplate.templateCode,
+      directTemplate.version,
+    ]);
   });
 
   it.each([
@@ -431,25 +488,41 @@ describe("PostgreSQL task template catalog adoption", () => {
     });
     expect(events).toEqual([
       "BEGIN",
+      "TRANSACTION_TIMEOUT",
       "CAMPAIGN_FENCE",
       "CATALOG_LOCK",
       "IDEMPOTENCY_READ",
       "TASK_INSERT",
       "COMMIT",
     ]);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringMatching(/FROM campaign_os\.campaigns[\s\S]+owner_address = \$2[\s\S]+FOR SHARE/),
-      [adoptionRequest().campaignId, adoptionAuthority.ownerAddress],
+    const campaignCall = query.mock.calls.find(([input]) =>
+      queryText(input).includes("FROM campaign_os.campaigns"));
+    expect(queryText(campaignCall?.[0])).toMatch(
+      /FROM campaign_os\.campaigns[\s\S]+owner_address = \$2[\s\S]+FOR SHARE/,
     );
-    expect(query).toHaveBeenCalledWith(
-      expect.stringMatching(/FROM campaign_os\.task_template_catalog_versions[\s\S]+FOR SHARE/),
-      [directTemplate.templateCode, directTemplate.version],
+    expect(queryValues(campaignCall?.[0], campaignCall?.[1])).toEqual([
+      adoptionRequest().campaignId,
+      adoptionAuthority.ownerAddress,
+    ]);
+    const timeoutCall = query.mock.calls.find(([input]) =>
+      queryText(input).includes("set_config('statement_timeout'"));
+    expect(queryValues(timeoutCall?.[0], timeoutCall?.[1])).toEqual(["750ms"]);
+    const catalogCall = query.mock.calls.find(([input]) =>
+      queryText(input).includes("FROM campaign_os.task_template_catalog_versions"));
+    expect(queryText(catalogCall?.[0])).toMatch(
+      /FROM campaign_os\.task_template_catalog_versions[\s\S]+FOR SHARE/,
     );
-    const insertCall = query.mock.calls.find(([text]) =>
-      text.includes("INSERT INTO campaign_os.campaign_tasks"));
-    expect(insertCall?.[0]).toContain("ON CONFLICT");
-    expect(insertCall?.[0]).not.toContain(adoptionAuthority.ownerAddress);
-    expect(insertCall?.[1]).toContain(JSON.stringify(snapshot(directTemplate)));
+    expect(queryValues(catalogCall?.[0], catalogCall?.[1])).toEqual([
+      directTemplate.templateCode,
+      directTemplate.version,
+    ]);
+    const insertCall = query.mock.calls.find(([input]) =>
+      queryText(input).includes("INSERT INTO campaign_os.campaign_tasks"));
+    expect(queryText(insertCall?.[0])).toContain("ON CONFLICT");
+    expect(queryText(insertCall?.[0])).not.toContain(adoptionAuthority.ownerAddress);
+    expect(queryValues(insertCall?.[0], insertCall?.[1])).toContain(
+      JSON.stringify(snapshot(directTemplate)),
+    );
     expect(client.release).toHaveBeenCalledOnce();
   });
 
@@ -465,6 +538,32 @@ describe("PostgreSQL task template catalog adoption", () => {
     });
     expect(events).toEqual([
       "BEGIN",
+      "TRANSACTION_TIMEOUT",
+      "CAMPAIGN_FENCE",
+      "CATALOG_LOCK",
+      "IDEMPOTENCY_READ",
+      "COMMIT",
+    ]);
+  });
+
+  it("replays an existing adoption after the catalog version becomes stale", async () => {
+    const staleTemplate = Object.freeze({
+      ...directTemplate,
+      status: "deprecated" as const,
+    });
+    const { events, pool } = transactionPool({
+      catalog: staleTemplate,
+      existingRows: [[adoptedTaskRow(directTemplate)]],
+    });
+    const store = createStore(pool);
+
+    await expect(store.adopt(adoptionRequest(directTemplate), adoptionAuthority)).resolves.toMatchObject({
+      replayed: true,
+      taskId: "task-from-template-1",
+    });
+    expect(events).toEqual([
+      "BEGIN",
+      "TRANSACTION_TIMEOUT",
       "CAMPAIGN_FENCE",
       "CATALOG_LOCK",
       "IDEMPOTENCY_READ",
@@ -485,6 +584,7 @@ describe("PostgreSQL task template catalog adoption", () => {
     });
     expect(events).toEqual([
       "BEGIN",
+      "TRANSACTION_TIMEOUT",
       "CAMPAIGN_FENCE",
       "CATALOG_LOCK",
       "IDEMPOTENCY_READ",
@@ -509,6 +609,7 @@ describe("PostgreSQL task template catalog adoption", () => {
     });
     expect(events).toEqual([
       "BEGIN",
+      "TRANSACTION_TIMEOUT",
       "CAMPAIGN_FENCE",
       "CATALOG_LOCK",
       "IDEMPOTENCY_READ",
@@ -528,7 +629,13 @@ describe("PostgreSQL task template catalog adoption", () => {
       field: "template",
       operation: "adopt",
     });
-    expect(events).toEqual(["BEGIN", "CAMPAIGN_FENCE", "CATALOG_LOCK", "ROLLBACK"]);
+    expect(events).toEqual([
+      "BEGIN",
+      "TRANSACTION_TIMEOUT",
+      "CAMPAIGN_FENCE",
+      "CATALOG_LOCK",
+      "ROLLBACK",
+    ]);
   });
 
   it("uses the locked lifecycle state and rejects stale adoption with zero Task writes", async () => {
@@ -543,7 +650,14 @@ describe("PostgreSQL task template catalog adoption", () => {
       code: "TASK_TEMPLATE_STALE",
       field: "template",
     });
-    expect(events).toEqual(["BEGIN", "CAMPAIGN_FENCE", "CATALOG_LOCK", "ROLLBACK"]);
+    expect(events).toEqual([
+      "BEGIN",
+      "TRANSACTION_TIMEOUT",
+      "CAMPAIGN_FENCE",
+      "CATALOG_LOCK",
+      "IDEMPOTENCY_READ",
+      "ROLLBACK",
+    ]);
   });
 
   it("rejects points and required overrides outside the locked template policy", async () => {
@@ -568,7 +682,13 @@ describe("PostgreSQL task template catalog adoption", () => {
         code: "TASK_TEMPLATE_POLICY_MISMATCH",
         field: overrides.required === false ? "overrides.required" : "overrides.points",
       });
-      expect(events).toEqual(["BEGIN", "CAMPAIGN_FENCE", "CATALOG_LOCK", "ROLLBACK"]);
+      expect(events).toEqual([
+        "BEGIN",
+        "TRANSACTION_TIMEOUT",
+        "CAMPAIGN_FENCE",
+        "CATALOG_LOCK",
+        "ROLLBACK",
+      ]);
     }
   });
 
@@ -580,7 +700,47 @@ describe("PostgreSQL task template catalog adoption", () => {
       code: "TASK_TEMPLATE_NOT_FOUND",
       field: "campaign",
     });
-    expect(events).toEqual(["BEGIN", "CAMPAIGN_FENCE", "ROLLBACK"]);
+    expect(events).toEqual([
+      "BEGIN",
+      "TRANSACTION_TIMEOUT",
+      "CAMPAIGN_FENCE",
+      "ROLLBACK",
+    ]);
+  });
+
+  it("maps a throwing task ID provider to a safe typed rollback", async () => {
+    const { events, pool } = transactionPool();
+    const store = createStore(pool, {
+      taskId: () => {
+        throw new Error("task-id-private-marker");
+      },
+    });
+
+    let captured: unknown;
+    try {
+      await store.adopt(adoptionRequest(), adoptionAuthority);
+    } catch (error) {
+      captured = error;
+    }
+
+    expect(captured).toMatchObject({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      field: "taskId",
+      operation: "adopt",
+      retryable: true,
+      traceId: adoptionAuthority.traceId,
+    });
+    expect(String(captured)).not.toMatch(/task-id-private-marker/i);
+    expect(JSON.stringify(captured)).not.toMatch(/task-id-private-marker|postgres|select|insert/i);
+    expect((captured as Error).stack).toBeUndefined();
+    expect(events).toEqual([
+      "BEGIN",
+      "TRANSACTION_TIMEOUT",
+      "CAMPAIGN_FENCE",
+      "CATALOG_LOCK",
+      "IDEMPOTENCY_READ",
+      "ROLLBACK",
+    ]);
   });
 });
 
@@ -601,17 +761,18 @@ describe("PostgreSQL task template catalog lifecycle", () => {
     expect(borrowedEnd).not.toHaveBeenCalled();
   });
 
-  it("rejects new work while closing and drains an active read before ending the Pool", async () => {
+  it("rejects new work while closing and drains an aborted read before ending the Pool", async () => {
     let releaseRows: (result: PostgresTaskTemplateCatalogQueryResult) => void = () => undefined;
     const rows = new Promise<PostgresTaskTemplateCatalogQueryResult>((resolve) => {
       releaseRows = resolve;
     });
     const end = vi.fn(async () => undefined);
-    const query = vi.fn(async (text: string) => text.includes("COUNT(*)")
+    const query = vi.fn(async (input: unknown) => queryText(input).includes("COUNT(*)")
       ? { rows: [{ total_active: 12 }] }
       : rows);
     const store = createStore(emptyPool({ end, query }), { ownsPool: true });
-    const listing = store.list({}, { traceId: "trace-drain-list" });
+    const listing = store.list({}, { traceId: "trace-drain-list" })
+      .catch((error: unknown) => error);
     await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
 
     const closing = store.close({ traceId: "trace-drain-close" });
@@ -624,10 +785,14 @@ describe("PostgreSQL task template catalog lifecycle", () => {
       field: "store",
     });
 
-    releaseRows({ rows: [] });
-    await expect(listing).resolves.toMatchObject({ items: [] });
+    await expect(listing).resolves.toMatchObject({
+      code: "TASK_TEMPLATE_CLOSED",
+      field: "store",
+      operation: "list",
+    });
     await expect(closing).resolves.toBeUndefined();
     expect(end).toHaveBeenCalledOnce();
+    releaseRows({ rows: [] });
   });
 
   it("maps owned Pool shutdown failure to a safe cleanup error", async () => {
@@ -645,6 +810,104 @@ describe("PostgreSQL task template catalog lifecycle", () => {
       traceId: "trace-cleanup-failure",
     });
   });
+
+  it("applies a driver query deadline and settles a never-resolving read", async () => {
+    const query = vi.fn((_input: unknown) =>
+      new Promise<PostgresTaskTemplateCatalogQueryResult>(() => undefined));
+    const store = createStore(emptyPool({ query }), {
+      queryTimeoutMs: 20,
+    } as never);
+
+    await expect(store.get({
+      templateCode: directTemplate.templateCode,
+      version: directTemplate.version,
+    }, { traceId: "trace-query-timeout" })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      field: "database",
+      operation: "detail",
+      retryable: true,
+      traceId: "trace-query-timeout",
+    });
+    expect(queryTimeout(query.mock.calls[0]?.[0])).toBeGreaterThan(0);
+    expect(queryTimeout(query.mock.calls[0]?.[0])).toBeLessThanOrEqual(20);
+  }, 500);
+
+  it("shares one deadline across sequential queries in an operation", async () => {
+    let queryCount = 0;
+    const query = vi.fn(async (_input: unknown) => {
+      queryCount += 1;
+      if (queryCount === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { rows: [] };
+      }
+      return new Promise<PostgresTaskTemplateCatalogQueryResult>(() => undefined);
+    });
+    const store = createStore(emptyPool({ query }), {
+      queryTimeoutMs: 80,
+    } as never);
+    const startedAt = Date.now();
+
+    await expect(store.list({}, {
+      traceId: "trace-operation-timeout",
+    })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      field: "database",
+      operation: "list",
+      retryable: true,
+      traceId: "trace-operation-timeout",
+    });
+
+    expect(query).toHaveBeenCalledTimes(2);
+    const secondQueryTimeout = queryTimeout(query.mock.calls[1]?.[0]);
+    expect(secondQueryTimeout).toBeGreaterThan(0);
+    expect(secondQueryTimeout).toBeLessThanOrEqual(40);
+    expect(Date.now() - startedAt).toBeLessThan(150);
+  }, 500);
+
+  it("aborts active operations during close and rejects post-close work", async () => {
+    const query = vi.fn(() => new Promise<PostgresTaskTemplateCatalogQueryResult>(() => undefined));
+    const end = vi.fn(async () => undefined);
+    const store = createStore(emptyPool({ end, query }), {
+      closeTimeoutMs: 200,
+      ownsPool: true,
+      queryTimeoutMs: 100,
+    } as never);
+    const listing = store.list({}, { traceId: "trace-close-abort-list" })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+
+    await expect(store.close({ traceId: "trace-close-abort" })).resolves.toBeUndefined();
+    await expect(listing).resolves.toMatchObject({
+      code: "TASK_TEMPLATE_CLOSED",
+      field: "store",
+      operation: "list",
+    });
+    expect(end).toHaveBeenCalledOnce();
+    await expect(store.get({
+      templateCode: directTemplate.templateCode,
+      version: directTemplate.version,
+    }, { traceId: "trace-close-abort-after" })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_CLOSED",
+    });
+  }, 750);
+
+  it("bounds a hung owned Pool shutdown with a safe cleanup error", async () => {
+    const end = vi.fn(() => new Promise<void>(() => undefined));
+    const store = createStore(emptyPool({ end }), {
+      closeTimeoutMs: 20,
+      ownsPool: true,
+      queryTimeoutMs: 10,
+    } as never);
+
+    await expect(store.close({ traceId: "trace-close-timeout" })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_CLEANUP_FAILED",
+      field: "pool",
+      operation: "close",
+      retryable: true,
+      traceId: "trace-close-timeout",
+    });
+    expect(end).toHaveBeenCalledOnce();
+  }, 500);
 });
 
 const createRealPool = (databaseUrl: string, max = 24): pg.Pool => {
@@ -664,6 +927,25 @@ const isolatedDatabaseUrl = (baseUrl: string, databaseName: string): string => {
   parsed.pathname = `/${databaseName}`;
   parsed.search = "";
   return parsed.toString();
+};
+
+const runPgQuery = async (
+  queryable: pg.Pool | pg.PoolClient,
+  input: PostgresTaskTemplateCatalogQueryInput,
+  legacyValues: readonly unknown[] = [],
+): Promise<PostgresTaskTemplateCatalogQueryResult> => {
+  let result: pg.QueryResult;
+  if (typeof input === "string") {
+    result = await queryable.query(input, [...legacyValues]);
+  } else {
+    const config = {
+      query_timeout: input.query_timeout,
+      text: input.text,
+      values: [...input.values],
+    } as pg.QueryConfig;
+    result = await queryable.query(config);
+  }
+  return { rows: result.rows };
 };
 
 postgresSuite("PostgreSQL task template catalog real acceptance", () => {
@@ -831,6 +1113,56 @@ postgresSuite("PostgreSQL task template catalog real acceptance", () => {
     });
   });
 
+  it("replays the same durable adoption after deprecation and keeps different payloads conflicting", async () => {
+    const request = {
+      ...adoptionRequest(replayAfterDeprecationTemplate),
+      campaignId,
+      idempotencyKey: "catalog-live-deprecated-replay-1",
+    };
+    const created = await store.adopt(request, {
+      ownerAddress,
+      traceId: "trace-catalog-live-before-deprecation",
+    });
+    expect(created.replayed).toBe(false);
+
+    await databasePool.query(
+      `UPDATE campaign_os.task_template_catalog_versions
+       SET status = 'deprecated', deprecated_at = $3, updated_at = $3
+       WHERE template_code = $1 AND version = $2`,
+      [
+        replayAfterDeprecationTemplate.templateCode,
+        replayAfterDeprecationTemplate.version,
+        "2026-07-20T08:02:00.000Z",
+      ],
+    );
+
+    await expect(store.adopt(request, {
+      ownerAddress,
+      traceId: "trace-catalog-live-after-deprecation",
+    })).resolves.toMatchObject({
+      replayed: true,
+      taskId: created.taskId,
+    });
+    await expect(store.adopt({
+      ...request,
+      overrides: { points: replayAfterDeprecationTemplate.points.default + 1 },
+    }, {
+      ownerAddress,
+      traceId: "trace-catalog-live-deprecated-conflict",
+    })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_ADOPTION_CONFLICT",
+      field: "idempotencyKey",
+    });
+
+    const persisted = await databasePool.query(
+      `SELECT COUNT(*)::integer AS count
+       FROM campaign_os.campaign_tasks
+       WHERE campaign_id = $1 AND template_adoption_idempotency_key = $2`,
+      [campaignId, request.idempotencyKey],
+    );
+    expect(persisted.rows[0]?.count).toBe(1);
+  });
+
   it("creates at most one Task for twenty concurrent same-key adoptions", async () => {
     const template = secondDirectTemplate;
     const request = {
@@ -855,6 +1187,88 @@ postgresSuite("PostgreSQL task template catalog real acceptance", () => {
     expect(count.rows[0]?.count).toBe(1);
   });
 
+  it("uses PostgreSQL statement_timeout for a blocked catalog lock", async () => {
+    const blocker = await databasePool.connect();
+    const observedDriverCodes: string[] = [];
+    const timeoutPool: PostgresTaskTemplateCatalogPool = {
+      connect: async () => {
+        const client = await databasePool.connect();
+        return {
+          query: async (input, values = []) => {
+            try {
+              return await runPgQuery(client, input, values);
+            } catch (error) {
+              const descriptor = error !== null && typeof error === "object"
+                ? Object.getOwnPropertyDescriptor(error, "code")
+                : undefined;
+              if (descriptor && "value" in descriptor && typeof descriptor.value === "string") {
+                observedDriverCodes.push(descriptor.value);
+              }
+              throw error;
+            }
+          },
+          release: (destroy = false) => client.release(destroy),
+        };
+      },
+      end: async () => undefined,
+      query: (input, values = []) => runPgQuery(databasePool, input, values),
+    };
+    const timeoutStore = createPostgresTaskTemplateCatalogStore({
+      closeTimeoutMs: 1_500,
+      cursorSigningKey: CURSOR_KEY,
+      ownsPool: false,
+      pool: timeoutPool,
+      queryTimeoutMs: 1_000,
+      taskId: () => "task-catalog-timeout-1",
+    });
+    let failure: unknown;
+    const startedAt = Date.now();
+
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        `SELECT template_code
+         FROM campaign_os.task_template_catalog_versions
+         WHERE template_code = $1 AND version = $2
+         FOR UPDATE`,
+        [directTemplate.templateCode, directTemplate.version],
+      );
+      try {
+        await timeoutStore.adopt({
+          ...adoptionRequest(),
+          campaignId,
+          idempotencyKey: "catalog-live-timeout-1",
+        }, {
+          ownerAddress,
+          traceId: "trace-catalog-live-timeout",
+        });
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await timeoutStore.close({ traceId: "trace-catalog-live-timeout-close" });
+    }
+
+    expect(failure).toMatchObject({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      field: "database",
+      operation: "adopt",
+      retryable: true,
+      traceId: "trace-catalog-live-timeout",
+    });
+    expect(observedDriverCodes).toContain("57014");
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    const persisted = await databasePool.query(
+      `SELECT COUNT(*)::integer AS count
+       FROM campaign_os.campaign_tasks
+       WHERE campaign_id = $1 AND template_adoption_idempotency_key = $2`,
+      [campaignId, "catalog-live-timeout-1"],
+    );
+    expect(persisted.rows[0]?.count).toBe(0);
+  }, 5_000);
+
   it("keeps unauthorized, deferred, and stale adoption paths at zero writes", async () => {
     const before = await databasePool.query(
       "SELECT COUNT(*)::integer AS count FROM campaign_os.campaign_tasks WHERE campaign_id = $1",
@@ -877,20 +1291,14 @@ postgresSuite("PostgreSQL task template catalog real acceptance", () => {
       traceId: "trace-catalog-live-deferred",
     })).rejects.toMatchObject({ code: "TASK_TEMPLATE_ADOPTION_DEFERRED" });
 
-    const staleTemplate = taskTemplateCatalogManifestV1.find(
-      ({ adoptionMode, templateCode }) =>
-        adoptionMode === "direct"
-        && templateCode !== directTemplate.templateCode
-        && templateCode !== secondDirectTemplate.templateCode,
-    )!;
     await databasePool.query(
       `UPDATE campaign_os.task_template_catalog_versions
        SET status = 'deprecated', deprecated_at = $3, updated_at = $3
        WHERE template_code = $1 AND version = $2`,
-      [staleTemplate.templateCode, staleTemplate.version, "2026-07-20T08:01:00.000Z"],
+      [staleDirectTemplate.templateCode, staleDirectTemplate.version, "2026-07-20T08:01:00.000Z"],
     );
     await expect(store.adopt({
-      ...adoptionRequest(staleTemplate),
+      ...adoptionRequest(staleDirectTemplate),
       campaignId,
       idempotencyKey: "catalog-live-stale-1",
     }, {
@@ -963,7 +1371,7 @@ postgresSuite("PostgreSQL task template catalog real acceptance", () => {
            AND template_snapshot IS NOT NULL`,
         [campaignId],
       );
-      expect(taskFacts.rows[0]?.count).toBe(2);
+      expect(taskFacts.rows[0]?.count).toBe(3);
     } finally {
       await restartStore.close({ traceId: "trace-catalog-post-restart-close" });
     }

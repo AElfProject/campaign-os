@@ -40,6 +40,10 @@ import {
 } from "./taskTemplateCatalogStore";
 
 const DEFAULT_CURSOR_TTL_MS = 5 * 60_000;
+const DEFAULT_QUERY_TIMEOUT_MS = 1_500;
+const DEFAULT_CLOSE_TIMEOUT_MS = 9_000;
+const MAX_QUERY_TIMEOUT_MS = 2_000;
+const MAX_CLOSE_TIMEOUT_MS = 10_000;
 const CURSOR_MAX_LENGTH = 2_048;
 const IDENTIFIER_MAX_LENGTH = 160;
 const OWNER_ADDRESS_MAX_LENGTH = 256;
@@ -150,9 +154,19 @@ export interface PostgresTaskTemplateCatalogQueryResult {
   readonly rows: Array<Record<string, unknown>>;
 }
 
+export interface PostgresTaskTemplateCatalogQueryConfig {
+  readonly query_timeout: number;
+  readonly text: string;
+  readonly values: readonly unknown[];
+}
+
+export type PostgresTaskTemplateCatalogQueryInput =
+  | string
+  | PostgresTaskTemplateCatalogQueryConfig;
+
 export interface PostgresTaskTemplateCatalogClient {
   query(
-    text: string,
+    input: PostgresTaskTemplateCatalogQueryInput,
     values?: readonly unknown[],
   ): Promise<PostgresTaskTemplateCatalogQueryResult>;
   release(destroy?: boolean): void;
@@ -162,12 +176,13 @@ export interface PostgresTaskTemplateCatalogPool {
   connect(): Promise<PostgresTaskTemplateCatalogClient>;
   end(): Promise<void>;
   query(
-    text: string,
+    input: PostgresTaskTemplateCatalogQueryInput,
     values?: readonly unknown[],
   ): Promise<PostgresTaskTemplateCatalogQueryResult>;
 }
 
 export interface CreatePostgresTaskTemplateCatalogStoreOptions {
+  readonly closeTimeoutMs?: number;
   readonly cursorSigningKey?: Uint8Array;
   readonly cursorTtlMs?: number;
   readonly defaultPageSize?: number;
@@ -175,7 +190,14 @@ export interface CreatePostgresTaskTemplateCatalogStoreOptions {
   readonly now?: () => Date;
   readonly ownsPool?: boolean;
   readonly pool: PostgresTaskTemplateCatalogPool;
+  readonly queryTimeoutMs?: number;
   readonly taskId?: () => string;
+}
+
+interface ActiveOperationLease {
+  readonly deadline: number;
+  readonly finish: () => void;
+  readonly signal: AbortSignal;
 }
 
 interface NormalizedCatalogQuery {
@@ -998,6 +1020,7 @@ const mapDriverCode = (error: unknown): TaskTemplateCatalogErrorCode => {
 };
 
 export const createPostgresTaskTemplateCatalogStore = ({
+  closeTimeoutMs = DEFAULT_CLOSE_TIMEOUT_MS,
   cursorSigningKey: requestedCursorSigningKey,
   cursorTtlMs = DEFAULT_CURSOR_TTL_MS,
   defaultPageSize = TASK_TEMPLATE_CATALOG_DEFAULT_PAGE_SIZE,
@@ -1005,6 +1028,7 @@ export const createPostgresTaskTemplateCatalogStore = ({
   now = () => new Date(),
   ownsPool = true,
   pool,
+  queryTimeoutMs = DEFAULT_QUERY_TIMEOUT_MS,
   taskId = () => `task-template-${randomUUID()}`,
 }: CreatePostgresTaskTemplateCatalogStoreOptions): TaskTemplateCatalogStore => {
   const constructionTraceId = randomUUID();
@@ -1028,18 +1052,31 @@ export const createPostgresTaskTemplateCatalogStore = ({
   if (!Number.isSafeInteger(cursorTtlMs) || cursorTtlMs < 1 || cursorTtlMs > 24 * 60 * 60_000) {
     throw catalogError("TASK_TEMPLATE_ARGUMENT_INVALID", "cursorTtlMs", "list", constructionTraceId);
   }
+  if (
+    !Number.isSafeInteger(queryTimeoutMs)
+    || queryTimeoutMs < 1
+    || queryTimeoutMs > MAX_QUERY_TIMEOUT_MS
+    || !Number.isSafeInteger(closeTimeoutMs)
+    || closeTimeoutMs < queryTimeoutMs
+    || closeTimeoutMs > MAX_CLOSE_TIMEOUT_MS
+  ) {
+    throw catalogError("TASK_TEMPLATE_ARGUMENT_INVALID", "timeout", "list", constructionTraceId);
+  }
   const cursorSigningKey = requestedCursorSigningKey
     ? Uint8Array.from(requestedCursorSigningKey)
     : randomBytes(32);
   if (cursorSigningKey.byteLength < 32 || cursorSigningKey.byteLength > 1_024) {
     throw catalogError("TASK_TEMPLATE_ARGUMENT_INVALID", "cursorSigningKey", "list", constructionTraceId);
   }
+  const statementTimeoutMs = Math.max(1, Math.floor(queryTimeoutMs / 2));
 
   let activeOperations = 0;
   let closed = false;
   let closing = false;
   let closePromise: Promise<void> | undefined;
   const drainWaiters = new Set<() => void>();
+  const activeControllers = new Set<AbortController>();
+  const unsafeConnectionErrors = new WeakSet<TaskTemplateCatalogError>();
 
   const currentDate = (
     operation: TaskTemplateCatalogOperation,
@@ -1060,17 +1097,21 @@ export const createPostgresTaskTemplateCatalogStore = ({
   const beginOperation = (
     operation: Extract<TaskTemplateCatalogOperation, "adopt" | "detail" | "list">,
     traceId: string,
-  ): (() => void) => {
+  ): ActiveOperationLease => {
     if (closing || closed) {
       throw catalogError("TASK_TEMPLATE_CLOSED", "store", operation, traceId);
     }
+    const controller = new AbortController();
+    const deadline = Date.now() + queryTimeoutMs;
+    activeControllers.add(controller);
     activeOperations += 1;
     let completed = false;
-    return () => {
+    const finish = () => {
       if (completed) {
         return;
       }
       completed = true;
+      activeControllers.delete(controller);
       activeOperations -= 1;
       if (activeOperations === 0) {
         for (const resolve of drainWaiters) {
@@ -1079,6 +1120,7 @@ export const createPostgresTaskTemplateCatalogStore = ({
         drainWaiters.clear();
       }
     };
+    return Object.freeze({ deadline, finish, signal: controller.signal });
   };
 
   const queryWith = async (
@@ -1087,9 +1129,75 @@ export const createPostgresTaskTemplateCatalogStore = ({
     sql: string,
     values: readonly unknown[],
     traceId: string,
+    signal: AbortSignal,
+    deadline: number,
   ): Promise<PostgresTaskTemplateCatalogQueryResult> => {
+    const aborted = (): TaskTemplateCatalogError => {
+      const error = catalogError("TASK_TEMPLATE_CLOSED", "store", operation, traceId);
+      unsafeConnectionErrors.add(error);
+      return error;
+    };
+    const timedOut = (): TaskTemplateCatalogError => {
+      const error = catalogError("TASK_TEMPLATE_CATALOG_UNAVAILABLE", "database", operation, traceId);
+      unsafeConnectionErrors.add(error);
+      return error;
+    };
+    if (signal.aborted) {
+      throw aborted();
+    }
+    const remainingMs = Math.min(queryTimeoutMs, deadline - Date.now());
+    if (remainingMs <= 0) {
+      throw timedOut();
+    }
+
+    const resultPromise = new Promise<PostgresTaskTemplateCatalogQueryResult>((resolve, reject) => {
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const settle = (): boolean => {
+        if (settled) {
+          return false;
+        }
+        settled = true;
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        signal.removeEventListener("abort", onAbort);
+        return true;
+      };
+      const onAbort = () => {
+        if (settle()) {
+          reject(aborted());
+        }
+      };
+      timeout = setTimeout(() => {
+        if (settle()) {
+          reject(timedOut());
+        }
+      }, remainingMs);
+      signal.addEventListener("abort", onAbort, { once: true });
+
+      Promise.resolve()
+        .then(() => queryable.query({
+          query_timeout: remainingMs,
+          text: sql,
+          values,
+        }))
+        .then(
+          (result) => {
+            if (settle()) {
+              resolve(result);
+            }
+          },
+          (error: unknown) => {
+            if (settle()) {
+              reject(error);
+            }
+          },
+        );
+    });
+
     try {
-      const result = await queryable.query(sql, values);
+      const result = await resultPromise;
       if (!result || !Array.isArray(result.rows)) {
         throw new RowDecodeError("rows");
       }
@@ -1101,7 +1209,11 @@ export const createPostgresTaskTemplateCatalogStore = ({
       if (error instanceof RowDecodeError) {
         throw catalogError("TASK_TEMPLATE_CORRUPT", "databaseRows", operation, traceId);
       }
-      throw catalogError(mapDriverCode(error), "database", operation, traceId);
+      const mapped = catalogError(mapDriverCode(error), "database", operation, traceId);
+      if (mapped.code === "TASK_TEMPLATE_CATALOG_UNAVAILABLE") {
+        unsafeConnectionErrors.add(mapped);
+      }
+      throw mapped;
     }
   };
 
@@ -1206,7 +1318,7 @@ export const createPostgresTaskTemplateCatalogStore = ({
   ): Promise<TaskTemplateCatalogPage> => {
     const context = normalizeReadContext(rawContext, "list");
     const traceId = context.traceId;
-    const finish = beginOperation("list", traceId);
+    const { deadline, finish, signal } = beginOperation("list", traceId);
     try {
       const normalized = normalizeCatalogQuery(
         rawQuery,
@@ -1262,6 +1374,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
          LIMIT $${limitParam}`,
         values,
         traceId,
+        signal,
+        deadline,
       );
       if (pageResult.rows.length > normalized.limit + 1) {
         throw catalogError("TASK_TEMPLATE_CORRUPT", "catalogRows", "list", traceId);
@@ -1281,6 +1395,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
          WHERE status = 'active'`,
         [],
         traceId,
+        signal,
+        deadline,
       );
       if (countResult.rows.length !== 1) {
         throw catalogError("TASK_TEMPLATE_CORRUPT", "catalogCount", "list", traceId);
@@ -1320,7 +1436,7 @@ export const createPostgresTaskTemplateCatalogStore = ({
   ): Promise<TaskTemplateCatalogVersion | null> => {
     const context = normalizeReadContext(rawContext, "detail");
     const traceId = context.traceId;
-    const finish = beginOperation("detail", traceId);
+    const { deadline, finish, signal } = beginOperation("detail", traceId);
     try {
       const identity = normalizeIdentity(rawIdentity, "detail", traceId);
       const result = await queryWith(
@@ -1332,6 +1448,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
          LIMIT 2`,
         [identity.templateCode, identity.version],
         traceId,
+        signal,
+        deadline,
       );
       if (result.rows.length === 0) {
         return null;
@@ -1366,37 +1484,106 @@ export const createPostgresTaskTemplateCatalogStore = ({
     walletCompatibility: template.walletCompatibility,
   });
 
+  const connectWithDeadline = async (
+    traceId: string,
+    signal: AbortSignal,
+    deadline: number,
+  ): Promise<PostgresTaskTemplateCatalogClient> => {
+    if (signal.aborted) {
+      throw catalogError("TASK_TEMPLATE_CLOSED", "store", "adopt", traceId);
+    }
+    const remainingMs = Math.min(queryTimeoutMs, deadline - Date.now());
+    if (remainingMs <= 0) {
+      throw catalogError("TASK_TEMPLATE_CATALOG_UNAVAILABLE", "database", "adopt", traceId);
+    }
+    let abandoned = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const connectionPromise = Promise.resolve().then(() => pool.connect());
+    const deadlinePromise = new Promise<PostgresTaskTemplateCatalogClient>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(catalogError("TASK_TEMPLATE_CATALOG_UNAVAILABLE", "database", "adopt", traceId));
+      }, remainingMs);
+      onAbort = () => reject(catalogError("TASK_TEMPLATE_CLOSED", "store", "adopt", traceId));
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+
+    try {
+      return await Promise.race([connectionPromise, deadlinePromise]);
+    } catch (error) {
+      abandoned = true;
+      void connectionPromise.then(
+        (lateClient) => {
+          if (abandoned) {
+            try {
+              lateClient.release(true);
+            } catch {
+              // The caller already received a bounded safe failure.
+            }
+          }
+        },
+        () => undefined,
+      );
+      if (error instanceof TaskTemplateCatalogError) {
+        throw error;
+      }
+      throw catalogError("TASK_TEMPLATE_CATALOG_UNAVAILABLE", "database", "adopt", traceId);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
+  };
+
   const withTransaction = async <TValue>(
     traceId: string,
+    signal: AbortSignal,
+    deadline: number,
     execute: (client: PostgresTaskTemplateCatalogClient) => Promise<TValue>,
   ): Promise<TValue> => {
     let client: PostgresTaskTemplateCatalogClient | undefined;
     let began = false;
+    let destroyClient = false;
     try {
-      try {
-        client = await pool.connect();
-      } catch {
-        throw catalogError("TASK_TEMPLATE_CATALOG_UNAVAILABLE", "database", "adopt", traceId);
-      }
-      await queryWith(client, "adopt", "BEGIN", [], traceId);
+      client = await connectWithDeadline(traceId, signal, deadline);
+      await queryWith(client, "adopt", "BEGIN", [], traceId, signal, deadline);
       began = true;
+      await queryWith(
+        client,
+        "adopt",
+        "SELECT set_config('statement_timeout', $1, true) AS statement_timeout",
+        [`${statementTimeoutMs}ms`],
+        traceId,
+        signal,
+        deadline,
+      );
       const result = await execute(client);
-      await queryWith(client, "adopt", "COMMIT", [], traceId);
+      await queryWith(client, "adopt", "COMMIT", [], traceId, signal, deadline);
       began = false;
       return result;
     } catch (error) {
-      if (began && client) {
-        try {
-          await queryWith(client, "adopt", "ROLLBACK", [], traceId);
-        } catch {
-          throw catalogError("TASK_TEMPLATE_CLEANUP_FAILED", "transaction", "adopt", traceId);
+      destroyClient = error instanceof TaskTemplateCatalogError
+        && unsafeConnectionErrors.has(error);
+      if (began && client && !destroyClient) {
+        if (deadline <= Date.now()) {
+          destroyClient = true;
+        } else {
+          try {
+            await queryWith(client, "adopt", "ROLLBACK", [], traceId, signal, deadline);
+          } catch {
+            destroyClient = true;
+            throw catalogError("TASK_TEMPLATE_CLEANUP_FAILED", "transaction", "adopt", traceId);
+          }
         }
       }
       throw error;
     } finally {
       if (client) {
         try {
-          client.release();
+          client.release(destroyClient);
         } catch {
           throw catalogError("TASK_TEMPLATE_CLEANUP_FAILED", "connection", "adopt", traceId);
         }
@@ -1409,10 +1596,10 @@ export const createPostgresTaskTemplateCatalogStore = ({
     rawAuthority: TaskTemplateAdoptionAuthority,
   ): Promise<TaskTemplateAdoptedTask> => {
     const authority = normalizeAuthority(rawAuthority);
-    const finish = beginOperation("adopt", authority.traceId);
+    const { deadline, finish, signal } = beginOperation("adopt", authority.traceId);
     try {
       const request = normalizeAdoptionRequest(rawRequest, authority.traceId);
-      return await withTransaction(authority.traceId, async (client) => {
+      return await withTransaction(authority.traceId, signal, deadline, async (client) => {
         const campaignResult = await queryWith(
           client,
           "adopt",
@@ -1423,6 +1610,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
            FOR SHARE`,
           [request.campaignId, authority.ownerAddress],
           authority.traceId,
+          signal,
+          deadline,
         );
         if (campaignResult.rows.length === 0) {
           throw catalogError("TASK_TEMPLATE_NOT_FOUND", "campaign", "adopt", authority.traceId);
@@ -1453,6 +1642,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
            FOR SHARE`,
           [request.template.templateCode, request.template.version],
           authority.traceId,
+          signal,
+          deadline,
         );
         if (catalogResult.rows.length === 0) {
           throw catalogError("TASK_TEMPLATE_NOT_FOUND", "template", "adopt", authority.traceId);
@@ -1461,9 +1652,6 @@ export const createPostgresTaskTemplateCatalogStore = ({
           throw catalogError("TASK_TEMPLATE_CORRUPT", "catalogRows", "adopt", authority.traceId);
         }
         const template = decodeCatalogRow(catalogResult.rows[0], "adopt", authority.traceId);
-        if (template.status !== "active") {
-          throw catalogError("TASK_TEMPLATE_STALE", "template", "adopt", authority.traceId);
-        }
         if (template.adoptionMode === "manual_review") {
           throw catalogError(
             "TASK_TEMPLATE_MANUAL_REVIEW_REQUIRED",
@@ -1515,6 +1703,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
            FOR UPDATE`,
           [request.campaignId, request.idempotencyKey],
           authority.traceId,
+          signal,
+          deadline,
         );
 
         const resolveExisting = (
@@ -1565,7 +1755,16 @@ export const createPostgresTaskTemplateCatalogStore = ({
           return existing;
         }
 
-        const generatedTaskId = taskId();
+        if (template.status !== "active") {
+          throw catalogError("TASK_TEMPLATE_STALE", "template", "adopt", authority.traceId);
+        }
+
+        let generatedTaskId: string;
+        try {
+          generatedTaskId = taskId();
+        } catch {
+          throw catalogError("TASK_TEMPLATE_CATALOG_UNAVAILABLE", "taskId", "adopt", authority.traceId);
+        }
         if (
           typeof generatedTaskId !== "string"
           || generatedTaskId.length > IDENTIFIER_MAX_LENGTH
@@ -1617,6 +1816,8 @@ export const createPostgresTaskTemplateCatalogStore = ({
             request.idempotencyKey,
           ],
           authority.traceId,
+          signal,
+          deadline,
         );
         if (insertResult.rows.length > 1) {
           throw catalogError("TASK_TEMPLATE_CORRUPT", "taskRows", "adopt", authority.traceId);
@@ -1657,16 +1858,51 @@ export const createPostgresTaskTemplateCatalogStore = ({
     const traceId = resolveTraceId(context?.traceId ?? randomUUID(), "close");
     closing = true;
     closePromise = (async () => {
+      const deadline = Date.now() + closeTimeoutMs;
+      const waitUntilDeadline = async (
+        operation: Promise<void>,
+        field: "operations" | "pool",
+      ): Promise<void> => {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          throw catalogError("TASK_TEMPLATE_CLEANUP_FAILED", field, "close", traceId);
+        }
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            operation,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(() => {
+                reject(catalogError("TASK_TEMPLATE_CLEANUP_FAILED", field, "close", traceId));
+              }, remainingMs);
+            }),
+          ]);
+        } finally {
+          if (timeout) {
+            clearTimeout(timeout);
+          }
+        }
+      };
+
+      for (const controller of activeControllers) {
+        controller.abort();
+      }
       if (activeOperations > 0) {
-        await new Promise<void>((resolve) => drainWaiters.add(resolve));
+        await waitUntilDeadline(
+          new Promise<void>((resolve) => drainWaiters.add(resolve)),
+          "operations",
+        );
       }
       closed = true;
       if (!ownsPool) {
         return;
       }
       try {
-        await pool.end();
-      } catch {
+        await waitUntilDeadline(Promise.resolve().then(() => pool.end()), "pool");
+      } catch (error) {
+        if (error instanceof TaskTemplateCatalogError) {
+          throw error;
+        }
         throw catalogError("TASK_TEMPLATE_CLEANUP_FAILED", "pool", "close", traceId);
       }
     })();
