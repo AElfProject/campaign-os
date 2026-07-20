@@ -2746,7 +2746,7 @@ postgresIntegrationSuite("PostgreSQL durable verification attempt acceptance", (
     isolatedUrl.pathname = `/${databaseName}`;
     isolatedUrl.search = "";
     databasePool = new pg.Pool(postgresPoolConfig(isolatedUrl.toString()));
-    migrations = await loadPostgresMigrations();
+    migrations = (await loadPostgresMigrations()).slice(0, 5);
     expect(migrations.map(({ id }) => id)).toEqual([
       "0001_campaign_runtime",
       "0002_admin_review_export",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createMigrationManifest,
+  durableTaskTemplateCatalogMigration,
   participantWalletAuthenticationMigration,
   postgresMigrationFileManifest,
   validateMigrationManifestStores,
@@ -10,7 +11,7 @@ import {
 import { defaultSchemaMigrations } from "./migrationRunner";
 
 describe("migration manifest", () => {
-  it("locks the participant wallet authentication migration identity, paths, and checksum", () => {
+  it("locks the existing migration identities, paths, and checksums before appending 0006", () => {
     expect(participantWalletAuthenticationMigration).toEqual({
       checksum: "d8d7dea2d7e8d4d0f8d195082cad72c01007dd28a63d2b97b27fa4584940db0c",
       downPath: "db/migrations/0005_participant_wallet_authentication.down.sql",
@@ -18,13 +19,54 @@ describe("migration manifest", () => {
       upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
     });
     expect(Object.isFrozen(participantWalletAuthenticationMigration)).toBe(true);
+    expect(postgresMigrationFileManifest.slice(0, 5)).toEqual([
+      {
+        checksum: "f8987b38a916e3c53d533f6fdcd75bfe95e2ea766346b5786c998529435c75a4",
+        downPath: "db/migrations/0001_campaign_runtime.down.sql",
+        id: "0001_campaign_runtime",
+        upPath: "db/migrations/0001_campaign_runtime.up.sql",
+      },
+      {
+        checksum: "4f8eb20ac83b52bc9bc3e842416ff09fce369ec64412b7d67b974f2c900e6af5",
+        downPath: "db/migrations/0002_admin_review_export.down.sql",
+        id: "0002_admin_review_export",
+        upPath: "db/migrations/0002_admin_review_export.up.sql",
+      },
+      {
+        checksum: "c9236184b25820b36540942de86c2342c9098002a023db8da1f706cf287dd7e8",
+        downPath: "db/migrations/0003_admin_review_rank_projection.down.sql",
+        id: "0003_admin_review_rank_projection",
+        upPath: "db/migrations/0003_admin_review_rank_projection.up.sql",
+      },
+      {
+        checksum: "8e772b6427b4e41f9fe0f13c0c355c2cfd94eb302ab4fd6bb036188f78130d63",
+        downPath: "db/migrations/0004_live_provider_task_verification.down.sql",
+        id: "0004_live_provider_task_verification",
+        upPath: "db/migrations/0004_live_provider_task_verification.up.sql",
+      },
+      {
+        checksum: "d8d7dea2d7e8d4d0f8d195082cad72c01007dd28a63d2b97b27fa4584940db0c",
+        downPath: "db/migrations/0005_participant_wallet_authentication.down.sql",
+        id: "0005_participant_wallet_authentication",
+        upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
+      },
+    ]);
     expect(postgresMigrationFileManifest.map(({ id }) => id)).toEqual([
       "0001_campaign_runtime",
       "0002_admin_review_export",
       "0003_admin_review_rank_projection",
       "0004_live_provider_task_verification",
       "0005_participant_wallet_authentication",
+      "0006_durable_task_template_catalog",
     ]);
+    expect(postgresMigrationFileManifest[5]).toMatchObject({
+      checksum: "05142cee6dc93fc093ac56593670f9c4a9c2f0a18d670bd6e29444509e9c8037",
+      downPath: "db/migrations/0006_durable_task_template_catalog.down.sql",
+      id: "0006_durable_task_template_catalog",
+      upPath: "db/migrations/0006_durable_task_template_catalog.up.sql",
+    });
+    expect(durableTaskTemplateCatalogMigration).toBe(postgresMigrationFileManifest[5]);
+    expect(Object.isFrozen(durableTaskTemplateCatalogMigration)).toBe(true);
     expect(validatePostgresMigrationFileManifest(postgresMigrationFileManifest)).toEqual([]);
   });
 
@@ -52,9 +94,25 @@ describe("migration manifest", () => {
       "checksum drift",
       [
         ...postgresMigrationFileManifest.slice(0, -1),
-        { ...participantWalletAuthenticationMigration, checksum: "0".repeat(64) },
+        { ...postgresMigrationFileManifest[5], checksum: "0".repeat(64) },
       ],
       "POSTGRES_MIGRATION_MANIFEST_CHECKSUM_DRIFT",
+    ],
+    [
+      "up path drift",
+      [
+        ...postgresMigrationFileManifest.slice(0, -1),
+        { ...postgresMigrationFileManifest[5], upPath: "db/migrations/wrong.up.sql" },
+      ],
+      "POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT",
+    ],
+    [
+      "down path drift",
+      [
+        ...postgresMigrationFileManifest.slice(0, -1),
+        { ...postgresMigrationFileManifest[5], downPath: "db/migrations/wrong.down.sql" },
+      ],
+      "POSTGRES_MIGRATION_MANIFEST_PATH_DRIFT",
     ],
   ] as const)("rejects %s deterministically", (_label, entries, expectedCode) => {
     expect(validatePostgresMigrationFileManifest(entries)).toEqual(

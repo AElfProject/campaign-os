@@ -1576,7 +1576,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     };
 
     try {
-      const migrations = await loadPostgresMigrations();
+      const migrations = (await loadPostgresMigrations()).slice(0, 5);
 
       expect(migrations.map(({ id }) => id)).toEqual([
         "0001_campaign_runtime",
@@ -2186,7 +2186,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
       try {
         const migration = await runPostgresMigrations({
           approved: true,
-          migrations: await loadPostgresMigrations(),
+          migrations: (await loadPostgresMigrations()).slice(0, 5),
           mode: "apply",
           pool: adapter,
           traceId: "m244-t051-clean-start-migration",
@@ -2714,7 +2714,7 @@ integrationSuite("PostgreSQL Campaign API runtime", () => {
     const pool = new pg.Pool(compatibilityConfig.pool);
 
     try {
-      const migrations = await loadPostgresMigrations();
+      const migrations = (await loadPostgresMigrations()).slice(0, 5);
       const migration0004 = migrations.find(
         ({ id }) => id === "0004_live_provider_task_verification",
       );

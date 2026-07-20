@@ -120,10 +120,19 @@ export const postgresMigrationFileManifest = Object.freeze([
     id: "0005_participant_wallet_authentication",
     upPath: "db/migrations/0005_participant_wallet_authentication.up.sql",
   }),
+  postgresMigrationEntry({
+    checksum: "05142cee6dc93fc093ac56593670f9c4a9c2f0a18d670bd6e29444509e9c8037",
+    downPath: "db/migrations/0006_durable_task_template_catalog.down.sql",
+    id: "0006_durable_task_template_catalog",
+    upPath: "db/migrations/0006_durable_task_template_catalog.up.sql",
+  }),
 ] as const);
 
 export const participantWalletAuthenticationMigration =
-  postgresMigrationFileManifest[postgresMigrationFileManifest.length - 1];
+  postgresMigrationFileManifest[4];
+
+export const durableTaskTemplateCatalogMigration =
+  postgresMigrationFileManifest[5];
 
 export const validatePostgresMigrationFileManifest = (
   entries: readonly PostgresMigrationManifestEntry[],

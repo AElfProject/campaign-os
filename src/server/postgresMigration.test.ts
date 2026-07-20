@@ -1,9 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pg, { type PoolClient } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  parseTaskTemplateCatalogVersion,
+  type TaskTemplateCatalogVersion,
+} from "../domain/taskTemplateCatalog";
 import {
   POSTGRES_MIGRATION_ADVISORY_LOCK_KEY,
   PostgresMigrationError,
@@ -21,6 +26,7 @@ import {
   runPostgresMigrationCli,
   type PostgresMigrationPoolConfig,
 } from "./postgresMigrationCli";
+import { taskTemplateCatalogManifestV1 } from "./taskTemplateCatalogManifest";
 
 interface QueryCall {
   text: string;
@@ -38,6 +44,102 @@ if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
 
 const postgresMigrationSqlSuite = TEST_DATABASE_URL ? describe : describe.skip;
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
+const M246_MIGRATION_ID = "0006_durable_task_template_catalog";
+const M246_CATALOG_COLUMNS = [
+  "template_code",
+  "version",
+  "catalog_schema_version",
+  "status",
+  "adoption_mode",
+  "category",
+  "verification_type",
+  "wallet_compatibility",
+  "default_points",
+  "minimum_points",
+  "maximum_points",
+  "required_by_default",
+  "required_override_allowed",
+  "risk_level",
+  "supported_locales",
+  "localized_content",
+  "locale_readiness",
+  "evidence_rule",
+  "checksum",
+  "created_at",
+  "updated_at",
+  "deprecated_at",
+  "retired_at",
+] as const;
+const M246_TASK_COLUMNS = [
+  "template_version",
+  "template_checksum",
+  "template_snapshot",
+  "template_adoption_idempotency_key",
+] as const;
+const EXPECTED_M246_TEMPLATE_IDENTITIES = Object.freeze([
+  "bridge-ebridge@1:c853e3150e98dccab6f12db1082044187c07b8105da579b2f47228753d376366",
+  "daipp-submit@1:148400ba54941a018e712991157cefa91623be9d6e96c25783eb1d8dce443cea",
+  "dao-vote@1:6480c2e967624f4e79daa0658aed5a1b92d327489c6873b7ef65909201c16e16",
+  "forecast-participate@1:ee9e9b502937579115be2eff76e020ae46ffe1d001b378c2cdddaef9843cbd89",
+  "invite-friend@1:01a37be6ef94068fc0ca8c81e988e68c223821f996a98cd770e8a2879c2f3731",
+  "liquidity-awaken@1:631a473a66b438cb9f57bcbfb44dfa97b2fcf03a9009afb3d136b17cd6762447",
+  "nft-hold@1:a449e6359a9eced771eb833707859ec26a94828fedf0d4144d21ac2aaae6bf23",
+  "pay-complete@1:06230264ca2c06cb076412adc42bc6cf69eb34f5d2ca640a16321aeeab6b9b24",
+  "schrodinger-hold@1:4a440889f5107090b428e457d485e038717cffe9ccd013ecc467e4baa91ce787",
+  "social-share@1:031c9374a5a2e0226a174522bc74db101e2cbf41292ffc16aa73ef3631b3def7",
+  "swap-awaken@1:d6b8f167617b8ba400b98b9069ae4792131408cde8070f640324890e38aa0df9",
+  "wallet-connect@1:0114d4dafde62cda6c222e6499efe55b484f8451f845babb66ccf1f3babd783a",
+]);
+
+const stableTestJson = (value: unknown): string => {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableTestJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort()
+      .map((key) => `${JSON.stringify(key)}:${stableTestJson(record[key])}`)
+      .join(",")}}`;
+  }
+
+  throw new Error("Test projection contains an unsupported value.");
+};
+
+const digestTestValue = (value: unknown) =>
+  createHash("sha256").update(stableTestJson(value), "utf8").digest("hex");
+
+const catalogVersionFromRow = (row: Record<string, unknown>): TaskTemplateCatalogVersion =>
+  parseTaskTemplateCatalogVersion({
+    adoptionMode: row.adoption_mode,
+    catalogSchemaVersion: row.catalog_schema_version,
+    category: row.category,
+    checksum: row.checksum,
+    evidenceRule: row.evidence_rule,
+    localeReadiness: row.locale_readiness,
+    localizedContent: row.localized_content,
+    points: {
+      default: row.default_points,
+      maximum: row.maximum_points,
+      minimum: row.minimum_points,
+    },
+    requiredPolicy: {
+      default: row.required_by_default,
+      overrideAllowed: row.required_override_allowed,
+    },
+    riskLevel: row.risk_level,
+    status: row.status,
+    supportedLocales: row.supported_locales,
+    templateCode: row.template_code,
+    verificationType: row.verification_type,
+    version: row.version,
+    walletCompatibility: row.wallet_compatibility,
+  });
 
 const createPostgresPool = (databaseUrl: string) => {
   const parsed = new URL(databaseUrl);
@@ -150,12 +252,14 @@ describe("PostgreSQL migration runtime", () => {
       "0003_admin_review_rank_projection",
       "0004_live_provider_task_verification",
       "0005_participant_wallet_authentication",
+      "0006_durable_task_template_catalog",
     ]);
     const campaignRuntime = first[0];
     const adminReviewExport = first[1];
     const adminReviewRankProjection = first[2];
     const liveProviderTaskVerification = first[3];
     const participantWalletAuthentication = first[4];
+    const durableTaskTemplateCatalog = first[5];
 
     for (const table of [
       "campaigns",
@@ -421,6 +525,41 @@ describe("PostgreSQL migration runtime", () => {
       "d8d7dea2d7e8d4d0f8d195082cad72c01007dd28a63d2b97b27fa4584940db0c",
     );
 
+    for (const contractFragment of [
+      "CREATE TABLE campaign_os.task_template_catalog_versions",
+      "PRIMARY KEY (template_code, version)",
+      "task_template_catalog_single_active_idx",
+      "campaign_os.valid_task_template_supported_locales",
+      "campaign_os.valid_task_template_locales",
+      "task_template_catalog_update_guard",
+      "TASK TEMPLATE CATALOG CANONICAL FIELDS ARE IMMUTABLE",
+      "TASK TEMPLATE CATALOG STATUS IS FORWARD ONLY",
+      "ADD COLUMN template_version integer",
+      "ADD COLUMN template_checksum text",
+      "ADD COLUMN template_snapshot jsonb",
+      "ADD COLUMN template_adoption_idempotency_key text",
+      "campaign_tasks_template_snapshot_all_or_none",
+      "campaign_tasks_template_catalog_fk",
+      "ON DELETE RESTRICT",
+      "campaign_tasks_template_idempotency_key",
+    ]) {
+      expect(durableTaskTemplateCatalog?.upSql).toContain(contractFragment);
+    }
+    expect(durableTaskTemplateCatalog?.upSql).not.toMatch(
+      /\b(?:UPDATE|DELETE\s+FROM|TRUNCATE|DROP)\s+(?:TABLE\s+)?(?:IF\s+EXISTS\s+)?campaign_os\.(?:campaigns|campaign_tasks|campaign_participants|campaign_task_completions|campaign_task_evidence|campaign_referral_bindings)\b/i,
+    );
+    expect(durableTaskTemplateCatalog?.upSql).not.toMatch(/\bBACKFILL\b/i);
+    expect(durableTaskTemplateCatalog?.downSql).toContain(
+      "TASK TEMPLATE CATALOG REFERENCES EXIST",
+    );
+    expect(durableTaskTemplateCatalog?.downSql).toContain(
+      "DROP TABLE IF EXISTS campaign_os.task_template_catalog_versions",
+    );
+    expect(durableTaskTemplateCatalog?.downSql).not.toMatch(/\bCASCADE\b/i);
+    expect(durableTaskTemplateCatalog?.checksum).toBe(
+      "05142cee6dc93fc093ac56593670f9c4a9c2f0a18d670bd6e29444509e9c8037",
+    );
+
     const factTables = [
       "campaigns",
       "campaign_tasks",
@@ -493,6 +632,8 @@ describe("PostgreSQL migration runtime", () => {
       "0003_admin_review_rank_projection.up.sql": "c9236184b25820b36540942de86c2342c9098002a023db8da1f706cf287dd7e8",
       "0004_live_provider_task_verification.down.sql": "87c9ab26a7e37fb1800324a4179415d98128684e3ca78cfed520a82e2b55e58d",
       "0004_live_provider_task_verification.up.sql": "8e772b6427b4e41f9fe0f13c0c355c2cfd94eb302ab4fd6bb036188f78130d63",
+      "0005_participant_wallet_authentication.down.sql": "ed59547af758339ca20a34c8f5bf609c8af8143e280c49fd33712bb5af238b9c",
+      "0005_participant_wallet_authentication.up.sql": "d8d7dea2d7e8d4d0f8d195082cad72c01007dd28a63d2b97b27fa4584940db0c",
     } as const;
 
     for (const [fileName, expectedChecksum] of Object.entries(expectedByteChecksums)) {
@@ -511,6 +652,32 @@ describe("PostgreSQL migration runtime", () => {
       traceId: "trace-discovery",
     });
   });
+
+  it.each(["up", "down"] as const)(
+    "rejects a migration with only the %s file present",
+    async (direction) => {
+      const directory = await mkdtemp(join(tmpdir(), "campaign-os-migration-pair-"));
+
+      try {
+        await writeFile(
+          join(directory, `0006_durable_task_template_catalog.${direction}.sql`),
+          "SELECT 1;\n",
+          "utf8",
+        );
+
+        await expect(loadPostgresMigrations(
+          directory,
+          `trace-missing-${direction}`,
+        )).rejects.toMatchObject({
+          code: "POSTGRES_MIGRATION_DEFINITION_INVALID",
+          field: "migrationPair",
+          operation: "discover",
+        });
+      } finally {
+        await rm(directory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("normalizes line endings before calculating a checksum", async () => {
     expect(await calculatePostgresMigrationChecksum("SELECT 1;\r\n")).toBe(
@@ -1964,6 +2131,580 @@ postgresMigrationSqlSuite("PostgreSQL 0004 and 0005 migration SQL invariants", (
       "SELECT COUNT(*)::integer AS count FROM campaign_os.wallet_auth_challenges",
     )).resolves.toMatchObject({ rows: [{ count: 1 }] });
   });
+});
+
+postgresMigrationSqlSuite("PostgreSQL 0006 durable task template catalog invariants", () => {
+  interface IsolatedDatabaseContext {
+    openRestartPool(): pg.Pool;
+    pool: pg.Pool;
+  }
+
+  const databaseNames = new Set<string>();
+  let adminPool: pg.Pool | undefined;
+  let savepointSequence = 0;
+
+  const requiredAdminPool = () => {
+    if (!adminPool) {
+      throw new Error("Migration SQL acceptance admin pool is unavailable.");
+    }
+
+    return adminPool;
+  };
+
+  const withIsolatedDatabase = async (
+    run: (context: IsolatedDatabaseContext) => Promise<void>,
+  ) => {
+    const databaseName = `campaign_os_m246_${process.pid}_${randomUUID()
+      .replace(/-/g, "")
+      .slice(0, 12)}`;
+    const administrator = requiredAdminPool();
+    await administrator.query(`CREATE DATABASE "${databaseName}"`);
+    databaseNames.add(databaseName);
+    const databaseUrl = isolatedPostgresDatabaseUrl(TEST_DATABASE_URL!, databaseName);
+    const pool = createPostgresPool(databaseUrl);
+
+    try {
+      await run({
+        openRestartPool: () => createPostgresPool(databaseUrl),
+        pool,
+      });
+    } finally {
+      await pool.end();
+      await administrator.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      databaseNames.delete(databaseName);
+    }
+  };
+
+  const migrationPool = (pool: pg.Pool) =>
+    pool as unknown as PostgresMigrationPool;
+
+  const requiredMigration = (
+    migrations: readonly PostgresMigrationDefinition[],
+    id: string,
+  ) => {
+    const definition = migrations.find((candidate) => candidate.id === id);
+
+    if (!definition) {
+      throw new Error("Required migration definition is unavailable.");
+    }
+
+    return definition;
+  };
+
+  const applyMigrations = (
+    pool: pg.Pool,
+    migrations: readonly PostgresMigrationDefinition[],
+    traceId: string,
+  ) => runPostgresMigrations({
+    approved: true,
+    migrations,
+    mode: "apply",
+    pool: migrationPool(pool),
+    traceId,
+  });
+
+  const expectSqlState = async (
+    client: PoolClient,
+    text: string,
+    values: readonly unknown[],
+    expectedCode: string,
+  ) => {
+    const savepoint = `m246_expected_error_${++savepointSequence}`;
+    await client.query(`SAVEPOINT ${savepoint}`);
+    let observedCode: unknown;
+
+    try {
+      await client.query(text, [...values]);
+    } catch (error) {
+      observedCode = error && typeof error === "object" && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    }
+
+    await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+
+    if (observedCode !== expectedCode) {
+      throw new Error(`Expected PostgreSQL SQLSTATE ${expectedCode}.`);
+    }
+  };
+
+  const catalogRows = (pool: pg.Pool) => pool.query(`
+    SELECT
+      template_code, version, catalog_schema_version, status, adoption_mode,
+      category, verification_type, wallet_compatibility, default_points,
+      minimum_points, maximum_points, required_by_default,
+      required_override_allowed, risk_level, supported_locales,
+      localized_content, locale_readiness, evidence_rule, checksum
+    FROM campaign_os.task_template_catalog_versions
+    ORDER BY template_code COLLATE "C" ASC, version ASC
+  `);
+
+  beforeAll(async () => {
+    adminPool = createPostgresPool(TEST_DATABASE_URL!);
+  });
+
+  afterAll(async () => {
+    const administrator = adminPool;
+    if (administrator) {
+      for (const databaseName of databaseNames) {
+        await administrator.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+      }
+      databaseNames.clear();
+      await administrator.end();
+      adminPool = undefined;
+    }
+  }, 60_000);
+
+  it("applies fresh 0001..0006, reconciles the exact seed, survives restart, and reruns without writes", async () => {
+    await withIsolatedDatabase(async ({ openRestartPool, pool }) => {
+      const migrations = await loadPostgresMigrations();
+      const firstApply = await applyMigrations(pool, migrations, "trace-m246-fresh");
+
+      expect(firstApply.status).toBe("ready");
+      expect(firstApply.appliedMigrationIds).toEqual(migrations.map(({ id }) => id));
+
+      const ledger = await pool.query(
+        "SELECT COUNT(*)::integer AS count FROM campaign_os.schema_migrations",
+      );
+      expect(ledger.rows[0]?.count).toBe(6);
+
+      const catalogColumns = await pool.query(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'campaign_os'
+           AND table_name = 'task_template_catalog_versions'
+         ORDER BY ordinal_position`,
+      );
+      expect(catalogColumns.rows.map(({ column_name }) => column_name).join(",")).toBe(
+        M246_CATALOG_COLUMNS.join(","),
+      );
+      const taskColumns = await pool.query(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'campaign_os'
+           AND table_name = 'campaign_tasks'
+           AND column_name = ANY($1::text[])
+         ORDER BY ordinal_position`,
+        [M246_TASK_COLUMNS],
+      );
+      expect(taskColumns.rows.map(({ column_name }) => column_name).join(",")).toBe(
+        M246_TASK_COLUMNS.join(","),
+      );
+
+      const seededRows = await catalogRows(pool);
+      const seededVersions = seededRows.rows.map(catalogVersionFromRow);
+      const expectedVersions = [...taskTemplateCatalogManifestV1].sort(
+        (left, right) => left.templateCode < right.templateCode
+          ? -1
+          : left.templateCode > right.templateCode
+            ? 1
+            : left.version - right.version,
+      );
+      expect(seededVersions).toHaveLength(12);
+      expect(seededVersions
+        .map(({ checksum, templateCode, version }) => `${templateCode}@${version}:${checksum}`)
+        .join("\n")).toBe(EXPECTED_M246_TEMPLATE_IDENTITIES.join("\n"));
+      expect(digestTestValue(seededVersions)).toBe(digestTestValue(expectedVersions));
+
+      const deterministicTimestamps = await pool.query(`
+        SELECT COUNT(*)::integer AS count
+        FROM campaign_os.task_template_catalog_versions
+        WHERE created_at = TIMESTAMPTZ '2026-07-20 00:00:00+00'
+          AND updated_at = TIMESTAMPTZ '2026-07-20 00:00:00+00'
+          AND deprecated_at IS NULL
+          AND retired_at IS NULL
+      `);
+      expect(deterministicTimestamps.rows[0]?.count).toBe(12);
+
+      const beforeRerunDigest = digestTestValue(seededVersions);
+      const secondApply = await applyMigrations(pool, migrations, "trace-m246-rerun");
+      expect(secondApply.status).toBe("ready");
+      expect(secondApply.pendingMigrationIds).toEqual([]);
+      const rerunRows = await catalogRows(pool);
+      expect(digestTestValue(rerunRows.rows.map(catalogVersionFromRow))).toBe(
+        beforeRerunDigest,
+      );
+
+      const restartPool = openRestartPool();
+      try {
+        const restartRows = await catalogRows(restartPool);
+        expect(digestTestValue(restartRows.rows.map(catalogVersionFromRow))).toBe(
+          beforeRerunDigest,
+        );
+      } finally {
+        await restartPool.end();
+      }
+
+      const client = await pool.connect();
+      await client.query("BEGIN");
+      try {
+        await expectSqlState(
+          client,
+          `INSERT INTO campaign_os.task_template_catalog_versions
+             (template_code, version, catalog_schema_version, status, adoption_mode,
+              category, verification_type, wallet_compatibility, default_points,
+              minimum_points, maximum_points, required_by_default,
+              required_override_allowed, risk_level, supported_locales,
+              localized_content, locale_readiness, evidence_rule, checksum,
+              created_at, updated_at, deprecated_at, retired_at)
+           SELECT template_code, 2, catalog_schema_version, status, adoption_mode,
+              category, verification_type, wallet_compatibility, default_points,
+              minimum_points, maximum_points, required_by_default,
+              required_override_allowed, risk_level, supported_locales,
+              localized_content, locale_readiness, evidence_rule, checksum,
+              created_at, updated_at, deprecated_at, retired_at
+           FROM campaign_os.task_template_catalog_versions
+           WHERE template_code = $1 AND version = 1`,
+          ["wallet-connect"],
+          "23505",
+        );
+        await expectSqlState(
+          client,
+          `INSERT INTO campaign_os.task_template_catalog_versions
+           SELECT * FROM campaign_os.task_template_catalog_versions
+           WHERE template_code = $1 AND version = 1`,
+          ["wallet-connect"],
+          "23505",
+        );
+
+        const invalidCatalogInsert = `
+          INSERT INTO campaign_os.task_template_catalog_versions
+            (template_code, version, catalog_schema_version, status, adoption_mode,
+             category, verification_type, wallet_compatibility, default_points,
+             minimum_points, maximum_points, required_by_default,
+             required_override_allowed, risk_level, supported_locales,
+             localized_content, locale_readiness, evidence_rule, checksum,
+             created_at, updated_at, deprecated_at, retired_at)
+          SELECT
+            CASE WHEN $1 = 'code' THEN 'INVALID-CODE' ELSE 'invalid-' || $1 END,
+            CASE WHEN $1 = 'version' THEN 0 ELSE version END,
+            catalog_schema_version, status, adoption_mode, category,
+            CASE WHEN $1 = 'adoption' THEN 'SOCIAL' ELSE verification_type END,
+            wallet_compatibility,
+            CASE WHEN $1 = 'points' THEN maximum_points + 1 ELSE default_points END,
+            minimum_points, maximum_points, required_by_default,
+            required_override_allowed, risk_level, supported_locales,
+            CASE WHEN $1 = 'json' THEN
+              jsonb_build_object(
+                'en-US',
+                jsonb_build_object('title', 'x', 'description', repeat('x', 70000))
+              )
+            ELSE localized_content END,
+            locale_readiness, evidence_rule,
+            CASE WHEN $1 = 'checksum' THEN repeat('z', 64) ELSE checksum END,
+            created_at, updated_at, deprecated_at, retired_at
+          FROM campaign_os.task_template_catalog_versions
+          WHERE template_code = 'wallet-connect' AND version = 1
+        `;
+        for (const invalidField of [
+          "adoption",
+          "code",
+          "version",
+          "points",
+          "json",
+          "checksum",
+        ]) {
+          await expectSqlState(client, invalidCatalogInsert, [invalidField], "23514");
+        }
+
+        await client.query(
+          `UPDATE campaign_os.task_template_catalog_versions
+           SET status = 'deprecated',
+             deprecated_at = TIMESTAMPTZ '2026-07-20 00:01:00+00',
+             updated_at = TIMESTAMPTZ '2026-07-20 00:01:00+00'
+           WHERE template_code = $1 AND version = 1`,
+          ["wallet-connect"],
+        );
+        await expectSqlState(
+          client,
+          `UPDATE campaign_os.task_template_catalog_versions
+           SET status = 'active', deprecated_at = NULL,
+             updated_at = TIMESTAMPTZ '2026-07-20 00:02:00+00'
+           WHERE template_code = $1 AND version = 1`,
+          ["wallet-connect"],
+          "55000",
+        );
+        await client.query(
+          `UPDATE campaign_os.task_template_catalog_versions
+           SET status = 'retired',
+             retired_at = TIMESTAMPTZ '2026-07-20 00:02:00+00',
+             updated_at = TIMESTAMPTZ '2026-07-20 00:02:00+00'
+           WHERE template_code = $1 AND version = 1`,
+          ["wallet-connect"],
+        );
+        await expectSqlState(
+          client,
+          `UPDATE campaign_os.task_template_catalog_versions
+           SET category = 'rewritten',
+             updated_at = TIMESTAMPTZ '2026-07-20 00:03:00+00'
+           WHERE template_code = $1 AND version = 1`,
+          ["wallet-connect"],
+          "55000",
+        );
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    });
+  }, 60_000);
+
+  it("preserves existing Campaign and Task bytes while enforcing snapshots, idempotency, and references", async () => {
+    await withIsolatedDatabase(async ({ pool }) => {
+      const migrations = await loadPostgresMigrations();
+      const historicalMigrations = migrations.slice(0, 5);
+      await applyMigrations(pool, historicalMigrations, "trace-m246-existing-base");
+
+      const campaignId = "campaign-m246-existing";
+      const legacyTaskId = "task-m246-legacy";
+      await pool.query(
+        `INSERT INTO campaign_os.campaigns (
+           id, project_id, owner_address, status, default_locale, supported_locales,
+           wallet_policy, contract_mode, goal, duration, reward_description,
+           reward_disclaimer_hash, metadata_uri, metadata_hash, start_time, end_time,
+           publish_readiness, created_at, updated_at
+         ) VALUES (
+           $1, 'project-m246-existing', 'owner-m246-existing', 'draft', 'en-US',
+           '["en-US"]'::jsonb, 'ANY', 'OFF_CHAIN_MVP', 'Existing migration path',
+           '30 days', 'Existing reward', NULL, NULL, NULL,
+           '2026-07-19T00:00:00.000Z', '2026-08-19T00:00:00.000Z', '{}'::jsonb,
+           '2026-07-19T00:00:00.000Z', '2026-07-19T00:00:00.000Z'
+         )`,
+        [campaignId],
+      );
+      await pool.query(
+        `INSERT INTO campaign_os.campaign_tasks (
+           id, campaign_id, template_code, verification_type, wallet_compatibility,
+           points, required, evidence_rule, created_at, updated_at
+         ) VALUES (
+           $1, $2, 'legacy-template', 'ON_CHAIN', 'ANY', 77, true,
+           '{"kind":"legacy"}'::jsonb,
+           '2026-07-19T00:00:00.000Z', '2026-07-19T00:00:00.000Z'
+         )`,
+        [legacyTaskId, campaignId],
+      );
+
+      const before = await pool.query(
+        `SELECT to_jsonb(campaign_row) AS campaign_projection,
+           to_jsonb(task_row) AS task_projection,
+           (SELECT COUNT(*)::integer FROM campaign_os.campaigns) AS campaign_count,
+           (SELECT COUNT(*)::integer FROM campaign_os.campaign_tasks) AS task_count
+         FROM campaign_os.campaigns AS campaign_row
+         JOIN campaign_os.campaign_tasks AS task_row
+           ON task_row.campaign_id = campaign_row.id
+         WHERE campaign_row.id = $1 AND task_row.id = $2`,
+        [campaignId, legacyTaskId],
+      );
+      const beforeDigest = digestTestValue(before.rows[0]);
+
+      await applyMigrations(pool, migrations, "trace-m246-existing-upgrade");
+
+      const after = await pool.query(
+        `SELECT to_jsonb(campaign_row) AS campaign_projection,
+           to_jsonb(task_row) - ARRAY[
+             'template_version',
+             'template_checksum',
+             'template_snapshot',
+             'template_adoption_idempotency_key'
+           ] AS task_projection,
+           (SELECT COUNT(*)::integer FROM campaign_os.campaigns) AS campaign_count,
+           (SELECT COUNT(*)::integer FROM campaign_os.campaign_tasks) AS task_count
+         FROM campaign_os.campaigns AS campaign_row
+         JOIN campaign_os.campaign_tasks AS task_row
+           ON task_row.campaign_id = campaign_row.id
+         WHERE campaign_row.id = $1 AND task_row.id = $2`,
+        [campaignId, legacyTaskId],
+      );
+      expect(digestTestValue(after.rows[0])).toBe(beforeDigest);
+      const legacyNulls = await pool.query(
+        `SELECT COUNT(*)::integer AS count
+         FROM campaign_os.campaign_tasks
+         WHERE id = $1
+           AND template_version IS NULL
+           AND template_checksum IS NULL
+           AND template_snapshot IS NULL
+           AND template_adoption_idempotency_key IS NULL`,
+        [legacyTaskId],
+      );
+      expect(legacyNulls.rows[0]?.count).toBe(1);
+
+      const walletTemplate = taskTemplateCatalogManifestV1.find(
+        ({ templateCode }) => templateCode === "wallet-connect",
+      );
+      if (!walletTemplate) {
+        throw new Error("Wallet template fixture is unavailable.");
+      }
+      const templateSnapshot = {
+        adoptionMode: "direct",
+        category: walletTemplate.category,
+        evidenceRule: walletTemplate.evidenceRule,
+        points: walletTemplate.points.default,
+        required: walletTemplate.requiredPolicy.default,
+        templateChecksum: walletTemplate.checksum,
+        templateCode: walletTemplate.templateCode,
+        templateVersion: walletTemplate.version,
+        verificationType: walletTemplate.verificationType,
+        version: "task-template-snapshot-v1",
+        walletCompatibility: walletTemplate.walletCompatibility,
+      };
+      const adoptedTaskInsertSql = `
+        INSERT INTO campaign_os.campaign_tasks (
+          id, campaign_id, template_code, verification_type, wallet_compatibility,
+          points, required, evidence_rule, created_at, updated_at,
+          template_version, template_checksum, template_snapshot,
+          template_adoption_idempotency_key
+        ) VALUES (
+          $1, $2, $3, 'WALLET', 'ANY', 40, true,
+          '{"kind":"wallet_session","source":"WALLET_SESSION"}'::jsonb,
+          '2026-07-20T00:10:00.000Z', '2026-07-20T00:10:00.000Z',
+          1, $4, $5::jsonb, $6
+        )
+      `;
+
+      const client = await pool.connect();
+      await client.query("BEGIN");
+      try {
+        await expectSqlState(
+          client,
+          `INSERT INTO campaign_os.campaign_tasks (
+             id, campaign_id, template_code, verification_type, wallet_compatibility,
+             points, required, evidence_rule, created_at, updated_at, template_version
+           ) VALUES (
+             'task-m246-partial', $1, 'wallet-connect', 'WALLET', 'ANY',
+             40, true, '{"kind":"wallet_session"}'::jsonb,
+             '2026-07-20T00:05:00.000Z', '2026-07-20T00:05:00.000Z', 1
+           )`,
+          [campaignId],
+          "23514",
+        );
+
+        const adoptedValues = [
+          "task-m246-adopted",
+          campaignId,
+          walletTemplate.templateCode,
+          walletTemplate.checksum,
+          JSON.stringify(templateSnapshot),
+          "idem-m246-valid",
+        ] as const;
+        await client.query(adoptedTaskInsertSql, [...adoptedValues]);
+        await expectSqlState(
+          client,
+          adoptedTaskInsertSql,
+          ["task-m246-duplicate-idempotency", ...adoptedValues.slice(1)],
+          "23505",
+        );
+        await expectSqlState(
+          client,
+          `DELETE FROM campaign_os.task_template_catalog_versions
+           WHERE template_code = $1 AND version = $2`,
+          [walletTemplate.templateCode, walletTemplate.version],
+          "23503",
+        );
+
+        const migration0006 = requiredMigration(migrations, M246_MIGRATION_ID);
+        await expectSqlState(client, migration0006.downSql, [], "55000");
+
+        const protectedFacts = await client.query(
+          `SELECT
+             (SELECT COUNT(*)::integer
+              FROM campaign_os.task_template_catalog_versions) AS catalog_count,
+             (SELECT COUNT(*)::integer
+              FROM campaign_os.campaign_tasks
+              WHERE id = 'task-m246-adopted') AS adopted_count`,
+        );
+        expect(protectedFacts.rows[0]).toEqual({
+          adopted_count: 1,
+          catalog_count: 12,
+        });
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    });
+  }, 60_000);
+
+  it("rolls back every 0006 effect when a real migration transaction fails", async () => {
+    await withIsolatedDatabase(async ({ pool }) => {
+      const migrations = await loadPostgresMigrations();
+      const historicalMigrations = migrations.slice(0, 5);
+      const migration0006 = requiredMigration(migrations, M246_MIGRATION_ID);
+      await applyMigrations(pool, historicalMigrations, "trace-m246-failure-base");
+      const failedUpSql = `${migration0006.upSql}
+SELECT * FROM campaign_os.m246_forced_failure_target;
+`;
+      const failedMigration = {
+        ...migration0006,
+        checksum: await calculatePostgresMigrationChecksum(failedUpSql),
+        upSql: failedUpSql,
+      };
+      let observedCode: unknown;
+
+      try {
+        await applyMigrations(
+          pool,
+          [...historicalMigrations, failedMigration],
+          "trace-m246-failure",
+        );
+      } catch (error) {
+        observedCode = error instanceof PostgresMigrationError ? error.code : undefined;
+      }
+      expect(observedCode).toBe("POSTGRES_MIGRATION_EXECUTION_FAILED");
+
+      const rollbackFacts = await pool.query(
+        `SELECT
+           to_regclass($1) AS catalog_relation,
+           (SELECT COUNT(*)::integer
+            FROM information_schema.columns
+            WHERE table_schema = 'campaign_os'
+              AND table_name = 'campaign_tasks'
+              AND column_name = ANY($2::text[])) AS additive_column_count,
+           (SELECT COUNT(*)::integer
+            FROM campaign_os.schema_migrations
+            WHERE migration_id = $3) AS migration_count`,
+        [
+          "campaign_os.task_template_catalog_versions",
+          M246_TASK_COLUMNS,
+          M246_MIGRATION_ID,
+        ],
+      );
+      expect(rollbackFacts.rows[0]).toEqual({
+        additive_column_count: 0,
+        catalog_relation: null,
+        migration_count: 0,
+      });
+    });
+  }, 60_000);
+
+  it("allows the owned down migration only when no Task references catalog data", async () => {
+    await withIsolatedDatabase(async ({ pool }) => {
+      const migrations = await loadPostgresMigrations();
+      const migration0006 = requiredMigration(migrations, M246_MIGRATION_ID);
+      await applyMigrations(pool, migrations, "trace-m246-clean-down");
+
+      await pool.query(migration0006.downSql);
+
+      const rollbackFacts = await pool.query(
+        `SELECT
+           to_regclass($1) AS catalog_relation,
+           to_regclass($2) AS campaigns_relation,
+           (SELECT COUNT(*)::integer
+            FROM information_schema.columns
+            WHERE table_schema = 'campaign_os'
+              AND table_name = 'campaign_tasks'
+              AND column_name = ANY($3::text[])) AS additive_column_count`,
+        [
+          "campaign_os.task_template_catalog_versions",
+          "campaign_os.campaigns",
+          M246_TASK_COLUMNS,
+        ],
+      );
+      expect(rollbackFacts.rows[0]).toEqual({
+        additive_column_count: 0,
+        campaigns_relation: "campaign_os.campaigns",
+        catalog_relation: null,
+      });
+    });
+  }, 60_000);
 });
 
 describe("PostgreSQL migration CLI", () => {

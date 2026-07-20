@@ -571,7 +571,7 @@ postgresAcceptance("required PostgreSQL wallet authentication runtime and crypto
     await seedM243History(runtimePool);
     historicalBytesBefore = await historicalBytes(runtimePool);
     const plan = await runPostgresMigrations({
-      migrations,
+      migrations: migrations.slice(0, 5),
       mode: "plan",
       pool: runtimePool,
       traceId: "trace-wp08-plan-0005",
@@ -579,7 +579,7 @@ postgresAcceptance("required PostgreSQL wallet authentication runtime and crypto
     historicalPendingIds = plan.pendingMigrationIds;
     await runPostgresMigrations({
       approved: true,
-      migrations,
+      migrations: migrations.slice(0, 5),
       mode: "apply",
       pool: runtimePool,
       traceId: "trace-wp08-apply-0005",
@@ -625,13 +625,14 @@ postgresAcceptance("required PostgreSQL wallet authentication runtime and crypto
     }
   }, 60_000);
 
-  it("applies fresh 0001-0005 and adds only 0005 without changing M243 historical bytes", () => {
+  it("applies fresh 0001-0006 and adds only 0005 to the M243 fixture without changing historical bytes", () => {
     expect(migrations.map(({ id }) => id)).toEqual([
       "0001_campaign_runtime",
       "0002_admin_review_export",
       "0003_admin_review_rank_projection",
       "0004_live_provider_task_verification",
       "0005_participant_wallet_authentication",
+      "0006_durable_task_template_catalog",
     ]);
     expect(freshMigrationIds).toEqual(migrations.map(({ id }) => id));
     expect(historicalPendingIds).toEqual(["0005_participant_wallet_authentication"]);
