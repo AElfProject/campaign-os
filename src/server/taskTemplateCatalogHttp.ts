@@ -2,6 +2,7 @@ import {
   TASK_TEMPLATE_CODE_MAX_LENGTH,
   TASK_TEMPLATE_POINTS_MAX,
   TASK_TEMPLATE_VERSION_MAX,
+  type TaskTemplateCatalogStatus,
 } from "../domain/taskTemplateCatalog";
 import {
   isResolvedWalletSessionAuthority,
@@ -132,6 +133,7 @@ const MAX_ADOPTION_BODY_BYTES = 4_096;
 const MAX_CURSOR_LENGTH = 2_048;
 const MAX_LOCALE_LENGTH = 35;
 const MAX_CATEGORY_LENGTH = 64;
+const MAX_CATEGORY_QUERY_LENGTH = 512;
 const MIN_CSRF_LENGTH = 16;
 const MAX_CSRF_LENGTH = 512;
 
@@ -370,6 +372,19 @@ const parseCommaSeparated = <TValue extends string>(
   return Object.freeze(values as TValue[]);
 };
 
+const parseCatalogStatus = (
+  value: string | undefined,
+  traceId: string,
+): readonly TaskTemplateCatalogStatus[] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!CATALOG_STATUSES.has(value as TaskTemplateCatalogStatus)) {
+    return invalidArgument("status", "list", traceId);
+  }
+  return Object.freeze([value as TaskTemplateCatalogStatus]);
+};
+
 const parseListQuery = (
   requestTarget: string,
   traceId: string,
@@ -388,8 +403,12 @@ const parseListQuery = (
     query.set(name, value);
   }
 
+  const rawCategories = query.get("category");
+  if (rawCategories !== undefined && rawCategories.length > MAX_CATEGORY_QUERY_LENGTH) {
+    return invalidArgument("category", "list", traceId);
+  }
   const categories = parseCommaSeparated(
-    query.get("category"),
+    rawCategories,
     undefined,
     "category",
     CATEGORY_PATTERN,
@@ -415,15 +434,7 @@ const parseListQuery = (
     3,
     traceId,
   );
-  const statuses = parseCommaSeparated(
-    query.get("status"),
-    CATALOG_STATUSES,
-    "status",
-    undefined,
-    16,
-    3,
-    traceId,
-  );
+  const statuses = parseCatalogStatus(query.get("status"), traceId);
   const locale = query.get("locale");
   if (
     locale !== undefined
@@ -489,6 +500,25 @@ const readAuthority = (
     operation,
     traceId,
   });
+};
+
+const authorizeListQuery = (
+  authority: TaskTemplateCatalogReadAuthority,
+  query: TaskTemplateCatalogQuery,
+  traceId: string,
+): TaskTemplateCatalogReadAuthority => {
+  if (
+    authority.kind === "owner"
+    && query.statuses?.some((status) => status !== "active")
+  ) {
+    throw new TaskTemplateCatalogHttpAuthError({
+      code: "AUTH_FORBIDDEN",
+      field: "authorization",
+      operation: "list",
+      traceId,
+    });
+  }
+  return authority;
 };
 
 const parseTemplateIdentity = (
@@ -711,9 +741,11 @@ export const createTaskTemplateCatalogHttpHandler = ({
         : "task-template-catalog-http";
       try {
         if (request.routeId === "task-templates.list") {
+          const authority = readAuthority(request.authority, "list", traceId);
+          const query = parseListQuery(request.requestTarget, traceId);
           const result = await service.list({
-            authority: readAuthority(request.authority, "list", traceId),
-            query: parseListQuery(request.requestTarget, traceId),
+            authority: authorizeListQuery(authority, query, traceId),
+            query,
             traceId,
           });
           return success(result.page, 200, traceId);

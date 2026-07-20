@@ -124,6 +124,10 @@ const createService = (): TaskTemplateCatalogService => ({
   })),
 });
 
+const categoryFilter = (itemLengths: readonly number[]): string => itemLengths
+  .map((length, index) => `c${index}${"a".repeat(length - 2)}`)
+  .join(",");
+
 const baseRequest = (
   overrides: Partial<TaskTemplateCatalogHttpRequest>,
 ): TaskTemplateCatalogHttpRequest => ({
@@ -197,6 +201,8 @@ describe("task template catalog HTTP adapter", () => {
 
   it.each([
     "/api/task-templates?limit=1&limit=2",
+    "/api/task-templates?status=active&status=deprecated",
+    "/api/task-templates?category=community&category=social",
     "/api/task-templates?unknown=value",
     "/api/task-templates?limit=1.5",
     "/api/task-templates?limit=%32%34&limit=24",
@@ -222,6 +228,183 @@ describe("task template catalog HTTP adapter", () => {
     });
     expect(service.list).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "/api/task-templates?status=active,deprecated",
+    "/api/task-templates?status=active%2Cdeprecated",
+    "/api/task-templates?status=active,active",
+  ])("rejects non-single status query %s with the exact safe envelope", async (requestTarget) => {
+    const service = createService();
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      requestTarget,
+    }));
+
+    expect(response).toEqual({
+      body: {
+        error: {
+          code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+          field: "status",
+          operation: "list",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-list",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-list",
+      },
+      status: 400,
+    });
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it("accepts a category filter at the exact decoded 512-character boundary", async () => {
+    const categories = categoryFilter([63, 63, 63, 63, 63, 63, 63, 64]);
+    const service = createService();
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      requestTarget: `/api/task-templates?category=${categories}`,
+    }));
+
+    expect(categories).toHaveLength(512);
+    expect(response).toEqual({
+      body: { data: page, ok: true, traceId: "trace-catalog-http-list" },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-list",
+      },
+      status: 200,
+    });
+    expect(service.list).toHaveBeenCalledTimes(1);
+    expect(service.list).toHaveBeenCalledWith({
+      authority: { kind: "owner", session: expect.any(Object) },
+      query: { categories: categories.split(",") },
+      traceId: "trace-catalog-http-list",
+    });
+  });
+
+  it.each([
+    { categories: categoryFilter([63, 63, 63, 63, 63, 63, 64, 64]), length: 513 },
+    { categories: categoryFilter(Array.from({ length: 9 }, () => 60)), length: 548 },
+  ])("rejects a $length-character category filter before the service", async ({ categories, length }) => {
+    const service = createService();
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      requestTarget: `/api/task-templates?category=${categories}`,
+    }));
+
+    expect(categories).toHaveLength(length);
+    expect(response).toEqual({
+      body: {
+        error: {
+          code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+          field: "category",
+          operation: "list",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-list",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-list",
+      },
+      status: 400,
+    });
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it("allows an Owner to request the exact active catalog status", async () => {
+    const service = createService();
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      requestTarget: "/api/task-templates?status=active",
+    }));
+
+    expect(response).toEqual({
+      body: { data: page, ok: true, traceId: "trace-catalog-http-list" },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-list",
+      },
+      status: 200,
+    });
+    expect(service.list).toHaveBeenCalledTimes(1);
+    expect(service.list).toHaveBeenCalledWith({
+      authority: { kind: "owner", session: expect.any(Object) },
+      query: { statuses: ["active"] },
+      traceId: "trace-catalog-http-list",
+    });
+  });
+
+  it.each(["active", "deprecated", "retired"] as const)(
+    "allows an issued Admin to request the exact %s catalog status",
+    async (status) => {
+      const service = createService();
+      const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+        authority: issueAuthority({
+          capabilities: ["admin:review"],
+          roleIds: ["internal_operator"],
+        }),
+        requestTarget: `/api/task-templates?status=${status}`,
+      }));
+
+      expect(response).toEqual({
+        body: { data: page, ok: true, traceId: "trace-catalog-http-list" },
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "x-trace-id": "trace-catalog-http-list",
+        },
+        status: 200,
+      });
+      expect(service.list).toHaveBeenCalledTimes(1);
+      expect(service.list).toHaveBeenCalledWith({
+        authority: { kind: "admin", session: expect.any(Object) },
+        query: { statuses: [status] },
+        traceId: "trace-catalog-http-list",
+      });
+    },
+  );
+
+  it.each([
+    { catalogState: "known", status: "deprecated" },
+    { catalogState: "unknown", status: "deprecated" },
+    { catalogState: "known", status: "retired" },
+    { catalogState: "unknown", status: "retired" },
+  ] as const)(
+    "denies an Owner the $status catalog history without revealing $catalogState template state",
+    async ({ catalogState, status }) => {
+      const service = createService();
+      if (catalogState === "unknown") {
+        vi.mocked(service.list).mockRejectedValue(new TaskTemplateCatalogError({
+          code: "TASK_TEMPLATE_NOT_FOUND",
+          field: "template",
+          operation: "list",
+          traceId: "trace-catalog-http-list",
+        }));
+      }
+      const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+        requestTarget: `/api/task-templates?status=${status}`,
+      }));
+
+      expect(response).toEqual({
+        body: {
+          error: {
+            code: "AUTH_FORBIDDEN",
+            field: "authorization",
+            operation: "list",
+            retryable: false,
+          },
+          ok: false,
+          traceId: "trace-catalog-http-list",
+        },
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "x-trace-id": "trace-catalog-http-list",
+        },
+        status: 403,
+      });
+      expect(service.list).not.toHaveBeenCalled();
+    },
+  );
 
   it("reads one exact integer version without coercion", async () => {
     const service = createService();
