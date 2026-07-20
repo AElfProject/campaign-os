@@ -69,6 +69,7 @@ const readyMigration = (
 });
 
 interface Harness {
+  catalogValidator: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   migrationValidator: ReturnType<typeof vi.fn>;
   startOptions: () => StartWalletAuthenticationStageRuntimeOptions | undefined;
@@ -78,6 +79,7 @@ interface Harness {
 const createHarness = (options: Readonly<{ stageReady?: boolean }> = {}): Harness => {
   let lifecycle: "ready" | "closing" | "closed" = "ready";
   let capturedOptions: StartWalletAuthenticationStageRuntimeOptions | undefined;
+  const catalogValidator = vi.fn(async () => undefined);
   const migrationValidator = vi.fn(async () => readyMigration());
   const close = vi.fn(async () => {
     lifecycle = "closed";
@@ -118,6 +120,7 @@ const createHarness = (options: Readonly<{ stageReady?: boolean }> = {}): Harnes
   );
 
   return {
+    catalogValidator,
     close,
     migrationValidator,
     startOptions: () => capturedOptions,
@@ -138,6 +141,7 @@ const startWithHarness = async (
   env = stageEnv(),
 ): Promise<TaskTemplateCatalogStageRuntimeHandle> => {
   const runtime = await startTaskTemplateCatalogStageRuntime({
+    catalogValidator: harness.catalogValidator,
     env,
     migrationValidator: harness.migrationValidator,
     walletRuntimeStarter: harness.walletRuntimeStarter,
@@ -152,6 +156,7 @@ describe("task template catalog stage runtime", () => {
     const runtime = await startWithHarness(harness);
 
     expect(harness.migrationValidator).toHaveBeenCalledTimes(1);
+    expect(harness.catalogValidator).toHaveBeenCalledTimes(1);
     expect(harness.walletRuntimeStarter).toHaveBeenCalledTimes(1);
     expect(harness.startOptions()).toMatchObject({
       env: expect.objectContaining({
@@ -172,6 +177,7 @@ describe("task template catalog stage runtime", () => {
         { check: "database", status: "ready" },
         { check: "catalog_config", status: "ready" },
         { check: "migration", status: "ready" },
+        { check: "catalog_support", status: "ready" },
         { check: "wallet_authentication", status: "ready" },
       ],
       productionReady: false,
@@ -220,6 +226,21 @@ describe("task template catalog stage runtime", () => {
       preflight: expect.arrayContaining([{ check, status: "failed" }]),
     });
     expect(harness.migrationValidator).not.toHaveBeenCalled();
+    expect(harness.walletRuntimeStarter).not.toHaveBeenCalled();
+  });
+
+  it("rejects unreadable or checksum-drifted catalog data before opening a listener", async () => {
+    const harness = createHarness();
+    harness.catalogValidator.mockRejectedValue(new Error("catalog row detail"));
+
+    const failure = await startWithHarness(harness).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TaskTemplateCatalogStageRuntimeError);
+    expect(failure).toMatchObject({
+      code: "TASK_TEMPLATE_CATALOG_STAGE_CATALOG_NOT_READY",
+      preflight: expect.arrayContaining([{ check: "catalog_support", status: "failed" }]),
+    });
+    expect(JSON.stringify(failure)).not.toContain("catalog row detail");
     expect(harness.walletRuntimeStarter).not.toHaveBeenCalled();
   });
 
@@ -298,6 +319,7 @@ describe("task template catalog stage runtime", () => {
     const lines: string[] = [];
     const runtime = await runTaskTemplateCatalogStageRuntimeCli({
       argv: ["--listen"],
+      catalogValidator: harness.catalogValidator,
       env: stageEnv(),
       migrationValidator: harness.migrationValidator,
       stdout: (line) => lines.push(line),
@@ -333,6 +355,7 @@ describe("task template catalog stage runtime", () => {
 
     await expect(runTaskTemplateCatalogStageRuntimeCli({
       argv: ["--check"],
+      catalogValidator: harness.catalogValidator,
       env: stageEnv(),
       migrationValidator: harness.migrationValidator,
       stdout: (line) => lines.push(line),

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import pg from "pg";
 import {
@@ -14,6 +14,14 @@ import {
   type PostgresMigrationResult,
 } from "./postgresMigration";
 import { resolveTaskTemplateCatalogConfig } from "./taskTemplateCatalogConfig";
+import { taskTemplateCatalogManifestV1 } from "./taskTemplateCatalogManifest";
+import {
+  createPostgresTaskTemplateCatalogStore,
+  type PostgresTaskTemplateCatalogClient,
+  type PostgresTaskTemplateCatalogPool,
+  type PostgresTaskTemplateCatalogQueryInput,
+  type PostgresTaskTemplateCatalogQueryResult,
+} from "./postgresTaskTemplateCatalogStore";
 import { startCampaignOsApiServer } from "./server";
 import {
   startWalletAuthenticationStageRuntime,
@@ -36,6 +44,7 @@ const SAFE_DATABASE_USERNAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]{0,62}$/;
 type PostgresCampaignDbConfig = Extract<CampaignOsCampaignDbConfig, { mode: "postgres" }>;
 
 export type TaskTemplateCatalogStageRuntimeErrorCode =
+  | "TASK_TEMPLATE_CATALOG_STAGE_CATALOG_NOT_READY"
   | "TASK_TEMPLATE_CATALOG_STAGE_CATALOG_REQUIRED"
   | "TASK_TEMPLATE_CATALOG_STAGE_CLI_INVALID_ARGUMENT"
   | "TASK_TEMPLATE_CATALOG_STAGE_DATABASE_UNSAFE"
@@ -46,6 +55,7 @@ export type TaskTemplateCatalogStageRuntimeErrorCode =
 
 export type TaskTemplateCatalogStagePreflightCheck =
   | "catalog_config"
+  | "catalog_support"
   | "database"
   | "loopback"
   | "migration"
@@ -60,6 +70,8 @@ const ERROR_MESSAGES: Readonly<Record<TaskTemplateCatalogStageRuntimeErrorCode, 
   Object.freeze({
     TASK_TEMPLATE_CATALOG_STAGE_CATALOG_REQUIRED:
       "Task template catalog stage runtime requires durable catalog configuration.",
+    TASK_TEMPLATE_CATALOG_STAGE_CATALOG_NOT_READY:
+      "Task template catalog stage runtime could not validate the durable catalog.",
     TASK_TEMPLATE_CATALOG_STAGE_CLI_INVALID_ARGUMENT:
       "Task template catalog stage runtime CLI arguments are invalid.",
     TASK_TEMPLATE_CATALOG_STAGE_DATABASE_UNSAFE:
@@ -78,12 +90,17 @@ export type TaskTemplateCatalogStageMigrationValidator = (
   input: ValidateWalletAuthenticationStageMigrationsInput,
 ) => Promise<PostgresMigrationResult>;
 
+export type TaskTemplateCatalogStageCatalogValidator = (
+  input: ValidateWalletAuthenticationStageMigrationsInput,
+) => Promise<void>;
+
 export type TaskTemplateCatalogWalletRuntimeStarter = (
   options?: StartWalletAuthenticationStageRuntimeOptions,
 ) => Promise<WalletAuthenticationStageRuntimeHandle>;
 
 export interface StartTaskTemplateCatalogStageRuntimeOptions
   extends Omit<StartWalletAuthenticationStageRuntimeOptions, "env" | "migrationValidator"> {
+  readonly catalogValidator?: TaskTemplateCatalogStageCatalogValidator;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly migrationValidator?: TaskTemplateCatalogStageMigrationValidator;
   readonly walletRuntimeStarter?: TaskTemplateCatalogWalletRuntimeStarter;
@@ -174,6 +191,23 @@ export const startTaskTemplateCatalogStageRuntime = async (
     );
   }
   resolved.preflight.push({ check: "migration", status: "ready" });
+
+  const catalogValidator = options.catalogValidator ?? validateStageCatalog;
+  try {
+    await catalogValidator({
+      database: resolved.database,
+      mode: "validate",
+      traceId,
+    });
+  } catch {
+    throw failedPreflight(
+      "TASK_TEMPLATE_CATALOG_STAGE_CATALOG_NOT_READY",
+      "catalog_support",
+      traceId,
+      resolved.preflight,
+    );
+  }
+  resolved.preflight.push({ check: "catalog_support", status: "ready" });
 
   const walletRuntimeStarter = options.walletRuntimeStarter
     ?? startWalletAuthenticationStageRuntime;
@@ -520,6 +554,81 @@ const createMigrationPool = (
     connect: async () => adaptPgClient(await pool.connect()),
     end: async () => pool.end(),
   };
+};
+
+const executeCatalogQuery = async (
+  queryable: Pick<pg.Pool, "query"> | Pick<pg.PoolClient, "query">,
+  input: PostgresTaskTemplateCatalogQueryInput,
+  values: readonly unknown[] = [],
+): Promise<PostgresTaskTemplateCatalogQueryResult> => {
+  const result = typeof input === "string"
+    ? await queryable.query(input, [...values])
+    : await queryable.query({
+      query_timeout: input.query_timeout,
+      text: input.text,
+      values: [...input.values],
+    } as pg.QueryConfig);
+  return { rows: result.rows as Array<Record<string, unknown>> };
+};
+
+const adaptCatalogClient = (client: pg.PoolClient): PostgresTaskTemplateCatalogClient => ({
+  query: (input, values = []) => executeCatalogQuery(client, input, values),
+  release: (destroy = false) => client.release(
+    destroy ? new Error("PostgreSQL catalog stage validation client cleanup failed.") : undefined,
+  ),
+});
+
+const createCatalogPool = (
+  config: PostgresCampaignDbConfig["pool"],
+): PostgresTaskTemplateCatalogPool => {
+  const pool = new pg.Pool(config);
+  return {
+    connect: async () => adaptCatalogClient(await pool.connect()),
+    end: async () => pool.end(),
+    query: (input, values = []) => executeCatalogQuery(pool, input, values),
+  };
+};
+
+const validateStageCatalog: TaskTemplateCatalogStageCatalogValidator = async ({
+  database,
+  traceId,
+}) => {
+  if (database.mode !== "postgres") {
+    throw new TaskTemplateCatalogStageRuntimeError(
+      "TASK_TEMPLATE_CATALOG_STAGE_CATALOG_NOT_READY",
+      traceId,
+    );
+  }
+  const store = createPostgresTaskTemplateCatalogStore({
+    cursorSigningKey: randomBytes(32),
+    ownsPool: true,
+    pool: createCatalogPool(database.pool),
+  });
+  try {
+    const page = await store.list(
+      { limit: 100, statuses: ["active"] },
+      { traceId },
+    );
+    const expected = taskTemplateCatalogManifestV1.map((template) =>
+      `${template.templateCode}@${template.version}:${template.checksum}:${template.status}`
+    ).sort();
+    const actual = page.items.map((template) =>
+      `${template.templateCode}@${template.version}:${template.checksum}:${template.status}`
+    ).sort();
+    if (
+      page.totalActive !== expected.length
+      || page.page.nextCursor !== null
+      || actual.length !== expected.length
+      || actual.some((fingerprint, index) => fingerprint !== expected[index])
+    ) {
+      throw new TaskTemplateCatalogStageRuntimeError(
+        "TASK_TEMPLATE_CATALOG_STAGE_CATALOG_NOT_READY",
+        traceId,
+      );
+    }
+  } finally {
+    await store.close({ traceId });
+  }
 };
 
 const validateStageMigrations = async ({
