@@ -73,6 +73,8 @@ interface WalletSessionData {
   readonly csrfToken: string;
   readonly session: Readonly<{
     accountType: "AA" | "EOA";
+    capabilities: readonly string[];
+    roles: readonly string[];
     sessionId: string;
     status: "active";
     walletAddress: string;
@@ -164,6 +166,7 @@ interface IssuedLiveSession {
   ) => Record<string, string>;
   readonly catalogHeaders: (traceId: string) => Record<string, string>;
   readonly cookieHeader: string;
+  readonly credential: string;
   readonly csrfToken: string;
   readonly mutationHeaders: (
     traceId: string,
@@ -205,6 +208,28 @@ const EOA_BINDING = Object.freeze({
   proofMethod: "AELF_EOA_RECOVERABLE",
   signatureEncoding: "AELF_RECOVERABLE_HEX",
   walletSource: "PORTKEY_EOA_APP",
+});
+const STANDARD_SESSION_AUTHORITY = Object.freeze({
+  capabilities: Object.freeze([
+    "wallet:session_create",
+    "campaign:read",
+    "task:verify",
+    "eligibility:read",
+    "user:participate",
+    "campaign:write",
+    "campaign:ownership_mutation",
+    "task:build",
+    "export:preview",
+  ]),
+  roles: Object.freeze(["participant", "project_owner"]),
+});
+const ADMIN_SESSION_AUTHORITY = Object.freeze({
+  capabilities: Object.freeze([
+    ...STANDARD_SESSION_AUTHORITY.capabilities,
+    "admin:review",
+    "risk:review",
+  ]),
+  roles: Object.freeze([...STANDARD_SESSION_AUTHORITY.roles, "review_operator"]),
 });
 const TEST_CSRF_SECRET = randomBytes(32).toString("base64url");
 
@@ -453,6 +478,7 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     runtime: RuntimeHarness,
     signer: EphemeralSigner,
     traceId: string,
+    expectedAuthority: typeof STANDARD_SESSION_AUTHORITY | typeof ADMIN_SESSION_AUTHORITY,
   ): Promise<IssuedLiveSession> => {
     const address = AElf.wallet.getAddressFromPubKey(signer.getPublic());
     const challenge = requireSuccess(await requestApi<WalletChallengeData>(
@@ -502,11 +528,17 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     if (!cookieHeader) {
       throw new Error("Durable wallet authentication did not issue a session cookie.");
     }
+    const credential = cookieHeader.slice(cookieHeader.indexOf("=") + 1);
+    if (!credential || credential === cookieHeader) {
+      throw new Error("Durable wallet authentication did not issue a bounded cookie credential.");
+    }
     expect(session.session).toMatchObject({
       accountType: "EOA",
       status: "active",
       walletAddress: address,
     });
+    expect(session.session.roles).toEqual([...expectedAuthority.roles]);
+    expect(session.session.capabilities).toEqual([...expectedAuthority.capabilities]);
     return Object.freeze({
       address,
       adoptionHeaders: (requestTraceId: string, idempotencyKey: string) => ({
@@ -523,6 +555,7 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
         "x-campaign-os-trace-id": requestTraceId,
       }),
       cookieHeader,
+      credential,
       csrfToken: session.csrfToken,
       mutationHeaders: (
         requestTraceId: string,
@@ -662,16 +695,19 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       runtimeA,
       ownerSigner,
       "trace-m246-owner-a",
+      STANDARD_SESSION_AUTHORITY,
     );
     const adminA = await issueSession(
       runtimeA,
       adminSigner,
       "trace-m246-admin-a",
+      ADMIN_SESSION_AUTHORITY,
     );
     const participantA = await issueSession(
       runtimeA,
       participantSigner,
       "trace-m246-participant-a",
+      STANDARD_SESSION_AUTHORITY,
     );
 
     const listA = requireSuccess(await requestApi<CatalogListData>(
@@ -935,23 +971,41 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
         });
         expect(response.body.data, negativeCase.label).toBeUndefined();
         expect(after, negativeCase.label).toBe(before);
-        expect(response.response.headers.get("set-cookie"), negativeCase.label).toBeNull();
-
-        const safeResponse = JSON.stringify(response.body);
-        for (const sensitiveValue of [
+        const responseHeaders: Record<string, string> = {};
+        response.response.headers.forEach((value, name) => {
+          responseHeaders[name] = value;
+        });
+        const serializedResponseSurface = JSON.stringify({
+          body: response.body,
+          headers: responseHeaders,
+        });
+        const sensitiveValues = [
           ownerA.cookieHeader,
+          ownerA.credential,
           ownerA.csrfToken,
           ownerA.sessionId,
+          ownerAddress,
+          adminA.cookieHeader,
+          adminA.credential,
+          adminA.csrfToken,
+          adminA.sessionId,
+          adminAddress,
           participantA.cookieHeader,
+          participantA.credential,
           participantA.csrfToken,
           participantA.sessionId,
           participantAddress,
           badCsrfToken,
-        ]) {
-          expect(safeResponse, negativeCase.label).not.toContain(sensitiveValue);
-        }
-        expect(safeResponse, negativeCase.label).not.toMatch(
+        ];
+        expect(
+          sensitiveValues.some((value) => serializedResponseSurface.includes(value)),
+          negativeCase.label,
+        ).toBe(false);
+        expect(JSON.stringify(response.body), negativeCase.label).not.toMatch(
           /campaign_tasks|credential|publicKey|set-cookie|signature|stack|postgres|\b(?:DELETE|INSERT|SELECT|UPDATE)\b/iu,
+        );
+        expect(JSON.stringify(responseHeaders), negativeCase.label).not.toMatch(
+          /campaign_tasks|publicKey|set-cookie|signature|stack|postgres|\b(?:DELETE|INSERT|SELECT|UPDATE)\b/iu,
         );
         negativeEvidence.push(Object.freeze({
           after,
@@ -993,6 +1047,16 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     expect(runtimeB.catalogPool.identity).not.toBe(runtimeA.catalogPool.identity);
     expect(runtimeB.walletAuthentication.runtime).not.toBe(runtimeA.walletAuthentication.runtime);
 
+    const restoredAdminSession = requireSuccess(await requestApi<WalletSessionData>(
+      runtimeB.server,
+      "/api/wallet/auth/session",
+      { headers: adminA.catalogHeaders("trace-m246-admin-session-restored-b") },
+    ));
+    expect(restoredAdminSession.session.sessionId).toBe(adminA.sessionId);
+    expect(restoredAdminSession.session.roles).toEqual([...ADMIN_SESSION_AUTHORITY.roles]);
+    expect(restoredAdminSession.session.capabilities)
+      .toEqual([...ADMIN_SESSION_AUTHORITY.capabilities]);
+
     const restoredOwnerDetail = requireSuccess(await requestApi<CatalogTemplateProjection>(
       runtimeB.server,
       detailPath,
@@ -1032,11 +1096,13 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       runtimeB,
       ownerSigner,
       "trace-m246-owner-b",
+      STANDARD_SESSION_AUTHORITY,
     );
     const adminB = await issueSession(
       runtimeB,
       adminSigner,
       "trace-m246-admin-b",
+      ADMIN_SESSION_AUTHORITY,
     );
     expect(ownerB.sessionId).not.toBe(ownerA.sessionId);
     expect(adminB.sessionId).not.toBe(adminA.sessionId);
