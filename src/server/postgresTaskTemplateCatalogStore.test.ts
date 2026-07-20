@@ -929,6 +929,26 @@ const isolatedDatabaseUrl = (baseUrl: string, databaseName: string): string => {
   return parsed.toString();
 };
 
+const waitForDatabaseSessionsToDrain = async (
+  adminPool: pg.Pool,
+  databaseName: string,
+): Promise<void> => {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await adminPool.query<{ readonly count: number }>(
+      `SELECT COUNT(*)::integer AS count
+       FROM pg_stat_activity
+       WHERE datname = $1`,
+      [databaseName],
+    );
+    if (result.rows[0]?.count === 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Task template catalog acceptance database sessions did not drain.");
+};
+
 const runPgQuery = async (
   queryable: pg.Pool | pg.PoolClient,
   input: PostgresTaskTemplateCatalogQueryInput,
@@ -1021,7 +1041,8 @@ postgresSuite("PostgreSQL task template catalog real acceptance", () => {
     }
     if (adminPool) {
       try {
-        await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`);
+        await waitForDatabaseSessionsToDrain(adminPool, databaseName);
+        await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
       } catch (error) {
         cleanupErrors.push(error);
       }
