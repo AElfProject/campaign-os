@@ -39,6 +39,7 @@ const expectedServiceIds = [
 
 const expectedDataStoreIds = [
   "campaign-db",
+  "task-template-catalog-db",
   "wallet-session-db",
   "task-evidence-db",
   "i18n-content-db",
@@ -140,6 +141,26 @@ describe("backend service topology", () => {
       records: expect.arrayContaining(["wallet_sessions", "repository_health"]),
       retentionRisk: expect.stringContaining("production session store rules"),
     });
+    expect(backendServiceBoundaries.find((service) => service.id === "task-template-service"))
+      .toMatchObject({
+        adapterGroups: [],
+        dataStores: ["campaign-db", "task-template-catalog-db"],
+        readiness: "ready",
+        routeIds: [
+          "campaigns.tasks.add",
+          "task-templates.list",
+          "task-templates.detail",
+          "campaigns.tasks.from-template",
+        ],
+      });
+    expect(backendDataStores.find((store) => store.id === "task-template-catalog-db"))
+      .toMatchObject({
+        currentMode: "external",
+        ownerServiceId: "task-template-service",
+        records: ["task_template_versions", "campaigns", "campaign_tasks"],
+      });
+    expect(backendAdapterGroups.find((adapter) => adapter.id === "dapp-api-adapters")?.serviceIds)
+      .not.toContain("task-template-service");
     expect(backendServiceBoundaries.find((service) => service.id === "verification-service")).toMatchObject({
       routeIds: expect.arrayContaining(["campaigns.provider.readiness"]),
     });

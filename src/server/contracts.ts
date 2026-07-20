@@ -7,7 +7,7 @@ import type {
 } from "../domain/types";
 
 export type ApiRuntimeMethod = "GET" | "POST";
-export type ApiRuntimeSupportMode = "local_seeded";
+export type ApiRuntimeSupportMode = "local_seeded" | "postgres_live" | "provider_live";
 export type ApiRuntimeServiceGroupId =
   | "runtime"
   | "service_registry"

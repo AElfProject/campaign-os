@@ -25,6 +25,7 @@ const walletGuardOptions = {
 } satisfies ServerRequestGuardOptions;
 const COOKIE = `campaign_os_session=${"a".repeat(43)}`;
 const CSRF = "c".repeat(43);
+const CATALOG_TRACE = "trace-catalog-guard";
 
 const exactRequest = (
   path: string,
@@ -51,6 +52,31 @@ const exactSessionRequest = (body: unknown) => evaluateServerRequestGuard({
   },
   method: "POST",
   path: "/api/wallet/auth/sessions",
+}, walletContract, 10, undefined, walletGuardOptions);
+
+const catalogRequest = ({
+  body,
+  bodyBytes,
+  headers = {},
+  method = "GET",
+  path = "/api/task-templates",
+}: {
+  body?: string;
+  bodyBytes?: number;
+  headers?: Record<string, string | readonly string[] | undefined>;
+  method?: string;
+  path?: string;
+} = {}) => evaluateServerRequestGuard({
+  ...(body === undefined ? {} : { body }),
+  ...(bodyBytes === undefined ? {} : { bodyBytes }),
+  headers: {
+    cookie: COOKIE,
+    origin: WALLET_ORIGIN,
+    "x-campaign-os-trace-id": CATALOG_TRACE,
+    ...headers,
+  },
+  method,
+  path,
 }, walletContract, 10, undefined, walletGuardOptions);
 
 const sessionBody = (adapterProof: unknown) => ({
@@ -149,6 +175,206 @@ describe("server request guard", () => {
         kind: "accepted",
       });
     }
+  });
+
+  it("projects accepted catalog ingress to the exact OpenAPI trace and CORS headers", () => {
+    const list = catalogRequest({
+      path: "/api/task-templates?category=social&locale=en-US&limit=24",
+    });
+    const detail = catalogRequest({
+      path: "/api/task-templates/social-share/versions/1",
+    });
+    const adoptionBody = JSON.stringify({
+      overrides: { points: 40, required: true },
+      template: { templateCode: "social-share", version: 1 },
+    });
+    const adopt = catalogRequest({
+      body: adoptionBody,
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "catalog-guard-adopt-1",
+        "x-csrf-token": CSRF,
+      },
+      method: "POST",
+      path: "/api/campaigns/campaign-safe-1/tasks/from-template",
+    });
+
+    for (const decision of [list, detail, adopt]) {
+      expect(decision).toMatchObject({
+        headers: {
+          "access-control-allow-credentials": "true",
+          "access-control-allow-origin": WALLET_ORIGIN,
+          "access-control-expose-headers": "x-trace-id",
+          "x-trace-id": CATALOG_TRACE,
+        },
+        kind: "accepted",
+        traceId: CATALOG_TRACE,
+      });
+      expect(decision.headers["x-campaign-os-trace-id"]).toBeUndefined();
+    }
+    expect(adopt).toMatchObject({ body: adoptionBody });
+  });
+
+  it.each([
+    {
+      expectedCode: "TASK_TEMPLATE_ARGUMENT_INVALID",
+      expectedStatus: 400,
+      label: "wrong content type",
+      request: {
+        body: "{}",
+        headers: {
+          "content-type": "text/plain",
+          "idempotency-key": "catalog-guard-invalid-1",
+          "x-csrf-token": CSRF,
+        },
+        method: "POST",
+        path: "/api/campaigns/campaign-safe-1/tasks/from-template",
+      },
+    },
+    {
+      expectedCode: "TASK_TEMPLATE_ARGUMENT_INVALID",
+      expectedStatus: 400,
+      label: "route oversize",
+      request: {
+        body: JSON.stringify({ template: { templateCode: "social-share", version: 1 } }),
+        bodyBytes: 4_097,
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "catalog-guard-invalid-2",
+          "x-csrf-token": CSRF,
+        },
+        method: "POST",
+        path: "/api/campaigns/campaign-safe-1/tasks/from-template",
+      },
+    },
+    {
+      expectedCode: "TASK_TEMPLATE_ARGUMENT_INVALID",
+      expectedStatus: 400,
+      label: "forged authority header",
+      request: {
+        headers: { "x-role": "Admin" },
+      },
+    },
+    {
+      expectedCode: "TASK_TEMPLATE_ARGUMENT_INVALID",
+      expectedStatus: 400,
+      label: "forged canonical body field",
+      request: {
+        body: JSON.stringify({
+          template: { checksum: "f".repeat(64), templateCode: "social-share", version: 1 },
+        }),
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "catalog-guard-invalid-3",
+          "x-csrf-token": CSRF,
+        },
+        method: "POST",
+        path: "/api/campaigns/campaign-safe-1/tasks/from-template",
+      },
+    },
+    {
+      expectedCode: "TASK_TEMPLATE_ARGUMENT_INVALID",
+      expectedStatus: 400,
+      label: "duplicate list query",
+      request: { path: "/api/task-templates?limit=1&limit=2" },
+    },
+    {
+      expectedCode: "AUTH_SESSION_REQUIRED",
+      expectedStatus: 401,
+      label: "missing session cookie",
+      request: { headers: { cookie: "" } },
+    },
+    {
+      expectedCode: "AUTH_FORBIDDEN",
+      expectedStatus: 403,
+      label: "untrusted origin",
+      request: { headers: { origin: "https://evil.invalid" } },
+    },
+    {
+      expectedCode: "AUTH_CSRF_INVALID",
+      expectedStatus: 403,
+      label: "missing adoption CSRF",
+      request: {
+        body: JSON.stringify({ template: { templateCode: "social-share", version: 1 } }),
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "catalog-guard-invalid-4",
+        },
+        method: "POST",
+        path: "/api/campaigns/campaign-safe-1/tasks/from-template",
+      },
+    },
+  ])("rejects catalog $label with the exact safe envelope", ({
+    expectedCode,
+    expectedStatus,
+    request,
+  }) => {
+    const decision = catalogRequest(request);
+
+    expect(decision).toMatchObject({
+      body: {
+        error: {
+          code: expectedCode,
+          operation: request.path?.includes("from-template") ? "adopt" : "list",
+          retryable: false,
+        },
+        ok: false,
+        traceId: CATALOG_TRACE,
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": CATALOG_TRACE,
+      },
+      kind: "rejected",
+      status: expectedStatus,
+      traceId: CATALOG_TRACE,
+    });
+    if (decision.kind !== "rejected") {
+      throw new Error("Expected rejected catalog guard decision.");
+    }
+    expect(Object.keys(decision.body).sort()).toEqual(["error", "ok", "traceId"]);
+    expect(Object.keys(decision.body.error).sort()).toEqual([
+      "code",
+      "field",
+      "operation",
+      "retryable",
+    ]);
+    expect(decision.headers["x-campaign-os-trace-id"]).toBeUndefined();
+    expectNoHostileSecretLeak(decision);
+  });
+
+  it("uses x-trace-id for catalog preflight without changing other exact routes", () => {
+    const catalog = evaluateServerRequestGuard({
+      headers: {
+        "access-control-request-headers": "content-type, idempotency-key, x-csrf-token",
+        "access-control-request-method": "POST",
+        origin: WALLET_ORIGIN,
+        "x-campaign-os-trace-id": CATALOG_TRACE,
+      },
+      method: "OPTIONS",
+      path: "/api/campaigns/campaign-safe-1/tasks/from-template",
+    }, walletContract, 10, undefined, walletGuardOptions);
+    const verification = exactRequest("/api/tasks/task-safe-1/verify", {
+      campaignId: "campaign-safe-1",
+    }, {
+      cookie: COOKIE,
+      "x-campaign-os-csrf": CSRF,
+    });
+
+    expect(catalog).toMatchObject({
+      headers: {
+        "access-control-expose-headers": "x-trace-id",
+        "x-trace-id": CATALOG_TRACE,
+      },
+      kind: "preflight",
+      status: 204,
+    });
+    expect(catalog.headers["x-campaign-os-trace-id"]).toBeUndefined();
+    expect(verification.headers).toMatchObject({
+      "access-control-expose-headers": "x-campaign-os-trace-id",
+      "x-campaign-os-trace-id": "trace-exact-route",
+    });
+    expect(verification.headers["x-trace-id"]).toBeUndefined();
   });
 
   it("accepts a bounded structured adapter proof and rejects every non-object transport", () => {

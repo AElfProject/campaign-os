@@ -166,6 +166,7 @@ describe("API server runtime contract", () => {
       "x-campaign-os-trace-id",
       "x-campaign-os-wallet-address",
       "x-campaign-os-wallet-source",
+      "x-csrf-token",
     ]));
     expect(contract.corsPolicy.allowedHeaders).not.toContain("*");
     expect(contract.corsPolicy.exposedHeaders).not.toContain("*");

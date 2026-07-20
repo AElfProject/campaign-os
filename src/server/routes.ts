@@ -36,6 +36,9 @@ const dependenciesFor = (serviceGroup: ApiRuntimeRouteContract["serviceGroup"]) 
 
 export type ExactProtectedApiRouteId =
   | "admin.wallet-session.revoke"
+  | "campaigns.tasks.from-template"
+  | "task-templates.detail"
+  | "task-templates.list"
   | "tasks.verify"
   | "wallet.auth.challenge.create"
   | "wallet.auth.session.create"
@@ -44,6 +47,7 @@ export type ExactProtectedApiRouteId =
   | "wallet.auth.session.rotate";
 
 export type ExactRequestCredentialRequirement = "forbidden" | "optional" | "required";
+export type ExactRequestCsrfHeaderName = "x-campaign-os-csrf" | "x-csrf-token";
 export type ExactJsonPropertyType = "object" | "string";
 
 export interface ExactJsonPropertyContract {
@@ -75,6 +79,7 @@ export interface ExactProtectedApiRequestContract {
     allowedMethods: readonly ("GET" | "POST")[];
   }>;
   csrf: ExactRequestCredentialRequirement;
+  csrfHeaderName: ExactRequestCsrfHeaderName;
   headers: Readonly<{
     controlled: readonly string[];
     maxBytesByName: Readonly<Record<string, number>>;
@@ -108,16 +113,20 @@ const EXACT_MAX_CONTENT_TYPE_BYTES = 128;
 const EXACT_CONTROLLED_HEADERS = Object.freeze([
   "content-type",
   "cookie",
+  "idempotency-key",
   "origin",
   "x-campaign-os-csrf",
   "x-campaign-os-trace-id",
+  "x-csrf-token",
 ] as const);
 const EXACT_HEADER_MAX_BYTES = Object.freeze({
   "content-type": EXACT_MAX_CONTENT_TYPE_BYTES,
   cookie: WALLET_SESSION_MAX_COOKIE_HEADER_BYTES,
+  "idempotency-key": 128,
   origin: EXACT_MAX_ORIGIN_BYTES,
   "x-campaign-os-csrf": WALLET_SESSION_MAX_CSRF_HEADER_BYTES,
   "x-campaign-os-trace-id": EXACT_MAX_TRACE_ID_BYTES,
+  "x-csrf-token": WALLET_SESSION_MAX_CSRF_HEADER_BYTES,
 });
 const EXACT_EMPTY_PATH_PARAMETERS = Object.freeze({});
 const EXACT_NO_QUERY = Object.freeze({
@@ -207,6 +216,15 @@ const exactBoundedId = (
   pattern: EXACT_BOUNDED_ID_PATTERN,
 });
 
+const exactPatternString = (
+  minLength: number,
+  maxLength: number,
+  pattern: string,
+): ExactJsonPropertyContract => Object.freeze({
+  ...exactString(minLength, maxLength),
+  pattern,
+});
+
 const exactJsonBody = (
   maxBytes: number,
   properties: Readonly<Record<string, ExactJsonPropertyContract>>,
@@ -221,21 +239,28 @@ const exactJsonBody = (
 });
 
 const exactRequestContract = ({
+  additionalCorsHeaders = [],
   body,
   cookie,
   csrf,
+  csrfHeaderName = EXACT_CORS_CSRF_HEADER,
   method,
   pathParameters = EXACT_EMPTY_PATH_PARAMETERS,
+  query = EXACT_NO_QUERY,
 }: {
+  additionalCorsHeaders?: readonly string[];
   body: ExactProtectedApiRequestContract["body"];
   cookie: ExactRequestCredentialRequirement;
   csrf: ExactRequestCredentialRequirement;
+  csrfHeaderName?: ExactRequestCsrfHeaderName;
   method: "GET" | "POST";
   pathParameters?: Readonly<Record<string, ExactJsonPropertyContract>>;
+  query?: ExactProtectedApiRequestContract["query"];
 }): ExactProtectedApiRequestContract => {
   const allowedHeaders = [
     ...(body.mode === "json" ? [EXACT_CORS_CONTENT_TYPE_HEADER] : []),
-    ...(csrf === "required" ? [EXACT_CORS_CSRF_HEADER] : []),
+    ...(csrf === "required" ? [csrfHeaderName] : []),
+    ...additionalCorsHeaders,
     EXACT_CORS_TRACE_HEADER,
   ];
 
@@ -247,6 +272,7 @@ const exactRequestContract = ({
       allowedMethods: Object.freeze([method]),
     }),
     csrf,
+    csrfHeaderName,
     headers: Object.freeze({
       controlled: EXACT_CONTROLLED_HEADERS,
       maxBytesByName: EXACT_HEADER_MAX_BYTES,
@@ -256,7 +282,7 @@ const exactRequestContract = ({
     }),
     origin: "required" as const,
     pathParameters,
-    query: EXACT_NO_QUERY,
+    query,
   });
 };
 
@@ -265,6 +291,25 @@ const sessionIdPathParameter = Object.freeze({
 });
 const taskIdPathParameter = Object.freeze({
   taskId: exactString(1, EXACT_PROTECTED_PATH_PARAMETER_MAX_LENGTH),
+});
+const catalogTemplatePathParameters = Object.freeze({
+  templateCode: exactPatternString(1, 96, "^[a-z0-9][a-z0-9-]*$"),
+  version: exactPatternString(1, 10, "^[1-9][0-9]*$"),
+});
+const catalogCampaignPathParameter = Object.freeze({
+  campaignId: exactPatternString(1, 128, "^[A-Za-z0-9][A-Za-z0-9._:-]*$"),
+});
+const catalogListQuery = Object.freeze({
+  additionalProperties: false as const,
+  allowed: Object.freeze([
+    "category",
+    "verification",
+    "wallet",
+    "locale",
+    "status",
+    "cursor",
+    "limit",
+  ]),
 });
 
 export const exactProtectedApiRouteContracts = Object.freeze([
@@ -384,8 +429,63 @@ export const exactProtectedApiRouteContracts = Object.freeze([
   }),
 ] as const satisfies readonly ExactProtectedApiRouteContract[]);
 
+export const taskTemplateCatalogExactProtectedApiRouteContracts = Object.freeze([
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "task-templates.list" as const,
+    method: "GET" as const,
+    operationId: "listTaskTemplates",
+    path: "/api/task-templates",
+    request: exactRequestContract({
+      body: EXACT_NO_BODY,
+      cookie: "required",
+      csrf: "forbidden",
+      method: "GET",
+      query: catalogListQuery,
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "task-templates.detail" as const,
+    method: "GET" as const,
+    operationId: "getTaskTemplateVersion",
+    path: "/api/task-templates/:templateCode/versions/:version",
+    request: exactRequestContract({
+      body: EXACT_NO_BODY,
+      cookie: "required",
+      csrf: "forbidden",
+      method: "GET",
+      pathParameters: catalogTemplatePathParameters,
+    }),
+  }),
+  Object.freeze({
+    credentialedCors: true as const,
+    id: "campaigns.tasks.from-template" as const,
+    method: "POST" as const,
+    operationId: "adoptTaskTemplate",
+    path: "/api/campaigns/:campaignId/tasks/from-template",
+    request: exactRequestContract({
+      additionalCorsHeaders: ["idempotency-key"],
+      body: exactJsonBody(4_096, {
+        overrides: Object.freeze({ type: "object" as const }),
+        template: Object.freeze({ type: "object" as const }),
+      }, ["template"]),
+      cookie: "required",
+      csrf: "required",
+      csrfHeaderName: "x-csrf-token",
+      method: "POST",
+      pathParameters: catalogCampaignPathParameter,
+    }),
+  }),
+] as const satisfies readonly ExactProtectedApiRouteContract[]);
+
+export const allExactProtectedApiRouteContracts = Object.freeze([
+  ...exactProtectedApiRouteContracts,
+  ...taskTemplateCatalogExactProtectedApiRouteContracts,
+] as const satisfies readonly ExactProtectedApiRouteContract[]);
+
 export const exactProtectedApiRouteContractById = Object.freeze(Object.fromEntries(
-  exactProtectedApiRouteContracts.map((contract) => [contract.id, contract]),
+  allExactProtectedApiRouteContracts.map((contract) => [contract.id, contract]),
 )) as Readonly<Record<ExactProtectedApiRouteId, ExactProtectedApiRouteContract>>;
 
 export interface ResolvedExactProtectedApiRoute {
@@ -467,12 +567,26 @@ export const resolveExactProtectedApiRoute = (
   const pathname = queryIndex < 0 ? withoutHash : withoutHash.slice(0, queryIndex);
   const query = queryIndex < 0 ? "" : withoutHash.slice(queryIndex + 1);
 
-  for (const routeContract of exactProtectedApiRouteContracts) {
+  for (const routeContract of allExactProtectedApiRouteContracts) {
     const params = matchExactProtectedPath(pathname, routeContract);
     if (params) {
+      const allowedQueryNames = new Set(routeContract.request.query.allowed);
+      const observedQueryNames = new Set<string>();
+      let queryAllowed = true;
+      try {
+        for (const [name] of new URLSearchParams(query).entries()) {
+          if (!allowedQueryNames.has(name) || observedQueryNames.has(name)) {
+            queryAllowed = false;
+            break;
+          }
+          observedQueryNames.add(name);
+        }
+      } catch {
+        queryAllowed = false;
+      }
       return Object.freeze({
         params,
-        queryAllowed: query.length === 0,
+        queryAllowed,
         route: routeContract,
       });
     }
@@ -481,7 +595,7 @@ export const resolveExactProtectedApiRoute = (
   return undefined;
 };
 
-export const apiRuntimeRoutes = [
+export const allApiRuntimeRoutes = [
   route({
     apiGroup: "runtime",
     boundary,
@@ -841,6 +955,70 @@ export const apiRuntimeRoutes = [
     supportMode: "provider_live",
   }),
   route({
+    apiGroup: "task_generation",
+    boundary: text(
+      "Protected PostgreSQL-live task template catalog read. Enabled mode requires schema 0006 and issued wallet authorization; no seeded fallback or provider call is used.",
+      "受保护的 PostgreSQL-live Task Template Catalog 读取。启用时要求 schema 0006 与 issued wallet authorization；不使用 seeded fallback 或 provider 调用。",
+    ),
+    id: "task-templates.list",
+    method: "GET",
+    path: "/api/task-templates",
+    productionDependencies: [
+      "auth_session",
+      "migration_runner",
+      "production_database",
+      "sensitive_material_boundary",
+    ],
+    readiness: "ready",
+    riskLevel: "high",
+    serviceGroup: "task",
+    summary: text("List durable task template versions.", "列出持久化 Task Template versions。"),
+    supportMode: "postgres_live",
+  }),
+  route({
+    apiGroup: "task_generation",
+    boundary: text(
+      "Protected PostgreSQL-live exact task template version read. Enabled mode requires schema 0006 and issued wallet authorization; no seeded fallback or provider call is used.",
+      "受保护的 PostgreSQL-live exact Task Template version 读取。启用时要求 schema 0006 与 issued wallet authorization；不使用 seeded fallback 或 provider 调用。",
+    ),
+    id: "task-templates.detail",
+    method: "GET",
+    path: "/api/task-templates/:templateCode/versions/:version",
+    productionDependencies: [
+      "auth_session",
+      "migration_runner",
+      "production_database",
+      "sensitive_material_boundary",
+    ],
+    readiness: "ready",
+    riskLevel: "high",
+    serviceGroup: "task",
+    summary: text("Read one durable task template version.", "读取一个持久化 Task Template version。"),
+    supportMode: "postgres_live",
+  }),
+  route({
+    apiGroup: "task_generation",
+    apiSkillId: "add_campaign_task",
+    boundary: text(
+      "Protected PostgreSQL-live atomic task template adoption. Enabled mode requires schema 0006, issued Owner authorization, CSRF, Origin, and Campaign ownership; no seeded fallback or provider call is used.",
+      "受保护的 PostgreSQL-live 原子 Task Template adoption。启用时要求 schema 0006、issued Owner authorization、CSRF、Origin 与 Campaign ownership；不使用 seeded fallback 或 provider 调用。",
+    ),
+    id: "campaigns.tasks.from-template",
+    method: "POST",
+    path: "/api/campaigns/:campaignId/tasks/from-template",
+    productionDependencies: [
+      "auth_session",
+      "migration_runner",
+      "production_database",
+      "sensitive_material_boundary",
+    ],
+    readiness: "ready",
+    riskLevel: "high",
+    serviceGroup: "task",
+    summary: text("Adopt a durable template as a Campaign Task.", "将持久化 Template 采用为 Campaign Task。"),
+    supportMode: "postgres_live",
+  }),
+  route({
     apiGroup: "task_verification",
     apiSkillId: "get_campaign_provider_readiness",
     boundary,
@@ -1025,6 +1203,30 @@ export const apiRuntimeRoutes = [
   }),
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
+type AllApiRuntimeRoute = (typeof allApiRuntimeRoutes)[number];
+export type TaskTemplateCatalogApiRuntimeRouteId =
+  | "campaigns.tasks.from-template"
+  | "task-templates.detail"
+  | "task-templates.list";
+type TaskTemplateCatalogApiRuntimeRoute = AllApiRuntimeRoute & {
+  id: TaskTemplateCatalogApiRuntimeRouteId;
+};
+
+const isTaskTemplateCatalogApiRuntimeRoute = (
+  runtimeRoute: AllApiRuntimeRoute,
+): runtimeRoute is TaskTemplateCatalogApiRuntimeRoute =>
+  runtimeRoute.id === "campaigns.tasks.from-template"
+  || runtimeRoute.id === "task-templates.detail"
+  || runtimeRoute.id === "task-templates.list";
+
+export const taskTemplateCatalogApiRuntimeRoutes = Object.freeze(
+  allApiRuntimeRoutes.filter(isTaskTemplateCatalogApiRuntimeRoute),
+);
+
+export const apiRuntimeRoutes = Object.freeze(
+  allApiRuntimeRoutes.filter((runtimeRoute) => !isTaskTemplateCatalogApiRuntimeRoute(runtimeRoute)),
+);
+
 export const participantCampaignRouteContracts = [
   route({
     apiGroup: "campaign_discovery",
@@ -1079,7 +1281,7 @@ export const participantCampaignRouteContracts = [
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
 export const apiRuntimeContractRoutes = [
-  ...apiRuntimeRoutes,
+  ...allApiRuntimeRoutes,
   ...participantCampaignRouteContracts,
 ] as const satisfies readonly ApiRuntimeRouteContract[];
 
@@ -1704,6 +1906,7 @@ export type ApiRuntimeRouteId = (typeof apiRuntimeRoutes)[number]["id"];
 export type ParticipantCampaignRouteId = (typeof participantCampaignRouteContracts)[number]["id"];
 export type ApiRuntimeContractRouteId =
   | ApiRuntimeRouteId
+  | TaskTemplateCatalogApiRuntimeRouteId
   | ParticipantCampaignRouteId
   | AdminApiRuntimeRouteId;
 

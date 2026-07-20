@@ -457,6 +457,9 @@ describe("auth session boundary", () => {
         "campaigns.owner.list",
         "campaigns.tasks.add",
         "campaigns.tasks.generate",
+        "task-templates.list",
+        "task-templates.detail",
+        "campaigns.tasks.from-template",
         "campaigns.export.preview",
         "tasks.verify",
         "admin.review.queue",
@@ -493,6 +496,20 @@ describe("auth session boundary", () => {
     expect(getProtectedRouteAuth("campaigns.tasks.generate")).toMatchObject({
       enforcementStatus: "local_enforced",
       requiredRoles: ["project_owner"],
+      sessionRequired: true,
+    });
+    for (const routeId of ["task-templates.list", "task-templates.detail"]) {
+      expect(getProtectedRouteAuth(routeId)).toMatchObject({
+        enforcementStatus: "issued_session_enforced",
+        requiredRoles: ["project_owner", "internal_operator", "review_operator"],
+        routeGroup: "task_catalog_read",
+        sessionRequired: true,
+      });
+    }
+    expect(getProtectedRouteAuth("campaigns.tasks.from-template")).toMatchObject({
+      enforcementStatus: "issued_session_enforced",
+      requiredRoles: ["project_owner"],
+      routeGroup: "task_builder",
       sessionRequired: true,
     });
     expect(getProtectedRouteAuth("campaigns.export.preview")?.requiredRoles).toEqual([
@@ -567,6 +584,13 @@ describe("auth session boundary", () => {
     expect(readiness.protectedRoutes
       .filter((route) => route.enforcementStatus === "local_enforced")
       .map((route) => route.routeId)).toEqual(locallyEnforcedRouteIds);
+    expect(readiness.protectedRoutes
+      .filter((route) => route.enforcementStatus === "issued_session_enforced")
+      .map((route) => route.routeId)).toEqual([
+        "task-templates.list",
+        "task-templates.detail",
+        "campaigns.tasks.from-template",
+      ]);
     expect(foundation.protectedRouteCoverage).toMatchObject({
       locallyEnforcedRouteIds,
       protectedRouteCount: protectedRouteAuthMap.length,

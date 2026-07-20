@@ -221,6 +221,7 @@ const DEFAULT_ALLOWED_HEADERS = [
   "x-campaign-os-trace-id",
   "x-campaign-os-wallet-address",
   "x-campaign-os-wallet-source",
+  "x-csrf-token",
 ] as const;
 const DEFAULT_EXPOSED_HEADERS = [
   "content-disposition",

@@ -201,6 +201,7 @@ import {
   issueLocalSessionArtifact,
   type SessionIssuerResult,
 } from "./sessionIssuer";
+import { isTaskTemplateCatalogHttpRouteId } from "./taskTemplateCatalogHttp";
 import {
   verifyWalletProofLocally,
   type WalletProofVerificationResult,
@@ -2769,6 +2770,32 @@ const validateAdminArtifactDownload = (
   };
 };
 
+const taskTemplateCatalogHttpHandler: ApiRuntimeHandler = async (context) => {
+  if (
+    !context.taskTemplateCatalogHttpHandler
+    || !context.taskTemplateCatalogAuthority
+    || !isTaskTemplateCatalogHttpRouteId(context.route.id)
+  ) {
+    throw persistenceUnavailable("taskTemplateCatalog.handler");
+  }
+  const response = await context.taskTemplateCatalogHttpHandler.handle({
+    authority: context.taskTemplateCatalogAuthority,
+    body: context.body,
+    headers: context.headers,
+    params: context.params,
+    requestTarget: context.requestTarget,
+    routeId: context.route.id,
+    traceId: context.traceId,
+  });
+
+  return {
+    body: response.body,
+    headers: { ...response.headers },
+    kind: "api_runtime_transport_result",
+    status: response.status,
+  } satisfies ApiRuntimeHandlerTransportResult;
+};
+
 export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, ApiRuntimeHandler> => ({
   "runtime.health": async (context) => {
     const apiFoundation = createApiFoundationRuntimeMetadata();
@@ -3386,6 +3413,9 @@ export const createApiRuntimeHandlers = (): Record<ApiRuntimeContractRouteId, Ap
       }
       : response;
   },
+  "campaigns.tasks.from-template": taskTemplateCatalogHttpHandler,
+  "task-templates.detail": taskTemplateCatalogHttpHandler,
+  "task-templates.list": taskTemplateCatalogHttpHandler,
   "campaigns.tasks.generate": async (context) => {
     const request = generateCampaignTasksRequest(context);
     const localResult = context.service.generateCampaignTasks(request);

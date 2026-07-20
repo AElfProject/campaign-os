@@ -68,6 +68,7 @@ export type AuthRouteGroupId =
   | "campaign_read"
   | "campaign_write"
   | "task_builder"
+  | "task_catalog_read"
   | "task_verify"
   | "eligibility"
   | "export"
@@ -99,6 +100,7 @@ export type ProtectedRouteEnforcementStatus =
   | "not_required"
   | "metadata_only"
   | "local_enforced"
+  | "issued_session_enforced"
   | "enforcement_deferred"
   | "blocked";
 export type ProtectedRouteSource = "runtime_route" | "future_route";
@@ -1051,7 +1053,7 @@ export const authSessionRolePolicies = [
       "task:build",
       "export:preview",
     ],
-    allowedRouteGroups: ["wallet_session", "campaign_read", "campaign_write", "task_builder", "export"],
+    allowedRouteGroups: ["wallet_session", "campaign_read", "campaign_write", "task_builder", "task_catalog_read", "export"],
     description: "Project owner for campaign configuration and review-safe export previews.",
     forbiddenCapabilities: ["admin:review", "risk:review", "system:config", "reward:custody", "payout:execute"],
     id: "project_owner",
@@ -1059,7 +1061,7 @@ export const authSessionRolePolicies = [
   }),
   rolePolicy({
     allowedCapabilities: ["admin:review", "risk:review", "service:readiness", "export:preview"],
-    allowedRouteGroups: ["admin_review", "risk", "service_readiness", "export"],
+    allowedRouteGroups: ["admin_review", "risk", "service_readiness", "task_catalog_read", "export"],
     description: "Internal operator for review queues, risk, and readiness surfaces.",
     forbiddenCapabilities: ["wallet:user_substitution", "user:participate", "reward:custody", "payout:execute"],
     id: "internal_operator",
@@ -1067,7 +1069,7 @@ export const authSessionRolePolicies = [
   }),
   rolePolicy({
     allowedCapabilities: ["admin:review", "risk:review", "export:preview"],
-    allowedRouteGroups: ["admin_review", "risk", "export"],
+    allowedRouteGroups: ["admin_review", "risk", "task_catalog_read", "export"],
     description: "Review operator for approval and risk review without ownership mutation.",
     forbiddenCapabilities: ["campaign:ownership_mutation", "campaign:write", "system:config", "reward:custody", "payout:execute"],
     id: "review_operator",
@@ -1185,6 +1187,39 @@ export const protectedRouteAuthMap = [
     requiredRoles: ["project_owner"],
     routeGroup: "task_builder",
     routeId: "campaigns.tasks.generate",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "issued_session_enforced",
+    note: "Durable catalog list requires an issued Project Owner or Admin session; historical rows remain capability-gated by the service.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner", "internal_operator", "review_operator"],
+    routeGroup: "task_catalog_read",
+    routeId: "task-templates.list",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "issued_session_enforced",
+    note: "Durable exact catalog version reads require an issued Project Owner or Admin session.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner", "internal_operator", "review_operator"],
+    routeGroup: "task_catalog_read",
+    routeId: "task-templates.detail",
+    routeSource: "runtime_route",
+    sessionRequired: true,
+  }),
+  routeAuth({
+    enforcementStatus: "issued_session_enforced",
+    note: "Durable template adoption requires an issued Project Owner session and current Campaign ownership.",
+    productionDependencyIds: [...authSessionDeferredDependencyIds],
+    proofRequired: true,
+    requiredRoles: ["project_owner"],
+    routeGroup: "task_builder",
+    routeId: "campaigns.tasks.from-template",
     routeSource: "runtime_route",
     sessionRequired: true,
   }),

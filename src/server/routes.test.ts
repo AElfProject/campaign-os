@@ -28,6 +28,8 @@ import {
   ADMIN_API_PATH_PARAMETER_MAX_LENGTH,
   adminApiRuntimeRouteById,
   adminApiRuntimeRoutes,
+  allApiRuntimeRoutes,
+  allExactProtectedApiRouteContracts,
   apiRuntimeRouteCatalog,
   createAdminApiRuntimeRouteInventory,
   exactProtectedApiRouteContracts,
@@ -36,6 +38,7 @@ import {
   isUnambiguousApiRequestTarget,
   resolveExactProtectedApiRoute,
   resolveAdminApiRoute,
+  taskTemplateCatalogApiRuntimeRoutes,
   validateAdminApiRouteCatalog,
   type AdminApiRuntimeRouteDefinition,
 } from "./routes";
@@ -371,8 +374,8 @@ describe("Admin API route catalog", () => {
 });
 
 describe("API runtime route catalog", () => {
-  it("publishes the seven exact live auth and verification request contracts", () => {
-    expect(exactProtectedApiRouteContracts.map((route) => ({
+  it("publishes the exact live auth, verification, and catalog request contracts", () => {
+    expect(allExactProtectedApiRouteContracts.map((route) => ({
       id: route.id,
       method: route.method,
       path: route.path,
@@ -412,18 +415,100 @@ describe("API runtime route catalog", () => {
         method: "POST",
         path: "/api/tasks/:taskId/verify",
       },
+      {
+        id: "task-templates.list",
+        method: "GET",
+        path: "/api/task-templates",
+      },
+      {
+        id: "task-templates.detail",
+        method: "GET",
+        path: "/api/task-templates/:templateCode/versions/:version",
+      },
+      {
+        id: "campaigns.tasks.from-template",
+        method: "POST",
+        path: "/api/campaigns/:campaignId/tasks/from-template",
+      },
     ]);
 
-    expect(new Set(exactProtectedApiRouteContracts.map((route) => route.id)).size).toBe(7);
-    for (const route of exactProtectedApiRouteContracts) {
+    expect(new Set(allExactProtectedApiRouteContracts.map((route) => route.id)).size)
+      .toBe(allExactProtectedApiRouteContracts.length);
+    for (const route of allExactProtectedApiRouteContracts) {
       expect(route.credentialedCors).toBe(true);
       expect(route.request.origin).toBe("required");
-      expect(route.request.query).toEqual({ additionalProperties: false, allowed: [] });
+      if (route.id === "task-templates.list") {
+        expect(route.request.query).toEqual({
+          additionalProperties: false,
+          allowed: ["category", "verification", "wallet", "locale", "status", "cursor", "limit"],
+        });
+      } else {
+        expect(route.request.query).toEqual({ additionalProperties: false, allowed: [] });
+      }
       expect(route.request.headers.maxCount).toBeGreaterThan(0);
       expect(route.request.headers.maxTotalBytes).toBeGreaterThan(0);
       expect(route.request.cors.allowedHeaders).not.toContain("cookie");
       expect(route.request.cors.allowedHeaders).not.toContain("origin");
     }
+    expect(taskTemplateCatalogApiRuntimeRoutes.map((route) => route.id)).toEqual([
+      "task-templates.list",
+      "task-templates.detail",
+      "campaigns.tasks.from-template",
+    ]);
+    expect(allApiRuntimeRoutes.length).toBe(
+      apiRuntimeRoutes.length + taskTemplateCatalogApiRuntimeRoutes.length,
+    );
+  });
+
+  it("declares strict catalog paths, body fields, idempotency, and OpenAPI operations", () => {
+    expect(exactProtectedApiRouteContractById["task-templates.list"]).toMatchObject({
+      operationId: "listTaskTemplates",
+      request: {
+        body: { mode: "forbidden" },
+        cookie: "required",
+        csrf: "forbidden",
+        pathParameters: {},
+      },
+    });
+    expect(exactProtectedApiRouteContractById["task-templates.detail"]).toMatchObject({
+      operationId: "getTaskTemplateVersion",
+      request: {
+        body: { mode: "forbidden" },
+        cookie: "required",
+        csrf: "forbidden",
+        pathParameters: {
+          templateCode: { maxLength: 96, minLength: 1, type: "string" },
+          version: { maxLength: 10, minLength: 1, type: "string" },
+        },
+      },
+    });
+    expect(exactProtectedApiRouteContractById["campaigns.tasks.from-template"])
+      .toMatchObject({
+        operationId: "adoptTaskTemplate",
+        request: {
+          body: {
+            additionalProperties: false,
+            contentType: "application/json",
+            required: ["template"],
+            properties: {
+              overrides: { type: "object" },
+              template: { type: "object" },
+            },
+          },
+          cookie: "required",
+          csrf: "required",
+          csrfHeaderName: "x-csrf-token",
+          pathParameters: {
+            campaignId: { maxLength: 128, minLength: 1, type: "string" },
+          },
+        },
+      });
+    expect(exactProtectedApiRouteContractById["campaigns.tasks.from-template"]
+      .request.cors.allowedHeaders).toEqual(expect.arrayContaining([
+        "content-type",
+        "idempotency-key",
+        "x-csrf-token",
+      ]));
   });
 
   it("makes tasks.verify exact {campaignId} and describes every wallet body without extensions", () => {
@@ -498,6 +583,31 @@ describe("API runtime route catalog", () => {
       params: { taskId: "task-safe-1" },
       queryAllowed: false,
       route: { id: "tasks.verify" },
+    });
+    expect(resolveExactProtectedApiRoute(
+      "/api/task-templates?category=social&limit=24",
+    )).toMatchObject({
+      params: {},
+      queryAllowed: true,
+      route: { id: "task-templates.list" },
+    });
+    expect(resolveExactProtectedApiRoute(
+      "/api/task-templates?limit=1&limit=2",
+    )).toMatchObject({
+      queryAllowed: false,
+      route: { id: "task-templates.list" },
+    });
+    expect(resolveExactProtectedApiRoute(
+      "/api/task-templates/template-safe/versions/1",
+    )).toMatchObject({
+      params: { templateCode: "template-safe", version: "1" },
+      route: { id: "task-templates.detail" },
+    });
+    expect(resolveExactProtectedApiRoute(
+      "/api/campaigns/campaign-safe-1/tasks/from-template",
+    )).toMatchObject({
+      params: { campaignId: "campaign-safe-1" },
+      route: { id: "campaigns.tasks.from-template" },
     });
 
     for (const path of [
@@ -649,6 +759,27 @@ describe("API runtime route catalog", () => {
     expect(apiRuntimeRouteById["tasks.verify"].boundary["en-US"]).toContain(
       "production disabled",
     );
+    expect(apiRuntimeRouteById["task-templates.list"]).toMatchObject({
+      method: "GET",
+      path: "/api/task-templates",
+      readiness: "ready",
+      serviceGroup: "task",
+      supportMode: "postgres_live",
+    });
+    expect(apiRuntimeRouteById["task-templates.detail"]).toMatchObject({
+      method: "GET",
+      path: "/api/task-templates/:templateCode/versions/:version",
+      readiness: "ready",
+      serviceGroup: "task",
+      supportMode: "postgres_live",
+    });
+    expect(apiRuntimeRouteById["campaigns.tasks.from-template"]).toMatchObject({
+      method: "POST",
+      path: "/api/campaigns/:campaignId/tasks/from-template",
+      readiness: "ready",
+      serviceGroup: "task",
+      supportMode: "postgres_live",
+    });
     expect(apiRuntimeRouteById["campaigns.export.readiness"]).toMatchObject({
       apiSkillId: "get_campaign_export_readiness",
       method: "GET",
@@ -679,7 +810,7 @@ describe("API runtime route catalog", () => {
       supportMode: "local_seeded",
     });
 
-    for (const runtimeRoute of apiRuntimeRoutes) {
+    for (const runtimeRoute of allApiRuntimeRoutes) {
       expect(runtimeRoute.id.trim()).not.toHaveLength(0);
       expect(runtimeRoute.path).toMatch(/^\/api\//);
       expect(["GET", "POST"]).toContain(runtimeRoute.method);
@@ -687,13 +818,16 @@ describe("API runtime route catalog", () => {
       expect(["low", "medium", "high"]).toContain(runtimeRoute.riskLevel);
       expect(runtimeRoute.summary["en-US"]).not.toHaveLength(0);
       expect(runtimeRoute.summary["zh-CN"]).not.toHaveLength(0);
-      if (runtimeRoute.id === "tasks.verify") {
+      if (runtimeRoute.supportMode === "provider_live") {
         expect(runtimeRoute.boundary["en-US"]).toContain("provider-live");
+      } else if (runtimeRoute.supportMode === "postgres_live") {
+        expect(runtimeRoute.boundary["en-US"]).toContain("PostgreSQL-live");
+        expect(runtimeRoute.boundary["en-US"]).toContain("no seeded fallback");
       } else {
         expect(runtimeRoute.boundary["en-US"]).toContain("No live API");
       }
       expect(apiRuntimeServiceGroupById[runtimeRoute.serviceGroup]).toBeDefined();
-      if (runtimeRoute.id === "tasks.verify") {
+      if (runtimeRoute.supportMode === "provider_live") {
         expect(runtimeRoute.productionDependencies).toEqual(expect.arrayContaining([
           ...apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
           "auth_session",
@@ -702,6 +836,11 @@ describe("API runtime route catalog", () => {
           "sensitive_material_boundary",
         ]));
         expect(runtimeRoute.supportMode).toBe("provider_live");
+      } else if (runtimeRoute.supportMode === "postgres_live") {
+        expect(runtimeRoute.productionDependencies).toEqual(expect.arrayContaining(
+          apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
+        ));
+        expect(runtimeRoute.productionDependencies).toContain("sensitive_material_boundary");
       } else {
         expect(runtimeRoute.productionDependencies).toEqual(
           apiRuntimeServiceGroupById[runtimeRoute.serviceGroup].deferredDependencies,
@@ -958,7 +1097,8 @@ describe("API runtime route catalog", () => {
       valid: true,
     });
     expect(foundation.coverage).toMatchObject({
-      implementedLocalCount: 12,
+      configuredLiveCount: 1,
+      implementedLocalCount: foundation.surfaces.filter((surface) => surface.state === "implemented_local").length,
       notYetImplementedCount: 0,
       productionShapedDeferredCount: 2,
       routeCount: apiRuntimeContractRoutes.length,
@@ -969,17 +1109,35 @@ describe("API runtime route catalog", () => {
     expect(servicePortRouteIds.sort()).toEqual(foundationRouteIds.sort());
 
     for (const route of foundation.routes) {
-      expect(route.responseEnvelopeId).toBe("api.response.success.v1");
-      expect(route.errorEnvelopeId).toBe("api.response.error.v1");
+      const catalogRoute = [
+        "task-templates.list",
+        "task-templates.detail",
+        "campaigns.tasks.from-template",
+      ].includes(route.routeId);
+      expect(route.responseEnvelopeId).toBe(catalogRoute
+        ? "task-template-catalog.response.success.v1"
+        : "api.response.success.v1");
+      expect(route.errorEnvelopeId).toBe(catalogRoute
+        ? "task-template-catalog.response.error.v1"
+        : "api.response.error.v1");
       expect(route.serviceId).not.toHaveLength(0);
       expect(route.supportMode).toBe(
-        route.routeId === "tasks.verify" ? "provider_live" : "local_seeded",
+        route.routeId === "tasks.verify"
+          ? "provider_live"
+          : catalogRoute
+            ? "postgres_live"
+            : "local_seeded",
       );
     }
 
     for (const port of servicePorts.ports) {
-      expect(port.requiresExternalNetwork).toBe(false);
-      expect(port.requiresSecret).toBe(false);
+      if (port.productionAdapterStatus === "postgres_live") {
+        expect(port.requiresExternalNetwork).toBe(true);
+        expect(port.requiresSecret).toBe(true);
+      } else {
+        expect(port.requiresExternalNetwork).toBe(false);
+        expect(port.requiresSecret).toBe(false);
+      }
       expect(port.productionAdapterStatus).not.toBe("enabled");
     }
   });

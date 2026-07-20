@@ -41,6 +41,25 @@ export interface AdminApiFailureEnvelope {
   traceId: string;
 }
 
+export interface TaskTemplateCatalogGuardFailureEnvelope {
+  error: {
+    code:
+      | "AUTH_CSRF_INVALID"
+      | "AUTH_FORBIDDEN"
+      | "AUTH_SESSION_INVALID"
+      | "AUTH_SESSION_REQUIRED"
+      | "TASK_TEMPLATE_ARGUMENT_INVALID";
+    details?: never;
+    field: string;
+    message?: never;
+    operation: "adopt" | "detail" | "list";
+    retryable: false;
+    status?: never;
+  };
+  ok: false;
+  traceId: string;
+}
+
 export type ServerRequestGuardDecision =
   | ServerRequestAcceptedDecision
   | ServerRequestRejectedDecision
@@ -77,7 +96,10 @@ export interface ServerRequestAcceptedDecision {
 }
 
 export interface ServerRequestRejectedDecision {
-  body: AdminApiFailureEnvelope | ApiRuntimeFailureEnvelope;
+  body:
+    | AdminApiFailureEnvelope
+    | ApiRuntimeFailureEnvelope
+    | TaskTemplateCatalogGuardFailureEnvelope;
   headers: Record<string, string>;
   kind: "rejected";
   status: number;
@@ -85,7 +107,10 @@ export interface ServerRequestRejectedDecision {
 }
 
 export interface ServerRequestPreflightDecision {
-  body?: AdminApiFailureEnvelope | ApiRuntimeFailureEnvelope;
+  body?:
+    | AdminApiFailureEnvelope
+    | ApiRuntimeFailureEnvelope
+    | TaskTemplateCatalogGuardFailureEnvelope;
   headers: Record<string, string>;
   kind: "preflight";
   status: number;
@@ -170,6 +195,75 @@ const createBaseHeaders = (traceId: string): Record<string, string> => ({
   "content-type": "application/json; charset=utf-8",
   "x-campaign-os-trace-id": traceId,
 });
+
+const createCatalogBaseHeaders = (traceId: string): Record<string, string> => ({
+  "content-type": "application/json; charset=utf-8",
+  "x-trace-id": traceId,
+});
+
+const isTaskTemplateCatalogExactRoute = (
+  route: ExactProtectedApiRouteContract,
+): boolean => route.id === "task-templates.list"
+  || route.id === "task-templates.detail"
+  || route.id === "campaigns.tasks.from-template";
+
+const catalogOperationForExactRoute = (
+  route: ExactProtectedApiRouteContract,
+): "adopt" | "detail" | "list" => route.id === "task-templates.list"
+  ? "list"
+  : route.id === "task-templates.detail"
+    ? "detail"
+    : "adopt";
+
+const CATALOG_GUARD_SAFE_FIELD_PATTERN = /^[A-Za-z][A-Za-z0-9_.\[\]-]{0,127}$/u;
+
+const createCatalogFailureDecision = ({
+  error,
+  route,
+  traceId,
+}: {
+  error: unknown;
+  route: ExactProtectedApiRouteContract;
+  traceId: string;
+}): ServerRequestRejectedDecision => {
+  const runtimeError = toApiRuntimeErrorBody(error);
+  const rawField = runtimeError.details?.field;
+  const field = typeof rawField === "string" && CATALOG_GUARD_SAFE_FIELD_PATTERN.test(rawField)
+    ? rawField
+    : "request";
+  const diagnosticCode = runtimeError.details?.diagnosticCode;
+  const code = diagnosticCode === "AUTH_CSRF_INVALID"
+    ? "AUTH_CSRF_INVALID" as const
+    : runtimeError.code === "AUTH_SESSION_REQUIRED"
+      ? "AUTH_SESSION_REQUIRED" as const
+      : runtimeError.code === "AUTH_SESSION_INVALID"
+        ? "AUTH_SESSION_INVALID" as const
+        : runtimeError.code === "AUTH_FORBIDDEN" || runtimeError.code === "AUTH_SUBJECT_MISMATCH"
+          ? "AUTH_FORBIDDEN" as const
+          : "TASK_TEMPLATE_ARGUMENT_INVALID" as const;
+  const status = code === "AUTH_SESSION_REQUIRED" || code === "AUTH_SESSION_INVALID"
+    ? 401
+    : code === "AUTH_FORBIDDEN" || code === "AUTH_CSRF_INVALID"
+      ? 403
+      : 400;
+
+  return {
+    body: {
+      error: {
+        code,
+        field,
+        operation: catalogOperationForExactRoute(route),
+        retryable: false,
+      },
+      ok: false,
+      traceId,
+    },
+    headers: createCatalogBaseHeaders(traceId),
+    kind: "rejected",
+    status,
+    traceId,
+  };
+};
 
 const createFailureDecision = ({
   error,
@@ -324,9 +418,11 @@ const createRejectedPreflight = ({
 };
 
 interface CapturedExactHeaders {
+  catalogCsrf?: string;
   contentType?: string;
   cookie?: string;
   csrf?: string;
+  idempotencyKey?: string;
   origin?: string;
   requestedHeaders?: string;
   requestedMethod?: string;
@@ -417,6 +513,8 @@ const captureExactHeaders = (
       contentType: captured.get("content-type")?.trim(),
       cookie: captured.get("cookie"),
       csrf: captured.get("x-campaign-os-csrf")?.trim(),
+      catalogCsrf: captured.get("x-csrf-token")?.trim(),
+      idempotencyKey: captured.get("idempotency-key")?.trim(),
       origin: captured.get("origin")?.trim(),
       requestedHeaders: captured.get("access-control-request-headers"),
       requestedMethod: captured.get("access-control-request-method")?.trim(),
@@ -477,11 +575,20 @@ const createCredentialedCorsHeaders = (
       "access-control-allow-methods": route.request.cors.allowedMethods.join(", "),
       "access-control-max-age": String(maxAgeSeconds),
     }
-    : {}),
+  : {}),
   "access-control-allow-origin": origin,
-  "access-control-expose-headers": "x-campaign-os-trace-id",
+  "access-control-expose-headers": isTaskTemplateCatalogExactRoute(route)
+    ? "x-trace-id"
+    : "x-campaign-os-trace-id",
   vary: "origin",
 });
+
+const createExactBaseHeaders = (
+  route: ExactProtectedApiRouteContract,
+  traceId: string,
+): Record<string, string> => isTaskTemplateCatalogExactRoute(route)
+  ? createCatalogBaseHeaders(traceId)
+  : createBaseHeaders(traceId);
 
 const createExactRejectedRequest = ({
   contract,
@@ -500,14 +607,16 @@ const createExactRejectedRequest = ({
   routeCount: number;
   traceId: string;
 }): ServerRequestRejectedDecision => {
-  const rejected = createFailureDecision({
-    error,
-    requestTarget,
-    routeCount,
-    runtimeVersion: contract.runtimeVersion,
-    strictEnvelope: true,
-    traceId,
-  });
+  const rejected = isTaskTemplateCatalogExactRoute(route)
+    ? createCatalogFailureDecision({ error, route, traceId })
+    : createFailureDecision({
+      error,
+      requestTarget,
+      routeCount,
+      runtimeVersion: contract.runtimeVersion,
+      strictEnvelope: true,
+      traceId,
+    });
 
   return {
     ...rejected,
@@ -551,10 +660,10 @@ const createExactRejectedPreflight = ({
     body: rejected.body,
     headers: origin
       ? {
-        ...createBaseHeaders(traceId),
+        ...createExactBaseHeaders(route, traceId),
         ...createCredentialedCorsHeaders(route, origin, contract.corsPolicy.maxAgeSeconds, true),
       }
-      : createBaseHeaders(traceId),
+      : createExactBaseHeaders(route, traceId),
     kind: "preflight",
     status: rejected.status,
     traceId,
@@ -904,6 +1013,96 @@ const matchesExactJsonBody = (
   return Object.freeze({ status: "accepted" as const });
 };
 
+const CATALOG_ADOPTION_TEMPLATE_CODE_PATTERN = /^[a-z0-9][a-z0-9-]*$/u;
+const CATALOG_ADOPTION_HEADER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
+const CATALOG_ADOPTION_TEMPLATE_VERSION_MAX = 2_147_483_647;
+const CATALOG_ADOPTION_POINTS_MAX = 1_000_000;
+const CATALOG_ADOPTION_TEMPLATE_CODE_MAX_LENGTH = 96;
+const CATALOG_ADOPTION_IDEMPOTENCY_KEY_MIN_LENGTH = 8;
+const CATALOG_ADOPTION_IDEMPOTENCY_KEY_MAX_LENGTH = 128;
+const CATALOG_ADOPTION_CSRF_MIN_LENGTH = 16;
+const CATALOG_ADOPTION_CSRF_MAX_LENGTH = 512;
+
+const exactJsonRecordKeys = (
+  entries: readonly (readonly [string, unknown])[],
+  allowed: ReadonlySet<string>,
+  required: ReadonlySet<string>,
+): boolean => entries.every(([key]) => allowed.has(key))
+  && [...required].every((key) => entries.some(([observed]) => observed === key));
+
+const valueFromExactJsonEntries = (
+  entries: readonly (readonly [string, unknown])[],
+  key: string,
+): unknown => entries.find(([observed]) => observed === key)?.[1];
+
+const matchesCatalogAdoptionBody = (value: unknown): ExactJsonBodyMatchResult => {
+  const root = capturePlainJsonRecordEntries(value);
+  if (
+    !root
+    || !exactJsonRecordKeys(
+      root,
+      new Set(["overrides", "template"]),
+      new Set(["template"]),
+    )
+  ) {
+    return Object.freeze({ field: "body", status: "invalid" as const });
+  }
+
+  const template = capturePlainJsonRecordEntries(valueFromExactJsonEntries(root, "template"));
+  if (
+    !template
+    || !exactJsonRecordKeys(
+      template,
+      new Set(["templateCode", "version"]),
+      new Set(["templateCode", "version"]),
+    )
+  ) {
+    return Object.freeze({ field: "template", status: "invalid" as const });
+  }
+  const templateCode = valueFromExactJsonEntries(template, "templateCode");
+  const version = valueFromExactJsonEntries(template, "version");
+  if (
+    typeof templateCode !== "string"
+    || templateCode.length === 0
+    || templateCode.length > CATALOG_ADOPTION_TEMPLATE_CODE_MAX_LENGTH
+    || !CATALOG_ADOPTION_TEMPLATE_CODE_PATTERN.test(templateCode)
+    || typeof version !== "number"
+    || !Number.isSafeInteger(version)
+    || version < 1
+    || version > CATALOG_ADOPTION_TEMPLATE_VERSION_MAX
+  ) {
+    return Object.freeze({ field: "template", status: "invalid" as const });
+  }
+
+  const rawOverrides = valueFromExactJsonEntries(root, "overrides");
+  if (rawOverrides === undefined) {
+    return Object.freeze({ status: "accepted" as const });
+  }
+  const overrides = capturePlainJsonRecordEntries(rawOverrides);
+  if (
+    !overrides
+    || overrides.length === 0
+    || !exactJsonRecordKeys(overrides, new Set(["points", "required"]), new Set())
+  ) {
+    return Object.freeze({ field: "overrides", status: "invalid" as const });
+  }
+  const points = valueFromExactJsonEntries(overrides, "points");
+  const required = valueFromExactJsonEntries(overrides, "required");
+  if (
+    (points !== undefined && (
+      typeof points !== "number"
+      || !Number.isSafeInteger(points)
+      || points < 0
+      || points > CATALOG_ADOPTION_POINTS_MAX
+    ))
+    || (required !== undefined && typeof required !== "boolean")
+  ) {
+    return Object.freeze({ field: "overrides", status: "invalid" as const });
+  }
+
+  return Object.freeze({ status: "accepted" as const });
+};
+
 const requestTooLarge = (field: string, reason: string): ApiRuntimeError => {
   const invalid = invalidRequest(field, reason).body;
 
@@ -997,7 +1196,9 @@ const evaluateExactProtectedRequest = ({
     }
     return {
       headers: {
-        "x-campaign-os-trace-id": traceId,
+        ...(isTaskTemplateCatalogExactRoute(route)
+          ? { "x-trace-id": traceId }
+          : { "x-campaign-os-trace-id": traceId }),
         ...createCredentialedCorsHeaders(
           route,
           responseOrigin,
@@ -1066,27 +1267,80 @@ const evaluateExactProtectedRequest = ({
     if (bodyMatch.status !== "accepted") {
       return reject(invalidRequest("body", "JSON fields do not match the exact route schema."));
     }
+    if (route.id === "campaigns.tasks.from-template") {
+      const adoptionMatch = matchesCatalogAdoptionBody(parsed);
+      if (adoptionMatch.status !== "accepted") {
+        return reject(invalidRequest(
+          adoptionMatch.field ?? "body",
+          "JSON fields do not match the task template adoption schema.",
+        ));
+      }
+    }
   }
 
   const hasCookie = Boolean(captured.headers.cookie && captured.headers.cookie.trim().length > 0);
-  const hasCsrf = Boolean(captured.headers.csrf && captured.headers.csrf.length > 0);
+  const csrfValue = route.request.csrfHeaderName === "x-csrf-token"
+    ? captured.headers.catalogCsrf
+    : captured.headers.csrf;
+  const alternateCsrfValue = route.request.csrfHeaderName === "x-csrf-token"
+    ? captured.headers.csrf
+    : captured.headers.catalogCsrf;
+  const hasCsrf = Boolean(csrfValue && csrfValue.length > 0);
   if (cookie === "required" && !hasCookie) {
     return reject(authSessionRequired({ field: "cookie" }));
   }
   if (cookie === "forbidden" && captured.headers.cookie !== undefined) {
     return reject(invalidRequest("cookie", "This route does not accept a session cookie."));
   }
-  if (csrf === "required" && !hasCsrf) {
-    return reject(authForbidden({ diagnosticCode: "AUTH_CSRF_REQUIRED", field: "x-campaign-os-csrf" }));
+  if (alternateCsrfValue !== undefined) {
+    return reject(invalidRequest(
+      route.request.csrfHeaderName,
+      "This route received an ambiguous CSRF header.",
+    ));
   }
-  if (csrf === "forbidden" && captured.headers.csrf !== undefined) {
-    return reject(invalidRequest("x-campaign-os-csrf", "This route does not accept a CSRF header."));
+  if (csrf === "required" && !hasCsrf) {
+    return reject(authForbidden({
+      diagnosticCode: isTaskTemplateCatalogExactRoute(route)
+        ? "AUTH_CSRF_INVALID"
+        : "AUTH_CSRF_REQUIRED",
+      field: route.request.csrfHeaderName,
+    }));
+  }
+  if (csrf === "forbidden" && (csrfValue !== undefined || alternateCsrfValue !== undefined)) {
+    return reject(invalidRequest(
+      route.request.csrfHeaderName,
+      "This route does not accept a CSRF header.",
+    ));
+  }
+  if (route.id === "campaigns.tasks.from-template") {
+    const idempotencyKey = captured.headers.idempotencyKey;
+    if (
+      !idempotencyKey
+      || idempotencyKey.length < CATALOG_ADOPTION_IDEMPOTENCY_KEY_MIN_LENGTH
+      || idempotencyKey.length > CATALOG_ADOPTION_IDEMPOTENCY_KEY_MAX_LENGTH
+      || !CATALOG_ADOPTION_HEADER_PATTERN.test(idempotencyKey)
+    ) {
+      return reject(invalidRequest(
+        "idempotency-key",
+        "This route requires a bounded Idempotency-Key header.",
+      ));
+    }
+    if (
+      !csrfValue
+      || csrfValue.length < CATALOG_ADOPTION_CSRF_MIN_LENGTH
+      || csrfValue.length > CATALOG_ADOPTION_CSRF_MAX_LENGTH
+    ) {
+      return reject(authForbidden({
+        diagnosticCode: "AUTH_CSRF_INVALID",
+        field: "x-csrf-token",
+      }));
+    }
   }
 
   return {
     ...(body.mode === "json" ? { body: input.body } : {}),
     headers: {
-      ...createBaseHeaders(traceId),
+      ...createExactBaseHeaders(route, traceId),
       ...createCredentialedCorsHeaders(
         route,
         responseOrigin,

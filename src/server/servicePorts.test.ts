@@ -50,8 +50,13 @@ describe("API service ports", () => {
       expect(port.localAdapter).not.toHaveLength(0);
       expect(port.notes).not.toHaveLength(0);
       expect(port.futureAttachPoints.length).toBeGreaterThan(0);
-      expect(port.requiresExternalNetwork).toBe(false);
-      expect(port.requiresSecret).toBe(false);
+      if (port.productionAdapterStatus === "postgres_live") {
+        expect(port.requiresExternalNetwork).toBe(true);
+        expect(port.requiresSecret).toBe(true);
+      } else {
+        expect(port.requiresExternalNetwork).toBe(false);
+        expect(port.requiresSecret).toBe(false);
+      }
     }
 
     expect(apiServicePorts.find((port) => port.id === "verification-port")).toMatchObject({
@@ -124,6 +129,21 @@ describe("API service ports", () => {
       "campaign referral binding read model metadata",
     );
     expect(apiServicePorts.find((port) => port.id === "campaign-port")?.notes).toContain("reward distribution");
+    expect(apiServicePorts.find((port) => port.id === "task-template-port")).toMatchObject({
+      deferredCapabilities: [],
+      localAdapter: expect.stringContaining("postgresTaskTemplateCatalogStore.ts"),
+      notes: expect.stringContaining("does not call a third-party provider catalog"),
+      productionAdapterStatus: "postgres_live",
+      requiresExternalNetwork: true,
+      requiresSecret: true,
+      routeIds: [
+        "campaigns.tasks.add",
+        "task-templates.list",
+        "task-templates.detail",
+        "campaigns.tasks.from-template",
+      ],
+      serviceId: "task-template-service",
+    });
     expect(apiServicePorts.find((port) => port.id === "runtime-observability-port")).toMatchObject({
       futureAttachPoints: expect.arrayContaining([
         "src/server/observabilityExporter.ts readiness foundation",
@@ -246,19 +266,20 @@ describe("API service ports", () => {
     });
   });
 
-  it("keeps production adapters disabled, deferred, or local-only", () => {
+  it("reports configured PostgreSQL support without calling it a local adapter", () => {
     const report = createApiServicePortReport();
 
     expect(report.coverage).toMatchObject({
-      deferredPortCount: 0,
-      localMetadataOnlyPortCount: 3,
-      localSeededPortCount: 9,
+      deferredPortCount: report.ports.filter((port) => port.productionAdapterStatus === "deferred").length,
+      localMetadataOnlyPortCount: report.ports.filter((port) => port.productionAdapterStatus === "local_metadata_only").length,
+      localSeededPortCount: report.ports.filter((port) => port.productionAdapterStatus === "local_seeded").length,
       portCount: apiServicePorts.length,
+      postgresLivePortCount: 1,
       validationIssueCount: 0,
     });
 
     for (const port of report.ports) {
-      expect(["deferred", "disabled", "local_metadata_only", "local_seeded"]).toContain(
+      expect(["deferred", "disabled", "local_metadata_only", "local_seeded", "postgres_live"]).toContain(
         port.productionAdapterStatus,
       );
       expect(port.productionAdapterStatus).not.toBe("enabled");

@@ -78,6 +78,13 @@ import {
   issueVerifiedWalletSubject,
 } from "./walletAuthentication";
 import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
+import { taskTemplateCatalogManifestV1 } from "./taskTemplateCatalogManifest";
+import { resolveTaskTemplateCatalogConfig } from "./taskTemplateCatalogConfig";
+import type {
+  TaskTemplateCatalogResolvedPage,
+  TaskTemplateCatalogResolvedTemplate,
+  TaskTemplateCatalogService,
+} from "./taskTemplateCatalogService";
 
 const productionDatabaseRequiredReferenceKeys = [
   "CAMPAIGN_OS_DATABASE_PACKAGE",
@@ -1278,6 +1285,37 @@ const createLiveWalletAuthenticationAuthorityRuntime = ({
   });
   let authorizationAvailable = true;
   let fenceCurrent = true;
+  const currentSession = vi.fn(async (input: {
+    cookieHeader?: string;
+    origin?: string;
+    traceId: string;
+  }) => {
+    if (
+      !authorizationAvailable
+      || input.cookieHeader !== LIVE_AUTH_COOKIE
+      || input.origin !== LIVE_AUTH_ORIGIN
+    ) {
+      return Object.freeze({
+        diagnostic: Object.freeze({
+          code: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED" as const,
+          field: "session",
+          message: "Wallet session is unavailable.",
+          retryable: false,
+          severity: "warning" as const,
+          traceId: input.traceId,
+        }),
+        status: "unauthorized" as const,
+      });
+    }
+
+    return Object.freeze({
+      response: Object.freeze({
+        csrfToken: LIVE_AUTH_CSRF,
+        session: Object.freeze({ sessionId: authority.sessionId }),
+      }),
+      status: "active" as const,
+    });
+  });
   const resolveAuthorization = vi.fn(async (input: {
     cookieHeader?: string;
     csrfHeader?: string | readonly string[];
@@ -1335,6 +1373,7 @@ const createLiveWalletAuthenticationAuthorityRuntime = ({
     status: "drained" as const,
   }));
   const runtime = {
+    currentSession,
     resolveAuthorization,
     revalidateFenceBeforeWrite,
     state: () => Object.freeze({ accepting: true, activeOperationCount: 0, controllerCount: 0 }),
@@ -1343,6 +1382,7 @@ const createLiveWalletAuthenticationAuthorityRuntime = ({
 
   return {
     authority,
+    currentSession,
     failResolution: () => {
       authorizationAvailable = false;
     },
@@ -2196,7 +2236,8 @@ describe("Campaign OS API runtime", () => {
     expect(healthData).toMatchObject({
       apiFoundation: expect.objectContaining({
         coverage: expect.objectContaining({
-          implementedLocalCount: 12,
+          configuredLiveCount: 1,
+          implementedLocalCount: 11,
           notYetImplementedCount: 0,
           productionShapedDeferredCount: 2,
           routeCount: expect.any(Number),
@@ -2686,6 +2727,11 @@ describe("Campaign OS API runtime", () => {
               enforcementStatus: "local_enforced",
               requiredRoles: ["participant"],
               routeId: "tasks.verify",
+            }),
+            expect.objectContaining({
+              enforcementStatus: "issued_session_enforced",
+              requiredRoles: ["project_owner", "internal_operator", "review_operator"],
+              routeId: "task-templates.list",
             }),
           ]),
           rolePolicy: expect.objectContaining({
@@ -11624,5 +11670,588 @@ describe("Campaign OS API runtime", () => {
 
       expect(sharedClose).toHaveBeenCalledOnce();
     });
+  });
+});
+
+const catalogRuntimeTemplate = taskTemplateCatalogManifestV1.find(
+  (template) => template.adoptionMode === "direct",
+);
+
+if (!catalogRuntimeTemplate) {
+  throw new Error("Catalog runtime tests require a directly adoptable template.");
+}
+
+const catalogRuntimeEnglishContent = Object.freeze({
+  description: "Complete the resolved runtime catalog task.",
+  title: "Resolved runtime catalog task",
+});
+
+const resolvedCatalogRuntimeTemplate = (
+  requestedLocale: string | null,
+): TaskTemplateCatalogResolvedTemplate => Object.freeze({
+  adoptionMode: catalogRuntimeTemplate.adoptionMode,
+  catalogSchemaVersion: catalogRuntimeTemplate.catalogSchemaVersion,
+  category: catalogRuntimeTemplate.category,
+  checksum: catalogRuntimeTemplate.checksum,
+  content: Object.freeze({ ...catalogRuntimeEnglishContent }),
+  evidenceRule: catalogRuntimeTemplate.evidenceRule,
+  locale: Object.freeze({
+    requestedLocale,
+    resolvedLocale: "en-US",
+    status: "exact" as const,
+  }),
+  points: catalogRuntimeTemplate.points,
+  requiredPolicy: catalogRuntimeTemplate.requiredPolicy,
+  riskLevel: catalogRuntimeTemplate.riskLevel,
+  status: catalogRuntimeTemplate.status,
+  templateCode: catalogRuntimeTemplate.templateCode,
+  verificationType: catalogRuntimeTemplate.verificationType,
+  version: catalogRuntimeTemplate.version,
+  walletCompatibility: catalogRuntimeTemplate.walletCompatibility,
+});
+
+const catalogRuntimeListTemplate = resolvedCatalogRuntimeTemplate("en-US");
+const catalogRuntimeDetailTemplate = resolvedCatalogRuntimeTemplate(null);
+
+const enabledTaskTemplateCatalogConfig = resolveTaskTemplateCatalogConfig({
+  env: { CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED: "true" },
+});
+const disabledTaskTemplateCatalogConfig = resolveTaskTemplateCatalogConfig({ env: {} });
+
+const catalogRuntimePage: TaskTemplateCatalogResolvedPage = Object.freeze({
+  catalogSchemaVersion: "task-template-catalog-v1",
+  items: Object.freeze([catalogRuntimeListTemplate]),
+  page: Object.freeze({ limit: 24, nextCursor: null }),
+  snapshotAt: "2026-07-20T00:00:00.000Z",
+  totalActive: taskTemplateCatalogManifestV1.filter((template) => template.status === "active").length,
+});
+
+const createTaskTemplateCatalogServiceMock = () => ({
+  adopt: vi.fn(async (command) => Object.freeze({
+    campaignId: command.campaignId,
+    replayed: false,
+    status: "adopted" as const,
+    taskId: "task-catalog-runtime-1",
+    template: Object.freeze({
+      checksum: catalogRuntimeTemplate.checksum,
+      templateCode: command.template.templateCode,
+      version: command.template.version,
+    }),
+    traceId: command.traceId,
+  })),
+  close: vi.fn(async () => undefined),
+  detail: vi.fn(async (command) => Object.freeze({
+    status: "ok" as const,
+    template: catalogRuntimeDetailTemplate,
+    traceId: command.traceId,
+  })),
+  list: vi.fn(async (command) => Object.freeze({
+    page: catalogRuntimePage,
+    status: "ok" as const,
+    traceId: command.traceId,
+  })),
+}) satisfies TaskTemplateCatalogService;
+
+const catalogRuntimeHeaders = (overrides: Record<string, string> = {}) => ({
+  cookie: LIVE_AUTH_COOKIE,
+  origin: LIVE_AUTH_ORIGIN,
+  "x-campaign-os-trace-id": "trace-catalog-runtime",
+  ...overrides,
+});
+
+describe("Campaign OS protected task template catalog runtime", () => {
+  it("returns an exact disabled response and keeps unrelated Campaign routes available", async () => {
+    const service = createTaskTemplateCatalogServiceMock();
+    const runtime = createCampaignOsApiRuntime({
+      taskTemplateCatalogConfig: disabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: service,
+    });
+
+    const catalog = await runtime.handle({
+      method: "GET",
+      path: "/api/task-templates",
+    });
+    const campaigns = await runtime.handle({ method: "GET", path: "/api/campaigns" });
+
+    expect(catalog).toEqual({
+      body: {
+        error: {
+          code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+          field: "runtime",
+          operation: "list",
+          retryable: true,
+        },
+        ok: false,
+        traceId: expect.any(String),
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": expect.any(String),
+      },
+      status: 503,
+    });
+    expect(service.list).not.toHaveBeenCalled();
+    expect(campaigns).toMatchObject({ status: 200, body: { ok: true } });
+    await runtime.close();
+  });
+
+  it("derives GET authorization from the issued session and returns the OpenAPI envelope", async () => {
+    const service = createTaskTemplateCatalogServiceMock();
+    const wallet = createLiveWalletAuthenticationAuthorityRuntime({
+      capabilities: ["campaign:read", "campaign:write", "task:build"],
+      roleIds: ["project_owner"],
+      walletAddress: "catalog-runtime-owner",
+    });
+    const runtime = createCampaignOsApiRuntime({
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: service,
+      taskTemplateCatalogServiceOwnership: "external",
+      walletAuthenticationRuntime: wallet.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+
+    const response = await runtime.handle({
+      headers: catalogRuntimeHeaders(),
+      method: "GET",
+      path: "/api/task-templates?status=active&limit=24",
+    });
+
+    expect(response).toEqual({
+      body: { data: catalogRuntimePage, ok: true, traceId: "trace-catalog-runtime" },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-runtime",
+      },
+      status: 200,
+    });
+    expect(JSON.stringify(response.body)).not.toMatch(
+      /localizedContent|localeReadiness|supportedLocales/,
+    );
+    expect(wallet.currentSession).toHaveBeenCalledWith({
+      cookieHeader: LIVE_AUTH_COOKIE,
+      origin: LIVE_AUTH_ORIGIN,
+      traceId: "trace-catalog-runtime",
+    });
+    expect(wallet.resolveAuthorization).toHaveBeenCalledWith({
+      cookieHeader: LIVE_AUTH_COOKIE,
+      csrfHeader: LIVE_AUTH_CSRF,
+      origin: LIVE_AUTH_ORIGIN,
+      traceId: "trace-catalog-runtime",
+    });
+    expect(service.list).toHaveBeenCalledWith({
+      authority: { kind: "owner", session: wallet.authority },
+      query: { limit: 24, statuses: ["active"] },
+      traceId: "trace-catalog-runtime",
+    });
+    await runtime.close();
+    expect(service.close).not.toHaveBeenCalled();
+  });
+
+  it("serves all three catalog routes through real HTTP ingress without affecting Campaign reads", async () => {
+    const ownerAddress = "catalog-http-smoke-owner";
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "M246 real HTTP catalog smoke",
+      ownerAddress,
+      projectId: "m246-catalog-http-smoke",
+      rewardDescription: "M246 protected catalog real HTTP boundary.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "draft",
+      walletPolicy: "ANY",
+    });
+    const service = createTaskTemplateCatalogServiceMock();
+    const wallet = createLiveWalletAuthenticationAuthorityRuntime({
+      capabilities: ["campaign:read", "campaign:write", "task:build"],
+      roleIds: ["project_owner"],
+      walletAddress: ownerAddress,
+    });
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: repository,
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: service,
+      taskTemplateCatalogServiceOwnership: "external",
+      walletAuthenticationRuntime: wallet.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+    const server = await startCampaignOsApiServer({
+      allowedCorsOrigins: [LIVE_AUTH_ORIGIN],
+      logger: false,
+      maxBodyBytes: 16 * 1_024,
+      port: 0,
+      runtimeFactory: () => runtime,
+    });
+    const httpHeaders = (traceId: string, extra: Record<string, string> = {}) => ({
+      cookie: LIVE_AUTH_COOKIE,
+      origin: LIVE_AUTH_ORIGIN,
+      "x-campaign-os-trace-id": traceId,
+      ...extra,
+    });
+
+    try {
+      const list = await fetch(`${server.url}/api/task-templates?locale=en-US&limit=24`, {
+        headers: httpHeaders("trace-catalog-http-smoke-list"),
+      });
+      const listBody = await list.json();
+
+      expect(list.status).toBe(200);
+      expect(list.headers.get("x-trace-id")).toBe("trace-catalog-http-smoke-list");
+      expect(list.headers.get("x-campaign-os-trace-id")).toBeNull();
+      expect(list.headers.get("access-control-expose-headers")).toBe("x-trace-id");
+      expect(listBody).toEqual({
+        data: catalogRuntimePage,
+        ok: true,
+        traceId: "trace-catalog-http-smoke-list",
+      });
+      expect(JSON.stringify(listBody)).not.toMatch(
+        /localizedContent|localeReadiness|supportedLocales/,
+      );
+
+      const detail = await fetch(
+        `${server.url}/api/task-templates/${catalogRuntimeTemplate.templateCode}/versions/${catalogRuntimeTemplate.version}`,
+        { headers: httpHeaders("trace-catalog-http-smoke-detail") },
+      );
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toEqual({
+        data: catalogRuntimeDetailTemplate,
+        ok: true,
+        traceId: "trace-catalog-http-smoke-detail",
+      });
+
+      const forged = await fetch(`${server.url}/api/task-templates`, {
+        headers: httpHeaders("trace-catalog-http-smoke-forged", { "x-role": "Admin" }),
+      });
+      const forgedBody = await forged.json();
+      expect(forged.status).toBe(400);
+      expect(forgedBody).toEqual({
+        error: {
+          code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+          field: "headers",
+          operation: "list",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-smoke-forged",
+      });
+      expect(service.list).toHaveBeenCalledOnce();
+
+      const oversized = await fetch(
+        `${server.url}/api/campaigns/${campaign.id}/tasks/from-template`,
+        {
+          body: JSON.stringify({
+            template: { templateCode: "x".repeat(4_097), version: 1 },
+          }),
+          headers: httpHeaders("trace-catalog-http-smoke-oversize", {
+            "content-type": "application/json",
+            "idempotency-key": "catalog-http-smoke-oversize",
+            "x-csrf-token": LIVE_AUTH_CSRF,
+          }),
+          method: "POST",
+        },
+      );
+      const oversizedBody = await oversized.json();
+      expect(oversized.status).toBe(400);
+      expect(oversizedBody).toMatchObject({
+        error: {
+          code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+          operation: "adopt",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-smoke-oversize",
+      });
+      expect(service.adopt).not.toHaveBeenCalled();
+
+      const adoption = await fetch(
+        `${server.url}/api/campaigns/${campaign.id}/tasks/from-template`,
+        {
+          body: JSON.stringify({
+            overrides: { points: 40, required: true },
+            template: {
+              templateCode: catalogRuntimeTemplate.templateCode,
+              version: catalogRuntimeTemplate.version,
+            },
+          }),
+          headers: httpHeaders("trace-catalog-http-smoke-adopt", {
+            "content-type": "application/json",
+            "idempotency-key": "catalog-http-smoke-adopt-1",
+            "x-csrf-token": LIVE_AUTH_CSRF,
+          }),
+          method: "POST",
+        },
+      );
+      const adoptionBody = await adoption.json();
+      expect(adoption.status).toBe(201);
+      expect(adoption.headers.get("x-trace-id")).toBe("trace-catalog-http-smoke-adopt");
+      expect(adoptionBody).toMatchObject({
+        data: {
+          campaignId: campaign.id,
+          replayed: false,
+          templateCode: catalogRuntimeTemplate.templateCode,
+          templateVersion: catalogRuntimeTemplate.version,
+        },
+        ok: true,
+        traceId: "trace-catalog-http-smoke-adopt",
+      });
+      expect(service.adopt).toHaveBeenCalledOnce();
+
+      const campaigns = await fetch(`${server.url}/api/campaigns`);
+      expect(campaigns.status).toBe(200);
+      expect(await campaigns.json()).toMatchObject({ ok: true });
+    } finally {
+      await server.stop();
+    }
+
+    expect(service.close).not.toHaveBeenCalled();
+  });
+
+  it("adopts through the route ownership and M244 final-write fences", async () => {
+    const ownerAddress = "catalog-runtime-adoption-owner";
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "M246 protected catalog adoption",
+      ownerAddress,
+      projectId: "m246-catalog-runtime",
+      rewardDescription: "M246 protected catalog runtime test.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "draft",
+      walletPolicy: "ANY",
+    });
+    const service = createTaskTemplateCatalogServiceMock();
+    const wallet = createLiveWalletAuthenticationAuthorityRuntime({
+      capabilities: ["campaign:read", "campaign:write", "task:build"],
+      roleIds: ["project_owner"],
+      walletAddress: ownerAddress,
+    });
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: repository,
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: service,
+      walletAuthenticationRuntime: wallet.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+    const body = JSON.stringify({
+      overrides: { points: 40, required: true },
+      template: {
+        templateCode: catalogRuntimeTemplate.templateCode,
+        version: catalogRuntimeTemplate.version,
+      },
+    });
+
+    const response = await runtime.handle({
+      body,
+      headers: catalogRuntimeHeaders({
+        "content-type": "application/json",
+        "idempotency-key": "catalog-runtime-adoption-1",
+        "x-csrf-token": LIVE_AUTH_CSRF,
+      }),
+      method: "POST",
+      path: `/api/campaigns/${campaign.id}/tasks/from-template`,
+    });
+
+    expect(response).toMatchObject({
+      body: {
+        data: {
+          campaignId: campaign.id,
+          replayed: false,
+          taskId: "task-catalog-runtime-1",
+          templateChecksum: catalogRuntimeTemplate.checksum,
+          templateCode: catalogRuntimeTemplate.templateCode,
+          templateVersion: catalogRuntimeTemplate.version,
+        },
+        ok: true,
+        traceId: "trace-catalog-runtime",
+      },
+      headers: { "x-trace-id": "trace-catalog-runtime" },
+      status: 201,
+    });
+    expect(wallet.currentSession).not.toHaveBeenCalled();
+    expect(wallet.resolveAuthorization).toHaveBeenCalledWith({
+      cookieHeader: LIVE_AUTH_COOKIE,
+      csrfHeader: LIVE_AUTH_CSRF,
+      origin: LIVE_AUTH_ORIGIN,
+      traceId: "trace-catalog-runtime",
+    });
+    expect(wallet.revalidateFenceBeforeWrite).toHaveBeenCalledOnce();
+    expect(service.adopt).toHaveBeenCalledOnce();
+    expect(service.adopt.mock.calls[0]?.[0]).toMatchObject({
+      authority: { campaignId: campaign.id, kind: "owner", session: wallet.authority },
+      campaignId: campaign.id,
+      idempotencyKey: "catalog-runtime-adoption-1",
+    });
+    await runtime.close();
+  });
+
+  it("rejects Participant, cross-Campaign owner, forged authority headers, and bad CSRF before service", async () => {
+    const repository = createCampaignDbRepository();
+    const campaign = await repository.createDraft({
+      duration: "2026-11-01/2026-11-14",
+      endTime: "2026-11-14T23:59:59Z",
+      goal: "M246 negative authorization",
+      ownerAddress: "catalog-real-owner",
+      projectId: "m246-catalog-negative",
+      rewardDescription: "M246 protected catalog negative test.",
+      startTime: "2026-11-01T00:00:00Z",
+      status: "draft",
+      walletPolicy: "ANY",
+    });
+    const service = createTaskTemplateCatalogServiceMock();
+    const participant = createLiveWalletAuthenticationAuthorityRuntime();
+    const runtime = createCampaignOsApiRuntime({
+      campaignDbRepository: repository,
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: service,
+      walletAuthenticationRuntime: participant.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+    const body = JSON.stringify({
+      template: {
+        templateCode: catalogRuntimeTemplate.templateCode,
+        version: catalogRuntimeTemplate.version,
+      },
+    });
+    const requests = [
+      runtime.handle({ headers: catalogRuntimeHeaders(), method: "GET", path: "/api/task-templates" }),
+      runtime.handle({
+        body,
+        headers: catalogRuntimeHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "catalog-negative-0001",
+          "x-csrf-token": LIVE_AUTH_CSRF,
+        }),
+        method: "POST",
+        path: `/api/campaigns/${campaign.id}/tasks/from-template`,
+      }),
+      runtime.handle({
+        body,
+        headers: catalogRuntimeHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "catalog-negative-0002",
+          "x-campaign-os-role": "project_owner",
+          "x-csrf-token": LIVE_AUTH_CSRF,
+        }),
+        method: "POST",
+        path: `/api/campaigns/${campaign.id}/tasks/from-template`,
+      }),
+      runtime.handle({
+        body,
+        headers: catalogRuntimeHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "catalog-negative-0003",
+          "x-csrf-token": "wrong-csrf-token-value",
+        }),
+        method: "POST",
+        path: `/api/campaigns/${campaign.id}/tasks/from-template`,
+      }),
+    ];
+
+    const responses = await Promise.all(requests);
+
+    for (const response of responses) {
+      expect(response).toMatchObject({
+        body: { ok: false, error: { code: expect.stringMatching(/^AUTH_/) } },
+        status: expect.any(Number),
+      });
+      expect([401, 403]).toContain(response.status);
+      expect(JSON.stringify(response.body)).not.toMatch(/cookie|csrf-live|sessionId|walletAddress|stack|sql/i);
+    }
+    expect(service.list).not.toHaveBeenCalled();
+    expect(service.adopt).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it("fails closed without a configured PostgreSQL service and leaves Campaign reads intact", async () => {
+    const wallet = createLiveWalletAuthenticationAuthorityRuntime({
+      capabilities: ["campaign:read", "campaign:write", "task:build"],
+      roleIds: ["project_owner"],
+    });
+    const runtime = createCampaignOsApiRuntime({
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      walletAuthenticationRuntime: wallet.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+
+    const catalog = await runtime.handle({
+      headers: catalogRuntimeHeaders(),
+      method: "GET",
+      path: "/api/task-templates",
+    });
+    const campaigns = await runtime.handle({ method: "GET", path: "/api/campaigns" });
+
+    expect(catalog).toMatchObject({
+      body: {
+        error: { code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE", operation: "list" },
+        ok: false,
+      },
+      status: 503,
+    });
+    expect(campaigns).toMatchObject({ status: 200, body: { ok: true } });
+    await runtime.close();
+  });
+
+  it("drains active catalog work, closes owned service once, and never closes borrowed service", async () => {
+    let releaseList: (() => void) | undefined;
+    const listGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    const owned = createTaskTemplateCatalogServiceMock();
+    owned.list.mockImplementation(async (command) => {
+      await listGate;
+      return Object.freeze({ page: catalogRuntimePage, status: "ok" as const, traceId: command.traceId });
+    });
+    const wallet = createLiveWalletAuthenticationAuthorityRuntime({
+      capabilities: ["campaign:read", "campaign:write", "task:build"],
+      roleIds: ["project_owner"],
+    });
+    const runtime = createCampaignOsApiRuntime({
+      closeDeadlineMs: 500,
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: owned,
+      taskTemplateCatalogServiceOwnership: "runtime",
+      walletAuthenticationRuntime: wallet.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+    const activeRequest = runtime.handle({
+      headers: catalogRuntimeHeaders(),
+      method: "GET",
+      path: "/api/task-templates",
+    });
+    await vi.waitFor(() => expect(owned.list).toHaveBeenCalledOnce());
+    const closing = runtime.close();
+    const rejected = await runtime.handle({
+      headers: catalogRuntimeHeaders(),
+      method: "GET",
+      path: "/api/task-templates",
+    });
+
+    expect(rejected).toMatchObject({
+      body: { error: { code: "TASK_TEMPLATE_CLOSED", operation: "list" }, ok: false },
+      status: 503,
+    });
+    expect(owned.close).not.toHaveBeenCalled();
+    releaseList?.();
+    await expect(activeRequest).resolves.toMatchObject({ status: 200 });
+    await expect(closing).resolves.toBeUndefined();
+    await expect(runtime.close()).resolves.toBeUndefined();
+    expect(owned.close).toHaveBeenCalledOnce();
+
+    const borrowed = createTaskTemplateCatalogServiceMock();
+    const restartedRuntime = createCampaignOsApiRuntime({
+      taskTemplateCatalogConfig: enabledTaskTemplateCatalogConfig,
+      taskTemplateCatalogService: borrowed,
+      taskTemplateCatalogServiceOwnership: "external",
+      walletAuthenticationRuntime: wallet.runtime,
+      walletAuthenticationRuntimeOwnership: "external",
+    });
+    await expect(restartedRuntime.handle({
+      headers: catalogRuntimeHeaders(),
+      method: "GET",
+      path: "/api/task-templates",
+    })).resolves.toMatchObject({ status: 200 });
+    await restartedRuntime.close();
+    expect(borrowed.close).not.toHaveBeenCalled();
   });
 });

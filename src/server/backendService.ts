@@ -621,7 +621,10 @@ export const ownerRouteDurableEffectById = {
   "campaigns.owner.detail": "none",
   "campaigns.owner.list": "none",
   "campaigns.tasks.add": "task_create",
+  "campaigns.tasks.from-template": "task_create",
   "campaigns.tasks.generate": "none",
+  "task-templates.detail": "none",
+  "task-templates.list": "none",
 } as const satisfies Record<string, OwnerRouteDurableEffect>;
 
 export type LocallyEnforcedOwnerRouteId = keyof typeof ownerRouteDurableEffectById;
@@ -636,7 +639,10 @@ export const validateOwnerRouteDurableEffectRegistry = ({
   const canonicalRouteIds = Array.from(new Set(
     protectedRoutes
       .filter((route) => (
-        route.enforcementStatus === "local_enforced"
+        (
+          route.enforcementStatus === "local_enforced"
+          || route.enforcementStatus === "issued_session_enforced"
+        )
         && route.requiredRoles.includes("project_owner")
       ))
       .map((route) => route.routeId),

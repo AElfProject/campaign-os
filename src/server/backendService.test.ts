@@ -28,6 +28,9 @@ const productionAreas = [
 ];
 
 const genericContractWriterMissionCopy = ["contract", "writer", "mission"].join(" ");
+const locallyEnforcedRouteIds = protectedRouteAuthMap
+  .filter((route) => route.enforcementStatus === "local_enforced")
+  .map((route) => route.routeId);
 
 const queueSecretFragments = [
   "queue-user",
@@ -139,13 +142,19 @@ describe("backend service readiness report", () => {
     expect(ownerRouteDurableEffectById["campaigns.owner.detail"]).toBe("none");
     expect(ownerRouteDurableEffectById["campaigns.owner.list"]).toBe("none");
     expect(ownerRouteDurableEffectById["campaigns.tasks.add"]).toBe("task_create");
+    expect(ownerRouteDurableEffectById["campaigns.tasks.from-template"]).toBe("task_create");
     expect(ownerRouteDurableEffectById["campaigns.tasks.generate"]).toBe("none");
+    expect(ownerRouteDurableEffectById["task-templates.detail"]).toBe("none");
+    expect(ownerRouteDurableEffectById["task-templates.list"]).toBe("none");
     expect(Object.keys(ownerRouteDurableEffectById).sort()).toEqual([
       "campaigns.create",
       "campaigns.owner.detail",
       "campaigns.owner.list",
       "campaigns.tasks.add",
+      "campaigns.tasks.from-template",
       "campaigns.tasks.generate",
+      "task-templates.detail",
+      "task-templates.list",
     ]);
     expect(() => validateOwnerRouteDurableEffectRegistry({
       durableEffectByRouteId: ownerRouteDurableEffectById,
@@ -224,18 +233,7 @@ describe("backend service readiness report", () => {
       productionReady: false,
       profileId: "local-review",
       protectedRouteCoverage: {
-        locallyEnforcedRouteIds: [
-          "campaigns.create",
-          "campaigns.owner.list",
-          "campaigns.owner.detail",
-          "campaigns.tasks.add",
-          "campaigns.tasks.generate",
-          "campaigns.participant.list",
-          "campaigns.participant.journey",
-          "campaigns.eligibility",
-          "campaigns.points.ranking.ledger.runtime",
-          "tasks.verify",
-        ],
+        locallyEnforcedRouteIds,
         protectedRouteCount: expect.any(Number),
         routeGroupCount: expect.any(Number),
       },
@@ -263,21 +261,10 @@ describe("backend service readiness report", () => {
       campaignMutationRouteCount: 1,
       liveSigningExecuted: false,
       liveVerificationExecuted: false,
-      localEnforcedRouteCount: 10,
+      localEnforcedRouteCount: locallyEnforcedRouteIds.length,
       localProofVerifierContractReady: true,
       localSessionIssuerContractReady: true,
-      locallyEnforcedRouteIds: [
-        "campaigns.create",
-        "campaigns.owner.list",
-        "campaigns.owner.detail",
-        "campaigns.tasks.add",
-        "campaigns.tasks.generate",
-        "campaigns.participant.list",
-        "campaigns.participant.journey",
-        "campaigns.eligibility",
-        "campaigns.points.ranking.ledger.runtime",
-        "tasks.verify",
-      ],
+      locallyEnforcedRouteIds,
       mode: "local_enforced",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,
@@ -1918,19 +1905,8 @@ describe("backend service readiness report", () => {
     expect(report.authEnforcement).toMatchObject({
       agentCredentialSubstitutionDisabled: true,
       campaignMutationRouteCount: 1,
-      localEnforcedRouteCount: 10,
-      locallyEnforcedRouteIds: [
-        "campaigns.create",
-        "campaigns.owner.list",
-        "campaigns.owner.detail",
-        "campaigns.tasks.add",
-        "campaigns.tasks.generate",
-        "campaigns.participant.list",
-        "campaigns.participant.journey",
-        "campaigns.eligibility",
-        "campaigns.points.ranking.ledger.runtime",
-        "tasks.verify",
-      ],
+      localEnforcedRouteCount: locallyEnforcedRouteIds.length,
+      locallyEnforcedRouteIds,
       mode: "blocked",
       productionProofVerifierReady: false,
       productionProjectOwnershipSourceReady: false,

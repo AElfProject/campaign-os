@@ -179,12 +179,15 @@ export const apiRuntimeServiceGroups = [
     supportMode: "local_seeded",
   }),
   serviceGroup({
-    deferredDependencies: ["production_database", "provider_adapters"],
+    deferredDependencies: ["auth_session", "migration_runner", "production_database"],
     id: "task",
     label: text("Task", "任务"),
-    readiness: "local_only",
-    summary: text("Task template and draft boundary.", "任务模板与草稿边界。"),
-    supportMode: "local_seeded",
+    readiness: "ready",
+    summary: text(
+      "Configured PostgreSQL task template catalog and Campaign Task adoption boundary.",
+      "配置化 PostgreSQL Task Template Catalog 与 Campaign Task adoption 边界。",
+    ),
+    supportMode: "postgres_live",
   }),
   serviceGroup({
     deferredDependencies: ["provider_adapters", "worker_queue"],

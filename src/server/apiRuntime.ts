@@ -150,10 +150,39 @@ import type {
   TaskVerificationAttemptStore,
 } from "./taskVerificationAttemptStore";
 import type {
+  CurrentWalletAuthenticationSessionResult,
   RevalidateWalletAuthenticationFenceResult,
   ResolveWalletAuthenticationAuthorizationResult,
   WalletAuthenticationRuntime,
 } from "./walletAuthenticationRuntime";
+import {
+  isResolvedWalletSessionAuthority,
+  type ResolvedWalletSessionAuthority,
+} from "./walletAuthentication";
+import {
+  resolveTaskTemplateCatalogConfig,
+  type TaskTemplateCatalogConfig,
+} from "./taskTemplateCatalogConfig";
+import {
+  createTaskTemplateCatalogService,
+  type TaskTemplateCatalogService,
+} from "./taskTemplateCatalogService";
+import {
+  TaskTemplateCatalogError,
+  type TaskTemplateCatalogStore,
+} from "./taskTemplateCatalogStore";
+import {
+  createPostgresTaskTemplateCatalogStore,
+  type PostgresTaskTemplateCatalogPool,
+} from "./postgresTaskTemplateCatalogStore";
+import {
+  createTaskTemplateCatalogHttpFailure,
+  createTaskTemplateCatalogHttpHandler,
+  isTaskTemplateCatalogHttpRouteId,
+  TaskTemplateCatalogHttpAuthError,
+  type TaskTemplateCatalogHttpEnvelope,
+  type TaskTemplateCatalogHttpRouteId,
+} from "./taskTemplateCatalogHttp";
 
 export type ApiRuntimeHeaders = Record<string, string | readonly string[] | undefined>;
 
@@ -178,7 +207,8 @@ export type { AdminApiFailureEnvelope } from "./serverRequestGuard";
 export type ApiRuntimeResponseBody<TPayload = unknown> =
   | ApiRuntimeEnvelope<TPayload>
   | AdminApiSuccessEnvelope<TPayload>
-  | AdminApiFailureEnvelope;
+  | AdminApiFailureEnvelope
+  | TaskTemplateCatalogHttpEnvelope<TPayload>;
 
 export interface ApiRuntimeResponse<TPayload = unknown> {
   body: ApiRuntimeResponseBody<TPayload>;
@@ -188,7 +218,8 @@ export interface ApiRuntimeResponse<TPayload = unknown> {
 }
 
 export interface ApiRuntimeHandlerTransportResult {
-  data: unknown;
+  body?: ApiRuntimeResponseBody;
+  data?: unknown;
   headers?: Record<string, string>;
   kind: "api_runtime_transport_result";
   rawBody?: string;
@@ -203,11 +234,14 @@ export interface ApiRuntimeHandlerContext {
   headers: ApiRuntimeHeaders;
   params: Record<string, string>;
   participantPreviewConfig: ParticipantPreviewConfigFactory;
+  requestTarget: string;
   repository: CampaignOsRepository;
   query: Record<string, string>;
   route: ApiRuntimeRouteContract;
   service: CampaignOsLocalService;
   taskVerificationRuntime: ProtectedTaskVerificationRuntimePort;
+  taskTemplateCatalogAuthority?: ResolvedWalletSessionAuthority;
+  taskTemplateCatalogHttpHandler?: ReturnType<typeof createTaskTemplateCatalogHttpHandler>;
   taskVerificationRuleResolver?: TaskVerificationRuleResolver;
   traceId: string;
   version: string;
@@ -262,7 +296,7 @@ export type TaskVerificationRuntimeFactory = (
 export type WalletAuthenticationAuthorityRuntime = Pick<
   WalletAuthenticationRuntime,
   "resolveAuthorization" | "revalidateFenceBeforeWrite" | "state" | "stop"
->;
+> & Partial<Pick<WalletAuthenticationRuntime, "currentSession">>;
 
 export interface ProtectedTaskVerificationExecuteInput {
   issuedSubject: IssuedTaskVerificationSubjectInput;
@@ -707,6 +741,12 @@ export interface CampaignDbRuntimePool extends PostgresCampaignStorePool {
 export type CampaignDbPoolFactory = (
   config: CampaignOsCampaignDbPoolConfig,
 ) => CampaignDbRuntimePool;
+export interface TaskTemplateCatalogRuntimePool extends PostgresTaskTemplateCatalogPool {
+  onError?(listener: (error: unknown) => void): void;
+}
+export type TaskTemplateCatalogPoolFactory = (
+  config: CampaignOsCampaignDbPoolConfig,
+) => TaskTemplateCatalogRuntimePool;
 
 export type AdminReviewPoolFactory = (
   config: CampaignOsCampaignDbPoolConfig,
@@ -813,6 +853,12 @@ export interface CreateCampaignOsApiRuntimeOptions {
   taskVerificationRuntime?: TaskVerificationRuntimePort;
   taskVerificationRuntimeFactory?: TaskVerificationRuntimeFactory;
   taskVerificationTransport?: ProviderHttpTransport;
+  taskTemplateCatalogConfig?: TaskTemplateCatalogConfig;
+  taskTemplateCatalogPoolFactory?: TaskTemplateCatalogPoolFactory;
+  taskTemplateCatalogService?: TaskTemplateCatalogService;
+  taskTemplateCatalogServiceOwnership?: "external" | "runtime";
+  taskTemplateCatalogStore?: TaskTemplateCatalogStore;
+  taskTemplateCatalogStoreOwnership?: "external" | "runtime";
   version?: string;
   walletAuthenticationHttpController?: WalletAuthenticationHttpController;
   walletAuthenticationRuntime?: WalletAuthenticationAuthorityRuntime;
@@ -852,6 +898,39 @@ const createPgCampaignPool: CampaignDbPoolFactory = (config) => {
       const result = await pool.query(text, values);
 
       return { rows: result.rows as Array<Record<string, unknown>> };
+    },
+  };
+};
+
+const createPgTaskTemplateCatalogPool: TaskTemplateCatalogPoolFactory = (config) => {
+  const { Pool } = campaignDbRequire("pg") as typeof import("pg");
+  const pool = new Pool(config);
+
+  return {
+    connect: async () => {
+      const client = await pool.connect();
+
+      return {
+        query: async (input, values = []) => {
+          const result = typeof input === "string"
+            ? await client.query(input, [...values])
+            : await client.query({ ...input, values: [...input.values] });
+
+          return { rowCount: result.rowCount ?? result.rows.length, rows: result.rows };
+        },
+        release: (destroy = false) => client.release(destroy),
+      };
+    },
+    end: async () => pool.end(),
+    onError: (listener) => {
+      pool.on("error", listener);
+    },
+    query: async (input, values = []) => {
+      const result = typeof input === "string"
+        ? await pool.query(input, [...values])
+        : await pool.query({ ...input, values: [...input.values] });
+
+      return { rowCount: result.rowCount ?? result.rows.length, rows: result.rows };
     },
   };
 };
@@ -896,7 +975,71 @@ const isHandlerTransportResult = (
   && typeof value.status === "number"
   && Number.isInteger(value.status)
   && value.status >= 200
-  && value.status <= 299;
+  && value.status <= 599;
+
+const taskTemplateCatalogOperation = (
+  routeId: TaskTemplateCatalogHttpRouteId,
+) => routeId === "task-templates.list"
+  ? "list" as const
+  : routeId === "task-templates.detail"
+    ? "detail" as const
+    : "adopt" as const;
+
+const taskTemplateCatalogRuntimeFailure = (
+  routeId: TaskTemplateCatalogHttpRouteId,
+  traceId: string,
+  error: unknown,
+): ApiRuntimeResponse => {
+  const runtimeError = toApiRuntimeErrorBody(error);
+  const diagnosticCode = typeof runtimeError.details?.diagnosticCode === "string"
+    ? runtimeError.details.diagnosticCode
+    : "";
+  const code = diagnosticCode.toUpperCase().includes("CSRF")
+    ? "AUTH_CSRF_INVALID" as const
+    : runtimeError.code === "AUTH_SESSION_REQUIRED"
+    ? "AUTH_SESSION_REQUIRED" as const
+    : runtimeError.code === "AUTH_SESSION_INVALID"
+      ? "AUTH_SESSION_INVALID" as const
+      : runtimeError.code === "AUTH_FORBIDDEN" || runtimeError.code === "AUTH_SUBJECT_MISMATCH"
+        ? diagnosticCode.includes("CSRF")
+          ? "AUTH_CSRF_INVALID" as const
+          : "AUTH_FORBIDDEN" as const
+        : runtimeError.code === "INVALID_REQUEST" || runtimeError.code === "MALFORMED_JSON"
+          ? "TASK_TEMPLATE_ARGUMENT_INVALID" as const
+          : "TASK_TEMPLATE_CATALOG_UNAVAILABLE" as const;
+  const response = createTaskTemplateCatalogHttpFailure({
+    code,
+    field: code === "AUTH_CSRF_INVALID"
+      ? "x-csrf-token"
+      : code.startsWith("AUTH_")
+        ? "authorization"
+        : code === "TASK_TEMPLATE_ARGUMENT_INVALID"
+          ? "request"
+          : "runtime",
+    operation: taskTemplateCatalogOperation(routeId),
+    traceId,
+  });
+
+  return {
+    body: response.body,
+    headers: { ...response.headers },
+    status: response.status,
+  };
+};
+
+const taskTemplateCatalogClosedResponse = (
+  routeId: TaskTemplateCatalogHttpRouteId,
+  traceId: string,
+): ApiRuntimeResponse => {
+  const response = createTaskTemplateCatalogHttpFailure({
+    code: "TASK_TEMPLATE_CLOSED",
+    field: "runtime",
+    operation: taskTemplateCatalogOperation(routeId),
+    traceId,
+  });
+
+  return { body: response.body, headers: { ...response.headers }, status: response.status };
+};
 
 const createPgAdminReviewPool: AdminReviewPoolFactory = (config) =>
   createPgCampaignPool(config) as PostgresAdminReviewStorePool;
@@ -1360,12 +1503,17 @@ const createParticipantPreviewConfigFactory = (
   }
 };
 
-const shouldEvaluateLocalAuth = (routeId: string) =>
-  getProtectedRouteAuth(routeId)?.enforcementStatus === "local_enforced";
+const shouldEvaluateLocalAuth = (routeId: string) => {
+  const enforcementStatus = getProtectedRouteAuth(routeId)?.enforcementStatus;
+
+  return enforcementStatus === "local_enforced"
+    || enforcementStatus === "issued_session_enforced";
+};
 
 const campaignOwnerRouteIds = new Set([
   "campaigns.owner.detail",
   "campaigns.tasks.add",
+  "campaigns.tasks.from-template",
   "campaigns.tasks.generate",
 ]);
 
@@ -1426,51 +1574,154 @@ const singleHeader = (
   return typeof value === "string" ? value : undefined;
 };
 
+type AuthorizedWalletResolution = Extract<
+  ResolveWalletAuthenticationAuthorizationResult,
+  { status: "authorized" }
+>;
+
+interface RuntimeLiveAuthorization {
+  authority: ResolvedWalletSessionAuthority;
+  context: TrustedLiveAuthorizationContext;
+  fence: AuthorizedWalletResolution["fence"];
+}
+
+const throwLiveAuthorizationFailure = (
+  resolution: Exclude<
+    ResolveWalletAuthenticationAuthorizationResult | CurrentWalletAuthenticationSessionResult,
+    { status: "active" | "authorized" }
+  >,
+): never => {
+  const diagnosticCode = resolution.diagnostic.code;
+
+  if (resolution.status === "unavailable") {
+    throw persistenceUnavailable(`walletAuthentication.${diagnosticCode}`);
+  }
+  if (resolution.status === "forbidden") {
+    throw liveAuthRuntimeError(403, diagnosticCode, resolution.diagnostic.field);
+  }
+  if (resolution.status === "conflict") {
+    throw liveAuthRuntimeError(409, diagnosticCode, resolution.diagnostic.field);
+  }
+
+  throw liveAuthRuntimeError(401, diagnosticCode, resolution.diagnostic.field);
+};
+
 const resolveLiveAuthorization = async ({
   request,
+  routeId,
   runtime,
   traceId,
 }: {
   request: ApiRuntimeRequest;
+  routeId: string;
   runtime: WalletAuthenticationAuthorityRuntime;
   traceId: string;
-}): Promise<TrustedLiveAuthorizationContext> => {
+}): Promise<RuntimeLiveAuthorization> => {
   let authorization: ResolveWalletAuthenticationAuthorizationResult;
+  let csrfHeader: string | readonly string[] | undefined;
 
   try {
+    if (routeId === "task-templates.list" || routeId === "task-templates.detail") {
+      if (!runtime.currentSession) {
+        throw persistenceUnavailable("walletAuthentication.currentSession");
+      }
+      const current = await runtime.currentSession({
+        cookieHeader: singleHeader(request.headers, "cookie"),
+        origin: singleHeader(request.headers, "origin"),
+        traceId,
+      });
+      if (current.status === "active") {
+        csrfHeader = current.response.csrfToken;
+      } else {
+        return throwLiveAuthorizationFailure(current);
+      }
+    } else {
+      csrfHeader = rawHeader(
+        request.headers,
+        routeId === "campaigns.tasks.from-template"
+          ? "x-csrf-token"
+          : "x-campaign-os-csrf",
+      );
+    }
     authorization = await runtime.resolveAuthorization({
       cookieHeader: singleHeader(request.headers, "cookie"),
-      csrfHeader: rawHeader(request.headers, "x-campaign-os-csrf"),
+      csrfHeader,
       origin: singleHeader(request.headers, "origin"),
       traceId,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiRuntimeError) {
+      throw error;
+    }
     throw persistenceUnavailable("walletAuthentication.resolveAuthorization");
   }
 
   if (authorization.status !== "authorized") {
-    const diagnosticCode = authorization.diagnostic.code;
-
-    if (authorization.status === "unavailable") {
-      throw persistenceUnavailable(`walletAuthentication.${diagnosticCode}`);
-    }
-    if (authorization.status === "forbidden") {
-      throw liveAuthRuntimeError(403, diagnosticCode, authorization.diagnostic.field);
-    }
-    if (authorization.status === "conflict") {
-      throw liveAuthRuntimeError(409, diagnosticCode, authorization.diagnostic.field);
-    }
-
-    throw liveAuthRuntimeError(401, diagnosticCode, authorization.diagnostic.field);
+    return throwLiveAuthorizationFailure(authorization);
   }
 
   const trusted = resolveTrustedLiveAuthorizationContext(authorization, { now: new Date() });
-  if (trusted.status !== "resolved") {
+  if (
+    trusted.status !== "resolved"
+    || !isResolvedWalletSessionAuthority(authorization.authority)
+  ) {
     throw liveAuthRuntimeError(401, "LIVE_AUTH_CONTEXT_INVALID");
   }
 
-  return trusted.context;
+  return Object.freeze({
+    authority: authorization.authority,
+    context: trusted.context,
+    fence: authorization.fence,
+  });
 };
+
+const createAuthorizationFencedTaskTemplateCatalogService = ({
+  fence,
+  runtime,
+  service,
+}: {
+  fence: AuthorizedWalletResolution["fence"];
+  runtime: WalletAuthenticationAuthorityRuntime;
+  service: TaskTemplateCatalogService;
+}): TaskTemplateCatalogService => Object.freeze({
+  adopt: async (command: Parameters<TaskTemplateCatalogService["adopt"]>[0]) => {
+    const result = await runtime.revalidateFenceBeforeWrite({
+      fence,
+      traceId: command.traceId,
+      write: ({ authority }) => service.adopt({
+        ...command,
+        authority: Object.freeze({
+          ...command.authority,
+          session: authority,
+        }),
+      }),
+    });
+
+    if (result.status === "committed") {
+      return result.value;
+    }
+    if (result.status === "stale") {
+      throw new TaskTemplateCatalogHttpAuthError({
+        code: "AUTH_SESSION_INVALID",
+        field: "authorization",
+        operation: "adopt",
+        traceId: command.traceId,
+      });
+    }
+    throw new TaskTemplateCatalogError({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      field: "runtime",
+      operation: "adopt",
+      traceId: command.traceId,
+    });
+  },
+  close: (command: Parameters<TaskTemplateCatalogService["close"]>[0]) =>
+    service.close(command),
+  detail: (command: Parameters<TaskTemplateCatalogService["detail"]>[0]) =>
+    service.detail(command),
+  list: (command: Parameters<TaskTemplateCatalogService["list"]>[0]) =>
+    service.list(command),
+});
 
 const liveAuthErrorFromDecision = (decision: TrustedLiveAuthorizationDecision) =>
   liveAuthRuntimeError(
@@ -2148,6 +2399,12 @@ export const createCampaignOsApiRuntime = ({
   taskVerificationRuntime,
   taskVerificationRuntimeFactory,
   taskVerificationTransport,
+  taskTemplateCatalogConfig,
+  taskTemplateCatalogPoolFactory = createPgTaskTemplateCatalogPool,
+  taskTemplateCatalogService,
+  taskTemplateCatalogServiceOwnership = "external",
+  taskTemplateCatalogStore,
+  taskTemplateCatalogStoreOwnership = "external",
   version,
   walletAuthenticationHttpController,
   walletAuthenticationRuntime,
@@ -2195,6 +2452,20 @@ export const createCampaignOsApiRuntime = ({
       configError ??= error;
 
       return resolveCampaignOsCampaignDbConfig({ env: {} });
+    }
+  })();
+  let taskTemplateCatalogConfigError: unknown;
+  const resolvedTaskTemplateCatalogConfig = (() => {
+    if (taskTemplateCatalogConfig) {
+      return taskTemplateCatalogConfig;
+    }
+
+    try {
+      return resolveTaskTemplateCatalogConfig({ env: runtimeConfigOptions?.env ?? {} });
+    } catch (error) {
+      taskTemplateCatalogConfigError = error;
+
+      return resolveTaskTemplateCatalogConfig({ env: {} });
     }
   })();
   const resolveAdminReviewConfig = () => adminReviewConfig
@@ -2248,6 +2519,73 @@ export const createCampaignOsApiRuntime = ({
   const safeCampaignDbRepository = createSafeCampaignDbRepository(
     composedCampaignDbRepository,
   );
+  let taskTemplateCatalogInitializationError: unknown;
+  let taskTemplateCatalogPartialCleanup: Promise<void> | undefined;
+  let composedTaskTemplateCatalogPool: TaskTemplateCatalogRuntimePool | undefined;
+  let ownsTaskTemplateCatalogService = false;
+  const activeTaskTemplateCatalogService = (() => {
+    if (
+      taskTemplateCatalogConfigError
+      || !resolvedTaskTemplateCatalogConfig.enabled
+    ) {
+      return undefined;
+    }
+    if (taskTemplateCatalogService && taskTemplateCatalogStore) {
+      taskTemplateCatalogInitializationError = new TypeError(
+        "Task template catalog service and store cannot both be injected.",
+      );
+      return undefined;
+    }
+    if (taskTemplateCatalogService) {
+      ownsTaskTemplateCatalogService = taskTemplateCatalogServiceOwnership === "runtime";
+      return taskTemplateCatalogService;
+    }
+    if (!walletAuthenticationRuntime) {
+      return undefined;
+    }
+
+    try {
+      const store = taskTemplateCatalogStore ?? (() => {
+        if (
+          resolvedCampaignDbConfig.mode !== "postgres"
+          || configError instanceof CampaignOsCampaignDbConfigError
+        ) {
+          throw new TypeError("Task template catalog requires configured PostgreSQL.");
+        }
+        composedTaskTemplateCatalogPool = taskTemplateCatalogPoolFactory(
+          resolvedCampaignDbConfig.pool,
+        );
+        composedTaskTemplateCatalogPool.onError?.(() => {
+          if (logger) {
+            logger.error(
+              `[campaign-os-api-runtime] task_template_catalog_pool_error code=TASK_TEMPLATE_CATALOG_POOL_BACKGROUND_ERROR traceId=${randomUUID()}`,
+            );
+          }
+        });
+        return createPostgresTaskTemplateCatalogStore({
+          closeTimeoutMs: resolvedTaskTemplateCatalogConfig.limits.shutdownTimeoutMs,
+          defaultPageSize: resolvedTaskTemplateCatalogConfig.limits.defaultPageSize,
+          maximumPageSize: resolvedTaskTemplateCatalogConfig.limits.maximumPageSize,
+          ownsPool: true,
+          pool: composedTaskTemplateCatalogPool,
+          queryTimeoutMs: resolvedTaskTemplateCatalogConfig.limits.dependencyTimeoutMs,
+        });
+      })();
+      const service = createTaskTemplateCatalogService({ store });
+      ownsTaskTemplateCatalogService = taskTemplateCatalogStore
+        ? taskTemplateCatalogStoreOwnership === "runtime"
+        : true;
+      return service;
+    } catch (error) {
+      taskTemplateCatalogInitializationError = error;
+      if (composedTaskTemplateCatalogPool) {
+        taskTemplateCatalogPartialCleanup = composedTaskTemplateCatalogPool.end().catch(() => {
+          throw new Error("Task template catalog partial startup cleanup failed.");
+        });
+      }
+      return undefined;
+    }
+  })();
   const taskVerificationCompositionProvided = Boolean(
     taskVerificationRuntime
     || taskVerificationRuntimeFactory
@@ -2367,6 +2705,21 @@ export const createCampaignOsApiRuntime = ({
   const activeAdminReviewStore = composedAdminReviewStore;
   const handlers = createApiRuntimeHandlers();
   const matchers = apiRuntimeContractRoutes.map(compileRouteMatcher);
+  const resolveRequestedCatalogRoute = (
+    request: ApiRuntimeRequest,
+  ): TaskTemplateCatalogHttpRouteId | undefined => {
+    try {
+      const method = normalizeMethod(request.method);
+      const { pathname } = parseRequestTarget(request.path);
+      const routeId = matchers.find((matcher) =>
+        matcher.route.method === method && matcher.match(pathname)
+      )?.route.id;
+
+      return routeId && isTaskTemplateCatalogHttpRouteId(routeId) ? routeId : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const runtimeVersion = version ?? resolvedConfig.version;
   const participantPreviewConfig = createParticipantPreviewConfigFactory(
     participantPreviewConfigOptions,
@@ -2429,6 +2782,20 @@ export const createCampaignOsApiRuntime = ({
     registerResourceCloser(
       composedCampaignDbRepository,
       () => safeCampaignDbRepository.close?.() ?? Promise.resolve(),
+    );
+  }
+  if (activeTaskTemplateCatalogService && ownsTaskTemplateCatalogService) {
+    registerResourceCloser(
+      activeTaskTemplateCatalogService,
+      () => activeTaskTemplateCatalogService.close({
+        traceId: `task-template-catalog-close-${randomUUID()}`,
+      }),
+    );
+  }
+  if (taskTemplateCatalogPartialCleanup) {
+    registerResourceCloser(
+      taskTemplateCatalogPartialCleanup,
+      () => taskTemplateCatalogPartialCleanup!,
     );
   }
   if (composedAdminReviewStore && adminReviewStoreOwnership === "runtime") {
@@ -2574,8 +2941,15 @@ export const createCampaignOsApiRuntime = ({
     handle: async (request) => {
       const traceId = createTraceId(request.headers);
       const adminRequest = isAdminRequestTarget(request.path);
+      const requestedTaskTemplateCatalogRoute = resolveRequestedCatalogRoute(request);
 
       if (!acceptingRequests) {
+        if (requestedTaskTemplateCatalogRoute) {
+          return taskTemplateCatalogClosedResponse(
+            requestedTaskTemplateCatalogRoute,
+            traceId,
+          );
+        }
         const runtimeError = persistenceUnavailable("runtime.close").body;
 
         return {
@@ -2619,11 +2993,37 @@ export const createCampaignOsApiRuntime = ({
           pathname,
           parsedQuery,
         );
+        const taskTemplateCatalogRoute = isTaskTemplateCatalogHttpRouteId(matcher.route.id)
+          ? matcher.route.id
+          : undefined;
+        if (
+          taskTemplateCatalogRoute
+          && (
+            taskTemplateCatalogConfigError
+            || !resolvedTaskTemplateCatalogConfig.enabled
+          )
+        ) {
+          return taskTemplateCatalogRuntimeFailure(
+            taskTemplateCatalogRoute,
+            traceId,
+            taskTemplateCatalogConfigError
+              ?? new Error("Task template catalog is disabled."),
+          );
+        }
+        if (taskTemplateCatalogRoute && !walletAuthenticationRuntime) {
+          return taskTemplateCatalogRuntimeFailure(
+            taskTemplateCatalogRoute,
+            traceId,
+            new Error("Task template catalog authorization runtime is unavailable."),
+          );
+        }
         const adminPolicy = getAdminOperatorRoutePolicy(matcher.route.id);
         let body: unknown;
         let authDecision: AuthEnforcementDecision | undefined;
         let liveAdminOperator: AuthorizedAdminOperatorContext | undefined;
         let liveAuthorization: TrustedLiveAuthorizationContext | undefined;
+        let liveSessionAuthority: ResolvedWalletSessionAuthority | undefined;
+        let liveAuthorizationFence: AuthorizedWalletResolution["fence"] | undefined;
         let liveAuthorizationDecision: TrustedLiveAuthorizationDecision | undefined;
         let membershipRegistry: AdminOperatorMembershipRegistry | undefined;
         const requiresProtectedAuthorization = Boolean(
@@ -2676,7 +3076,9 @@ export const createCampaignOsApiRuntime = ({
             throw createRuntimeConfigBlockedError(configError);
           }
         }
-        body = parseBody(request, method, matcher.route.id === "tasks.verify");
+        body = taskTemplateCatalogRoute === "campaigns.tasks.from-template"
+          ? request.body
+          : parseBody(request, method, matcher.route.id === "tasks.verify");
 
         if (walletAuthenticationRuntime && requiresProtectedAuthorization) {
           let campaignId = params.campaignId;
@@ -2685,11 +3087,15 @@ export const createCampaignOsApiRuntime = ({
             campaignId = exactTaskVerificationCampaignId(body);
           }
 
-          liveAuthorization = await resolveLiveAuthorization({
+          const resolvedLiveAuthorization = await resolveLiveAuthorization({
             request,
+            routeId: matcher.route.id,
             runtime: walletAuthenticationRuntime,
             traceId,
           });
+          liveAuthorization = resolvedLiveAuthorization.context;
+          liveSessionAuthority = resolvedLiveAuthorization.authority;
+          liveAuthorizationFence = resolvedLiveAuthorization.fence;
 
           if (matcher.route.id === "tasks.verify" && campaignId) {
             const campaign = await safeCampaignDbRepository.getById(campaignId, { traceId });
@@ -2803,6 +3209,49 @@ export const createCampaignOsApiRuntime = ({
           }
         }
 
+        let requestTaskTemplateCatalogHttpHandler:
+        ReturnType<typeof createTaskTemplateCatalogHttpHandler> | undefined;
+        if (taskTemplateCatalogRoute) {
+          if (
+            taskTemplateCatalogInitializationError
+            || !activeTaskTemplateCatalogService
+          ) {
+            return taskTemplateCatalogRuntimeFailure(
+              taskTemplateCatalogRoute,
+              traceId,
+              taskTemplateCatalogInitializationError
+                ?? new Error("Task template catalog service is unavailable."),
+            );
+          }
+          if (!liveSessionAuthority) {
+            return taskTemplateCatalogRuntimeFailure(
+              taskTemplateCatalogRoute,
+              traceId,
+              new Error("Task template catalog issued authority is unavailable."),
+            );
+          }
+
+          const requestService = taskTemplateCatalogRoute === "campaigns.tasks.from-template"
+            ? liveAuthorizationFence && walletAuthenticationRuntime
+              ? createAuthorizationFencedTaskTemplateCatalogService({
+                fence: liveAuthorizationFence,
+                runtime: walletAuthenticationRuntime,
+                service: activeTaskTemplateCatalogService,
+              })
+              : undefined
+            : activeTaskTemplateCatalogService;
+          if (!requestService) {
+            return taskTemplateCatalogRuntimeFailure(
+              taskTemplateCatalogRoute,
+              traceId,
+              new Error("Task template catalog write fence is unavailable."),
+            );
+          }
+          requestTaskTemplateCatalogHttpHandler = createTaskTemplateCatalogHttpHandler({
+            service: requestService,
+          });
+        }
+
         const handler = handlers[matcher.route.id];
         let requestReadiness: BackendServiceReadinessReport | undefined;
         const requestBackendServiceReadiness = () => {
@@ -2818,11 +3267,18 @@ export const createCampaignOsApiRuntime = ({
           headers: request.headers ?? {},
           params,
           participantPreviewConfig,
+          requestTarget: request.path,
           repository: safeRepository,
           query,
           route: matcher.route,
           service: activeService,
           taskVerificationRuntime: protectedTaskVerificationRuntime,
+          ...(liveSessionAuthority && requestTaskTemplateCatalogHttpHandler
+            ? {
+              taskTemplateCatalogAuthority: liveSessionAuthority,
+              taskTemplateCatalogHttpHandler: requestTaskTemplateCatalogHttpHandler,
+            }
+            : {}),
           traceId,
           version: runtimeVersion,
           walletSessionRepository: safeWalletSessionRepository,
@@ -2842,6 +3298,14 @@ export const createCampaignOsApiRuntime = ({
         const transport = isHandlerTransportResult(handlerResult)
           ? handlerResult
           : undefined;
+        if (transport?.body !== undefined) {
+          return {
+            body: transport.body,
+            headers: { ...transport.headers },
+            ...(transport.rawBody === undefined ? {} : { rawBody: transport.rawBody }),
+            status: transport.status,
+          };
+        }
         const data = transport?.data ?? handlerResult;
         const attachDatabaseReadiness = shouldAttachDatabaseReadiness(matcher.route.id);
         const campaignDatabase = attachDatabaseReadiness
@@ -2876,6 +3340,13 @@ export const createCampaignOsApiRuntime = ({
           status: transport?.status ?? 200,
         };
       } catch (error) {
+        if (requestedTaskTemplateCatalogRoute) {
+          return taskTemplateCatalogRuntimeFailure(
+            requestedTaskTemplateCatalogRoute,
+            traceId,
+            error,
+          );
+        }
         const runtimeError = toApiRuntimeErrorBody(error);
 
         return {

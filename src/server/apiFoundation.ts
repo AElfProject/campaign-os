@@ -17,9 +17,10 @@ import {
   backendTopology,
 } from "./topology";
 
-export type ApiRequestFieldLocation = "body" | "path" | "query";
+export type ApiRequestFieldLocation = "body" | "header" | "path" | "query";
 export type ApiRequestFieldValueType = "array" | "boolean" | "enum" | "number" | "object" | "record" | "string";
 export type BackendSurfaceReadinessState =
+  | "configured_live"
   | "implemented_local"
   | "not_yet_implemented"
   | "production_shaped_deferred";
@@ -44,22 +45,25 @@ export interface ApiRequestContract {
 export interface ApiResponseEnvelopeContract {
   id: string;
   payloadField: string;
-  routeIdField: string;
-  serviceIdField: string;
+  routeIdField?: string;
+  serviceIdField?: string;
   statusField: string;
-  supportModeField: string;
+  supportModeField?: string;
   traceIdField: string;
 }
 
 export interface ApiErrorEnvelopeContract {
   codeField: string;
-  diagnosticsField: string;
+  diagnosticsField?: string;
+  fieldField?: string;
   id: string;
-  messageField: string;
-  routeIdField: string;
-  serviceIdField: string;
+  messageField?: string;
+  operationField?: string;
+  retryableField?: string;
+  routeIdField?: string;
+  serviceIdField?: string;
   statusField: string;
-  supportModeField: string;
+  supportModeField?: string;
   traceIdField: string;
 }
 
@@ -121,6 +125,7 @@ export interface ApiFoundationValidationResult {
 }
 
 export interface ApiFoundationCoverage {
+  configuredLiveCount: number;
   errorEnvelopeCount: number;
   implementedLocalCount: number;
   notYetImplementedCount: number;
@@ -156,6 +161,13 @@ type RouteFoundationMetadata = Pick<
 
 const standardResponseEnvelopeId = "api.response.success.v1";
 const standardErrorEnvelopeId = "api.response.error.v1";
+const catalogResponseEnvelopeId = "task-template-catalog.response.success.v1";
+const catalogErrorEnvelopeId = "task-template-catalog.response.error.v1";
+const catalogRouteIds = new Set([
+  "task-templates.list",
+  "task-templates.detail",
+  "campaigns.tasks.from-template",
+]);
 
 const routeFoundationMetadata = {
   "agent.wallet.action.review": {
@@ -294,6 +306,10 @@ const routeFoundationMetadata = {
     operationId: "addCampaignTask",
     serviceId: "task-template-service",
   },
+  "campaigns.tasks.from-template": {
+    operationId: "adoptTaskTemplate",
+    serviceId: "task-template-service",
+  },
   "campaigns.tasks.generate": {
     operationId: "generateCampaignTasks",
     serviceId: "ai-ops-service",
@@ -313,6 +329,14 @@ const routeFoundationMetadata = {
   "tasks.verify": {
     operationId: "verifyTask",
     serviceId: "verification-service",
+  },
+  "task-templates.detail": {
+    operationId: "getTaskTemplateVersion",
+    serviceId: "task-template-service",
+  },
+  "task-templates.list": {
+    operationId: "listTaskTemplates",
+    serviceId: "task-template-service",
   },
   "wallet.session.create": {
     operationId: "createWalletSession",
@@ -694,6 +718,169 @@ const requestFieldContracts = [
     required: true,
     routeId: "campaigns.tasks.add",
     valueType: "string",
+  }),
+  field({
+    description: "Optional comma-separated catalog category filters; duplicate values are rejected.",
+    id: "task-templates.list.query.category",
+    location: "query",
+    name: "category",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "string",
+  }),
+  field({
+    description: "Optional comma-separated catalog verification type filters.",
+    id: "task-templates.list.query.verification",
+    location: "query",
+    name: "verification",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "string",
+  }),
+  field({
+    description: "Optional comma-separated wallet compatibility filters.",
+    id: "task-templates.list.query.wallet",
+    location: "query",
+    name: "wallet",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "string",
+  }),
+  field({
+    description: "Optional bounded locale used to resolve catalog content.",
+    id: "task-templates.list.query.locale",
+    location: "query",
+    name: "locale",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "string",
+  }),
+  field({
+    description: "Catalog status filter; non-active history requires issued Admin history capability.",
+    enumValues: ["active", "deprecated", "retired"],
+    id: "task-templates.list.query.status",
+    location: "query",
+    name: "status",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "enum",
+  }),
+  field({
+    description: "Opaque bounded cursor issued by the PostgreSQL catalog store.",
+    id: "task-templates.list.query.cursor",
+    location: "query",
+    name: "cursor",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "string",
+  }),
+  field({
+    description: "Bounded catalog page size from 1 through 100.",
+    id: "task-templates.list.query.limit",
+    location: "query",
+    name: "limit",
+    required: false,
+    routeId: "task-templates.list",
+    valueType: "number",
+  }),
+  field({
+    description: "Canonical lowercase task template code.",
+    id: "task-templates.detail.path.templateCode",
+    location: "path",
+    name: "templateCode",
+    required: true,
+    routeId: "task-templates.detail",
+    valueType: "string",
+  }),
+  field({
+    description: "Canonical positive integer task template version.",
+    id: "task-templates.detail.path.version",
+    location: "path",
+    name: "version",
+    required: true,
+    routeId: "task-templates.detail",
+    valueType: "number",
+  }),
+  field({
+    description: "Authoritative Campaign identifier from the adoption route path.",
+    id: "campaigns.tasks.from-template.path.campaignId",
+    location: "path",
+    name: "campaignId",
+    required: true,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "string",
+  }),
+  field({
+    description: "Bounded caller request identity used for atomic adoption replay.",
+    id: "campaigns.tasks.from-template.header.idempotency-key",
+    location: "header",
+    name: "Idempotency-Key",
+    required: true,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "string",
+  }),
+  field({
+    description: "M244 CSRF proof for the issued wallet session.",
+    id: "campaigns.tasks.from-template.header.x-csrf-token",
+    location: "header",
+    name: "x-csrf-token",
+    required: true,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "string",
+  }),
+  field({
+    description: "Exact template identity object; additional properties are rejected.",
+    id: "campaigns.tasks.from-template.body.template",
+    location: "body",
+    name: "template",
+    required: true,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "object",
+  }),
+  field({
+    description: "Canonical template code inside the exact template identity.",
+    id: "campaigns.tasks.from-template.body.template.templateCode",
+    location: "body",
+    name: "template.templateCode",
+    required: true,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "string",
+  }),
+  field({
+    description: "Canonical positive integer version inside the exact template identity.",
+    id: "campaigns.tasks.from-template.body.template.version",
+    location: "body",
+    name: "template.version",
+    required: true,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "number",
+  }),
+  field({
+    description: "Optional non-empty adoption override object; additional properties are rejected.",
+    id: "campaigns.tasks.from-template.body.overrides",
+    location: "body",
+    name: "overrides",
+    required: false,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "object",
+  }),
+  field({
+    description: "Optional bounded points override allowed by catalog policy.",
+    id: "campaigns.tasks.from-template.body.overrides.points",
+    location: "body",
+    name: "overrides.points",
+    required: false,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "number",
+  }),
+  field({
+    description: "Optional required-task override allowed by catalog policy.",
+    id: "campaigns.tasks.from-template.body.overrides.required",
+    location: "body",
+    name: "overrides.required",
+    required: false,
+    routeId: "campaigns.tasks.from-template",
+    valueType: "boolean",
   }),
   field({
     description: "Task template code used by the campaign builder.",
@@ -1284,6 +1471,12 @@ const responseEnvelopeContracts = [
     supportModeField: "supportMode",
     traceIdField: "traceId",
   },
+  {
+    id: catalogResponseEnvelopeId,
+    payloadField: "data",
+    statusField: "ok",
+    traceIdField: "traceId",
+  },
 ] as const satisfies readonly ApiResponseEnvelopeContract[];
 
 const errorEnvelopeContracts = [
@@ -1296,6 +1489,15 @@ const errorEnvelopeContracts = [
     serviceIdField: "serviceId",
     statusField: "ok",
     supportModeField: "supportMode",
+    traceIdField: "traceId",
+  },
+  {
+    codeField: "error.code",
+    fieldField: "error.field",
+    id: catalogErrorEnvelopeId,
+    operationField: "error.operation",
+    retryableField: "error.retryable",
+    statusField: "ok",
     traceIdField: "traceId",
   },
 ] as const satisfies readonly ApiErrorEnvelopeContract[];
@@ -1338,12 +1540,17 @@ const backendSurfaceReadiness = [
     surfaceId: "campaign",
   },
   {
-    deferredDependencies: ["production_database", "provider_adapters"],
+    deferredDependencies: [],
     label: "Task Template",
-    notes: "Local task draft creation exists; provider-backed template catalogs are deferred and disable_provider_task_templates is the fail-closed degradation.",
-    routeIds: ["campaigns.tasks.add"],
+    notes: "Configured mode exposes protected PostgreSQL catalog list/detail and atomic Campaign Task adoption through schema 0006 and M244 issued wallet authority. Missing config, auth, schema, or store fails closed without a local or provider-backed catalog fallback; campaigns.tasks.add remains demo/manual compatibility only.",
+    routeIds: [
+      "campaigns.tasks.add",
+      "task-templates.list",
+      "task-templates.detail",
+      "campaigns.tasks.from-template",
+    ],
     serviceId: "task-template-service",
-    state: "implemented_local",
+    state: "configured_live",
     surfaceId: "task-template",
   },
   {
@@ -1495,14 +1702,18 @@ const createFoundationRoutes = (
     return {
       apiGroup: route.apiGroup,
       description: route.summary["en-US"],
-      errorEnvelopeId: standardErrorEnvelopeId,
+      errorEnvelopeId: catalogRouteIds.has(route.id)
+        ? catalogErrorEnvelopeId
+        : standardErrorEnvelopeId,
       method: route.method,
       operationId: metadata.operationId,
       path: route.path,
       productionDependencies: [...route.productionDependencies],
       readiness: route.readiness,
       requestContractId: `${route.id}.request`,
-      responseEnvelopeId: standardResponseEnvelopeId,
+      responseEnvelopeId: catalogRouteIds.has(route.id)
+        ? catalogResponseEnvelopeId
+        : standardResponseEnvelopeId,
       routeId: route.id,
       serviceId: metadata.serviceId,
       supportMode: route.supportMode,
@@ -1744,7 +1955,10 @@ export const validateApiFoundationRegistry = (
       }
     }
 
-    if (surface.state === "implemented_local" && surface.routeIds.length === 0) {
+    if (
+      (surface.state === "implemented_local" || surface.state === "configured_live")
+      && surface.routeIds.length === 0
+    ) {
       issues.push(
         createIssue(
           "UNASSIGNED_SURFACE",
@@ -1775,6 +1989,7 @@ export const createApiFoundationReport = ({
   return {
     ...registry,
     coverage: {
+      configuredLiveCount: countSurfacesByState(registry.surfaces, "configured_live"),
       errorEnvelopeCount: registry.errorEnvelopes.length,
       implementedLocalCount: countSurfacesByState(registry.surfaces, "implemented_local"),
       notYetImplementedCount: countSurfacesByState(registry.surfaces, "not_yet_implemented"),

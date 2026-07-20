@@ -67,6 +67,7 @@ export type BackendServiceBoundaryId =
   | "runtime-observability";
 export type BackendDataStoreId =
   | "campaign-db"
+  | "task-template-catalog-db"
   | "wallet-session-db"
   | "task-evidence-db"
   | "i18n-content-db"
@@ -294,18 +295,26 @@ export const backendServiceBoundaries = [
     runtimeProfiles: productionProfiles,
   }),
   service({
-    adapterGroups: ["dapp-api-adapters"],
-    dataStores: ["campaign-db"],
+    adapterGroups: [],
+    dataStores: ["campaign-db", "task-template-catalog-db"],
     deploymentUnit: "api-runtime",
-    description: "Task template and wallet compatibility boundary for campaign builders.",
+    description: "Protected configured-PostgreSQL task template catalog and atomic Campaign Task adoption boundary.",
     domainArea: "task",
     futureRouteGroups: ["task-templates", "task-builder"],
     id: "task-template-service",
     name: "Task Template Service",
     productionRequired: true,
-    readiness: "local_only",
-    risks: ["Live dApp template providers are deferred."],
-    routeIds: ["campaigns.tasks.add"],
+    readiness: "ready",
+    risks: [
+      "Configured mode requires issued wallet authority, Campaign ownership, and schema 0006; missing dependencies fail closed.",
+      "No third-party provider catalog is part of this service boundary.",
+    ],
+    routeIds: [
+      "campaigns.tasks.add",
+      "task-templates.list",
+      "task-templates.detail",
+      "campaigns.tasks.from-template",
+    ],
     runtimeProfiles: productionProfiles,
   }),
   service({
@@ -545,6 +554,17 @@ export const backendDataStores = [
   }),
   dataStore({
     containsSensitiveData: true,
+    currentMode: "external",
+    id: "task-template-catalog-db",
+    migrationRequired: true,
+    name: "Task Template Catalog PostgreSQL Store",
+    ownerServiceId: "task-template-service",
+    productionMode: "relational_db",
+    records: ["task_template_versions", "campaigns", "campaign_tasks"],
+    retentionRisk: "Catalog history and adopted Campaign Task provenance require schema 0006 retention and access-control policy.",
+  }),
+  dataStore({
+    containsSensitiveData: true,
     currentMode: "local_json",
     id: "wallet-session-db",
     migrationRequired: true,
@@ -661,7 +681,7 @@ export const backendAdapterGroups = [
     forbiddenInLocalReview: true,
     id: "dapp-api-adapters",
     name: "dApp API Adapters",
-    serviceIds: ["task-template-service", "verification-service"],
+    serviceIds: ["verification-service"],
     status: "deferred",
   }),
   adapterGroup({

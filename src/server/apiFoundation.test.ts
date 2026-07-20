@@ -47,13 +47,26 @@ describe("API foundation registry", () => {
     );
 
     for (const route of registry.routes) {
+      const catalogRoute = [
+        "task-templates.list",
+        "task-templates.detail",
+        "campaigns.tasks.from-template",
+      ].includes(route.routeId);
       expect(route.operationId).toMatch(/^[a-z][A-Za-z0-9]+$/);
       expect(route.serviceId).not.toHaveLength(0);
       expect(route.requestContractId).toBe(`${route.routeId}.request`);
-      expect(route.responseEnvelopeId).toBe("api.response.success.v1");
-      expect(route.errorEnvelopeId).toBe("api.response.error.v1");
+      expect(route.responseEnvelopeId).toBe(catalogRoute
+        ? "task-template-catalog.response.success.v1"
+        : "api.response.success.v1");
+      expect(route.errorEnvelopeId).toBe(catalogRoute
+        ? "task-template-catalog.response.error.v1"
+        : "api.response.error.v1");
       expect(route.supportMode).toBe(
-        route.routeId === "tasks.verify" ? "provider_live" : "local_seeded",
+        route.routeId === "tasks.verify"
+          ? "provider_live"
+          : catalogRoute
+            ? "postgres_live"
+            : "local_seeded",
       );
       expect(route.description).not.toHaveLength(0);
     }
@@ -154,6 +167,12 @@ describe("API foundation registry", () => {
     expect(registry.routes.find((route) => route.routeId === "campaigns.analytics")).toMatchObject({
       serviceId: "runtime-observability",
     });
+    expect(registry.routes.filter((route) => route.serviceId === "task-template-service"))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ operationId: "listTaskTemplates", routeId: "task-templates.list" }),
+        expect.objectContaining({ operationId: "getTaskTemplateVersion", routeId: "task-templates.detail" }),
+        expect.objectContaining({ operationId: "adoptTaskTemplate", routeId: "campaigns.tasks.from-template" }),
+      ]));
   });
 
   it("declares request field metadata for path, query, and body inputs", () => {
@@ -192,6 +211,30 @@ describe("API foundation registry", () => {
       required: false,
       valueType: "enum",
     });
+    expect(requestFieldsByRoute.get("task-templates.list")?.map((field) => field?.name)).toEqual([
+      "category",
+      "verification",
+      "wallet",
+      "locale",
+      "status",
+      "cursor",
+      "limit",
+    ]);
+    expect(requestFieldsByRoute.get("task-templates.detail")).toEqual([
+      expect.objectContaining({ location: "path", name: "templateCode", required: true }),
+      expect.objectContaining({ location: "path", name: "version", required: true }),
+    ]);
+    expect(requestFieldsByRoute.get("campaigns.tasks.from-template")).toEqual([
+      expect.objectContaining({ location: "path", name: "campaignId", required: true }),
+      expect.objectContaining({ location: "header", name: "Idempotency-Key", required: true }),
+      expect.objectContaining({ location: "header", name: "x-csrf-token", required: true }),
+      expect.objectContaining({ location: "body", name: "template", required: true }),
+      expect.objectContaining({ location: "body", name: "template.templateCode", required: true }),
+      expect.objectContaining({ location: "body", name: "template.version", required: true }),
+      expect.objectContaining({ location: "body", name: "overrides", required: false }),
+      expect.objectContaining({ location: "body", name: "overrides.points", required: false }),
+      expect.objectContaining({ location: "body", name: "overrides.required", required: false }),
+    ]);
     expect(requestFieldsByRoute.get("campaigns.owner.list")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -295,12 +338,13 @@ describe("API foundation registry", () => {
     }
   });
 
-  it("reports v0.2 backend surfaces as local, deferred, or not yet implemented", () => {
+  it("reports configured-live, local, deferred, and not-yet-implemented surfaces", () => {
     const report = createApiFoundationReport();
 
     expect(report.surfaces.map((surface) => surface.surfaceId)).toEqual(expectedSurfaceIds);
     expect(report.coverage).toMatchObject({
-      implementedLocalCount: 12,
+      configuredLiveCount: 1,
+      implementedLocalCount: report.surfaces.filter((surface) => surface.state === "implemented_local").length,
       notYetImplementedCount: 0,
       productionShapedDeferredCount: 2,
       routeCount: apiRuntimeContractRoutes.length,
@@ -308,6 +352,17 @@ describe("API foundation registry", () => {
       validationIssueCount: 0,
     });
     expect(report.validation.valid).toBe(true);
+    expect(report.surfaces.find((surface) => surface.surfaceId === "task-template"))
+      .toMatchObject({
+        deferredDependencies: [],
+        routeIds: [
+          "campaigns.tasks.add",
+          "task-templates.list",
+          "task-templates.detail",
+          "campaigns.tasks.from-template",
+        ],
+        state: "configured_live",
+      });
     expect(report.surfaces.find((surface) => surface.surfaceId === "points-ranking")).toMatchObject({
       routeIds: ["campaigns.points.ranking.ledger.runtime"],
       serviceId: "points-ranking-service",
@@ -398,7 +453,7 @@ describe("API foundation registry", () => {
     expect(surfaceById.get("verification")?.notes).toContain("queue provider SDK binding");
     expect(surfaceById.get("verification")?.notes).toContain("worker lease store metadata");
     expect(surfaceById.get("verification")?.notes).toContain("dead-letter handling");
-    expect(surfaceById.get("task-template")?.notes).toContain("disable_provider_task_templates");
+    expect(surfaceById.get("task-template")?.notes).toContain("without a local or provider-backed catalog fallback");
     expect(surfaceById.get("eligibility")).toMatchObject({
       deferredDependencies: expect.arrayContaining(["scheduler", "worker_queue"]),
       notes: expect.stringContaining("campaign participant repository/read model"),

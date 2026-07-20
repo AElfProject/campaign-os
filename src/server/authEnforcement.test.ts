@@ -365,6 +365,75 @@ describe("auth enforcement", () => {
     });
   });
 
+  it("allows issued Owner/Admin catalog reads while keeping history capability server-derived", () => {
+    const owner = evaluateTrustedLiveAuthorization({
+      context: trustedLiveContext({
+        capabilities: ["campaign:read"],
+        roleIds: ["project_owner"],
+      }),
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "task-templates.list",
+      traceId: "trace-live-catalog-owner",
+    });
+    const admin = evaluateTrustedLiveAuthorization({
+      context: trustedLiveContext({
+        capabilities: ["admin:review"],
+        roleIds: ["review_operator"],
+      }),
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "task-templates.detail",
+      traceId: "trace-live-catalog-admin",
+    });
+    const forgedHistory = evaluateTrustedLiveAuthorization({
+      context: trustedLiveContext({
+        capabilities: ["campaign:read"],
+        roleIds: ["project_owner", "review_operator"],
+      }),
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      routeId: "task-templates.detail",
+      traceId: "trace-live-catalog-forged-history",
+    });
+
+    expect(owner).toMatchObject({
+      allowed: true,
+      matchedRoles: ["project_owner"],
+    });
+    expect(admin).toMatchObject({
+      allowed: true,
+      matchedRoles: ["review_operator"],
+    });
+    expect(forgedHistory).toMatchObject({
+      allowed: true,
+      matchedRoles: ["project_owner"],
+    });
+  });
+
+  it("requires exact current Campaign ownership for catalog adoption", () => {
+    const context = trustedLiveContext({
+      capabilities: ["campaign:write", "task:build"],
+      roleIds: ["project_owner"],
+    });
+    const evaluate = (ownerAddress?: string) => evaluateTrustedLiveAuthorization({
+      campaignId: "campaign-live-a",
+      context,
+      currentMembershipRevision: "membership-v1",
+      now: new Date("2026-07-18T02:01:00.000Z"),
+      ownerAddress,
+      routeId: "campaigns.tasks.from-template",
+      traceId: "trace-live-catalog-adopt",
+    });
+
+    expect(evaluate()).toMatchObject({ allowed: false });
+    expect(evaluate("ELF_other_owner")).toMatchObject({ allowed: false });
+    expect(evaluate("2YVwTrustedParticipant")).toMatchObject({
+      allowed: true,
+      matchedRoles: ["project_owner"],
+    });
+  });
+
   it("requires current server membership as well as the session snapshot for Admin", () => {
     const revision = "admin-membership-sha256:test-revision";
     const withSnapshot = trustedLiveContext({

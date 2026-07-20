@@ -25,7 +25,8 @@ export type ApiServicePortAdapterStatus =
   | "deferred"
   | "disabled"
   | "local_metadata_only"
-  | "local_seeded";
+  | "local_seeded"
+  | "postgres_live";
 
 export interface ApiServicePort {
   deferredCapabilities: ApiRuntimeCapabilityId[];
@@ -65,6 +66,7 @@ export interface ApiServicePortCoverage {
   localMetadataOnlyPortCount: number;
   localSeededPortCount: number;
   portCount: number;
+  postgresLivePortCount: number;
   routeOwnershipCount: number;
   validationIssueCount: number;
 }
@@ -194,19 +196,24 @@ export const apiServicePorts = [
     serviceId: "campaign-service",
   }),
   servicePort({
-    deferredCapabilities: ["production_database", "provider_adapters"],
+    deferredCapabilities: [],
     futureAttachPoints: [
-      "task template repository",
-      "dApp template provider catalog",
-      "wallet compatibility rules engine",
+      "production PostgreSQL connection-pool observability",
+      "schema 0006 rollout automation",
+      "catalog cursor signing-key rotation",
     ],
     id: "task-template-port",
-    localAdapter: "src/domain/campaignService.ts add_campaign_task local handler",
-    notes: "Task drafts are local; live provider-backed template catalogs are deferred.",
-    productionAdapterStatus: "local_seeded",
-    requiresExternalNetwork: false,
-    requiresSecret: false,
-    routeIds: ["campaigns.tasks.add"],
+    localAdapter: "src/server/taskTemplateCatalogHttp.ts with src/server/postgresTaskTemplateCatalogStore.ts and src/server/taskTemplateCatalogService.ts",
+    notes: "Configured mode uses the injected or runtime-owned PostgreSQL catalog service with issued wallet authority and schema 0006. It does not call a third-party provider catalog. campaigns.tasks.add remains an explicit demo/manual compatibility route.",
+    productionAdapterStatus: "postgres_live",
+    requiresExternalNetwork: true,
+    requiresSecret: true,
+    routeIds: [
+      "campaigns.tasks.add",
+      "task-templates.list",
+      "task-templates.detail",
+      "campaigns.tasks.from-template",
+    ],
     serviceId: "task-template-service",
   }),
   servicePort({
@@ -394,7 +401,10 @@ export const validateApiServicePorts = ({
       return;
     }
 
-    if (port.requiresExternalNetwork) {
+    const localReviewAdapter = port.productionAdapterStatus === "local_metadata_only"
+      || port.productionAdapterStatus === "local_seeded";
+
+    if (localReviewAdapter && port.requiresExternalNetwork) {
       issues.push(
         createIssue(
           "LOCAL_REVIEW_REQUIRES_EXTERNAL_NETWORK",
@@ -404,7 +414,7 @@ export const validateApiServicePorts = ({
       );
     }
 
-    if (port.requiresSecret) {
+    if (localReviewAdapter && port.requiresSecret) {
       issues.push(
         createIssue(
           "LOCAL_REVIEW_REQUIRES_SECRET",
@@ -476,6 +486,7 @@ export const createApiServicePortReport = ({
       localMetadataOnlyPortCount: countPortsByStatus(ports, "local_metadata_only"),
       localSeededPortCount: countPortsByStatus(ports, "local_seeded"),
       portCount: ports.length,
+      postgresLivePortCount: countPortsByStatus(ports, "postgres_live"),
       routeOwnershipCount,
       validationIssueCount: validation.issues.length,
     },

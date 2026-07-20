@@ -1760,7 +1760,28 @@ export const evaluateTrustedLiveAuthorization = (
       ? trustedLiveCapabilityByRouteGroup[routeAuth.routeGroup]
       : undefined;
 
-  if (!requiredCapability || !context.capabilities.includes(requiredCapability)) {
+  const catalogRead = routeAuth?.routeGroup === "task_catalog_read";
+  const catalogOwnerRead = catalogRead
+    && context.roleIds.includes("project_owner")
+    && context.capabilities.includes("campaign:read");
+  const catalogAdminRole = catalogRead
+    ? context.roleIds.find((role): role is CampaignOsAdminOperatorRoleId =>
+      (role === "internal_operator" || role === "review_operator")
+      && context.capabilities.includes("admin:review"))
+    : undefined;
+
+  if (
+    catalogRead
+      ? !catalogOwnerRead && !catalogAdminRole
+      : !requiredCapability || !context.capabilities.includes(requiredCapability)
+  ) {
+    return deny("LIVE_AUTH_CAPABILITY_FORBIDDEN", 403, "forbidden");
+  }
+
+  if (
+    options.routeId === "campaigns.tasks.from-template"
+    && !context.capabilities.includes("campaign:write")
+  ) {
     return deny("LIVE_AUTH_CAPABILITY_FORBIDDEN", 403, "forbidden");
   }
 
@@ -1769,7 +1790,7 @@ export const evaluateTrustedLiveAuthorization = (
     : routeAuth?.requiredRoles ?? [];
   const ownerPermitted = requiredRoles.includes("project_owner")
     && context.roleIds.includes("project_owner")
-    && options.ownerAddress === context.subject.walletAddress;
+    && (catalogRead || options.ownerAddress === context.subject.walletAddress);
 
   if (ownerPermitted) {
     return trustedLiveDecision({
@@ -1785,6 +1806,17 @@ export const evaluateTrustedLiveAuthorization = (
   const adminRoles = requiredRoles.filter((role): role is CampaignOsAdminOperatorRoleId =>
     role === "internal_operator" || role === "review_operator"
   );
+
+  if (catalogAdminRole && adminRoles.includes(catalogAdminRole)) {
+    return trustedLiveDecision({
+      allowed: true,
+      code: "LIVE_AUTH_ADMIN_ALLOWED",
+      context,
+      matchedRoles: [catalogAdminRole],
+      status: "allowed",
+      traceId,
+    });
+  }
 
   if (adminRoles.length > 0) {
     const registry = options.adminMembershipRegistry;
