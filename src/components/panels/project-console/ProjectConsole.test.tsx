@@ -75,6 +75,12 @@ import type {
   OwnerTaskResult,
   ProjectOwnerCampaignApiBridge,
 } from "../../../api/projectOwnerCampaignApiBridge";
+import type {
+  TaskTemplateCatalogAdoptResult,
+  TaskTemplateCatalogApiBridge,
+  TaskTemplateCatalogDetailResult,
+  TaskTemplateCatalogListResult,
+} from "../../../api/taskTemplateCatalogApiBridge";
 import { App } from "../../../app/App";
 import {
   campaignDetail,
@@ -91,6 +97,7 @@ import type {
 
 const ownerWorkflowCapture = vi.hoisted(() => ({
   builder: [] as unknown[],
+  builderDraft: [] as unknown[],
   task: [] as unknown[],
 }));
 
@@ -106,6 +113,7 @@ vi.mock("./builder/CampaignBuilderPanel", async (importOriginal) => {
       if (props.ownerWorkflow) {
         ownerWorkflowCapture.builder.push(props.ownerWorkflow);
       }
+      ownerWorkflowCapture.builderDraft.push(props.draft);
 
       return createElement(actual.CampaignBuilderPanel, props);
     },
@@ -3690,8 +3698,67 @@ const createOwnerBridge = (
   ...overrides,
 });
 
+const projectCatalogListSuccess = (): TaskTemplateCatalogListResult => ({
+  data: {
+    catalogSchemaVersion: "task-template-catalog-v1",
+    items: [{
+      adoptionMode: "direct",
+      catalogSchemaVersion: "task-template-catalog-v1",
+      category: "wallet",
+      checksum: "c".repeat(64),
+      content: {
+        description: "Loaded from the protected catalog.",
+        title: "Durable wallet task",
+      },
+      evidenceRule: { source: "WALLET_SESSION" },
+      locale: { requestedLocale: "en-US", resolvedLocale: "en-US", status: "exact" },
+      points: { default: 40, maximum: 80, minimum: 20 },
+      requiredPolicy: { default: true, overrideAllowed: true },
+      riskLevel: "low",
+      status: "active",
+      templateCode: "durable-wallet-task",
+      verificationType: "WALLET",
+      version: 1,
+      walletCompatibility: "ANY",
+    }],
+    page: { limit: 24, nextCursor: null },
+    snapshotAt: "2026-07-20T07:00:00.000Z",
+    totalActive: 1,
+  },
+  httpStatus: 200,
+  ok: true,
+  traceId: "trace-project-catalog-list",
+});
+
+const createProjectCatalogBridge = (
+  overrides: Partial<TaskTemplateCatalogApiBridge> = {},
+): TaskTemplateCatalogApiBridge => ({
+  adopt: vi.fn(async (): Promise<TaskTemplateCatalogAdoptResult> => ({
+    code: "BRIDGE_CLOSED",
+    field: "bridge",
+    ok: false,
+    operation: "adopt",
+    retryable: false,
+    traceId: "trace-project-catalog-adopt-unused",
+  })),
+  close: vi.fn(),
+  detail: vi.fn(async (): Promise<TaskTemplateCatalogDetailResult> => ({
+    code: "BRIDGE_CLOSED",
+    field: "bridge",
+    ok: false,
+    operation: "detail",
+    retryable: false,
+    traceId: "trace-project-catalog-detail-unused",
+  })),
+  list: vi.fn(async () => projectCatalogListSuccess()),
+  ...overrides,
+});
+
 interface OwnerConsoleHarnessProps {
   bridge: ProjectOwnerCampaignApiBridge;
+  catalogBridge?: TaskTemplateCatalogApiBridge;
+  catalogMode?: "configured" | "disabled_demo";
+  catalogSessionKey?: string | null;
   initialCampaignId?: string | null;
   onActiveCampaignIdChange?: (campaignId: string | null) => void;
   onReconnect?: () => void;
@@ -3703,6 +3770,9 @@ interface OwnerConsoleHarnessProps {
 
 const OwnerConsoleHarness = ({
   bridge,
+  catalogBridge,
+  catalogMode = "disabled_demo",
+  catalogSessionKey = null,
   initialCampaignId = null,
   onActiveCampaignIdChange,
   onReconnect,
@@ -3728,6 +3798,9 @@ const OwnerConsoleHarness = ({
       ownerSessionReady={sessionReady}
       projectId="awaken"
       stageReviewMode={stageReviewMode}
+      taskTemplateCatalogBridge={catalogBridge}
+      taskTemplateCatalogMode={catalogMode}
+      taskTemplateCatalogSessionKey={catalogSessionKey}
     />
   );
 };
@@ -3739,6 +3812,10 @@ const latestOwnerBuilderWorkflow = () =>
   ownerWorkflowCapture.builder[
     ownerWorkflowCapture.builder.length - 1
   ] as OwnerCampaignBuilderIntentContract;
+
+const latestOwnerBuilderDraft = () => ownerWorkflowCapture.builderDraft[
+  ownerWorkflowCapture.builderDraft.length - 1
+] as { readonly selectedTaskTemplateIds: readonly string[] };
 
 const latestOwnerTaskWorkflow = () =>
   ownerWorkflowCapture.task[
@@ -4004,6 +4081,7 @@ describe("Project Console Owner campaign orchestration", () => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
     mockedRepositoryWorkflow.mockClear();
     ownerWorkflowCapture.builder.length = 0;
+    ownerWorkflowCapture.builderDraft.length = 0;
     ownerWorkflowCapture.task.length = 0;
   });
 
@@ -4069,6 +4147,104 @@ describe("Project Console Owner campaign orchestration", () => {
       "true",
     );
     expect(getOwnerWorkflow()).toBeInTheDocument();
+  });
+
+  it("uses the configured protected catalog while preserving canonical Campaign tasks", async () => {
+    const list = vi.fn(async () => projectCatalogListSuccess());
+    const catalogBridge = createProjectCatalogBridge({ list });
+    const bridge = createOwnerBridge({
+      getCampaignDetail: vi.fn(async (campaignId) => ownerDetailSuccess(campaignId, ["task-canonical-live"])),
+    });
+
+    render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        catalogBridge={catalogBridge}
+        catalogMode="configured"
+        catalogSessionKey="issued-owner-session-a"
+        initialCampaignId="campaign-a"
+        stageReviewMode
+        workspace="templates"
+      />,
+    );
+
+    expect(await screen.findByText("Durable wallet task")).toBeInTheDocument();
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({
+      locale: "en-US",
+      status: "active",
+    }, expect.any(Object)));
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-live");
+    expect(screen.queryByRole("button", { name: "Add Connect wallet" })).not.toBeInTheDocument();
+  });
+
+  it("keeps configured Catalog failure isolated from canonical Campaign tasks", async () => {
+    const list = vi.fn(async (): Promise<TaskTemplateCatalogListResult> => ({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      field: "catalog",
+      httpStatus: 503,
+      ok: false,
+      operation: "list",
+      retryable: true,
+      traceId: "trace-project-catalog-down",
+    }));
+    const bridge = createOwnerBridge({
+      getCampaignDetail: vi.fn(async (campaignId) => ownerDetailSuccess(campaignId, ["task-survives-catalog"])),
+    });
+
+    render(
+      <OwnerConsoleHarness
+        bridge={bridge}
+        catalogBridge={createProjectCatalogBridge({ list })}
+        catalogMode="configured"
+        catalogSessionKey="issued-owner-session-a"
+        initialCampaignId="campaign-a"
+        stageReviewMode
+        workspace="templates"
+      />,
+    );
+
+    expect(await screen.findByText("TASK_TEMPLATE_CATALOG_UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-survives-catalog");
+  });
+
+  it("removes seeded task-template authority from every configured Create path", async () => {
+    const catalogBridge = createProjectCatalogBridge();
+    const createCampaign = vi.fn(async (
+      _input: CreateOwnerCampaignInput,
+      _context: OwnerSessionContext,
+    ): Promise<OwnerCampaignResult> =>
+      ownerCreateSuccess("campaign-configured-created"));
+
+    render(
+      <OwnerConsoleHarness
+        bridge={createOwnerBridge({ createCampaign })}
+        catalogBridge={catalogBridge}
+        catalogMode="configured"
+        catalogSessionKey="issued-owner-session-a"
+        workspace="create"
+      />,
+    );
+
+    expect(screen.queryByLabelText("Bridge with eBridge")).not.toBeInTheDocument();
+    expect(latestOwnerBuilderDraft().selectedTaskTemplateIds).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate local outline" }));
+    expect(latestOwnerBuilderDraft().selectedTaskTemplateIds).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Reset to Awaken baseline" }));
+    expect(latestOwnerBuilderDraft().selectedTaskTemplateIds).toEqual([]);
+
+    const createButton = within(getOwnerWorkflow()).getByRole("button", {
+      name: "Create campaign",
+    });
+    await waitFor(() => expect(createButton).toBeEnabled());
+    fireEvent.click(createButton);
+    await waitFor(() => expect(createCampaign).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(createCampaign.mock.calls[0][0])).not.toMatch(
+      /"(?:selectedTaskTemplateIds|taskTemplateIds|templateCode)"/u,
+    );
+    expect(catalogBridge.list).not.toHaveBeenCalled();
   });
 
   it("completes the real Owner create intent from the stage Create workspace", async () => {

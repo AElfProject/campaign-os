@@ -12,6 +12,12 @@ import type {
   GenerateOwnerTaskPreviewInput,
   OwnerTaskPreviewSuggestion,
 } from "../../../../api/projectOwnerCampaignApiBridge";
+import type {
+  TaskTemplateCatalogApiBridge,
+  TaskTemplateCatalogTemplate,
+  TaskTemplateVerificationType,
+  TaskTemplateWalletCompatibility,
+} from "../../../../api/taskTemplateCatalogApiBridge";
 import {
   createTaskTemplateFilterSummary,
   defaultTaskTemplateFilters,
@@ -39,10 +45,17 @@ import {
   ownerCampaignGeneratePendingTargetKey,
   type OwnerCampaignTaskIntentContract,
 } from "../ownerCampaignWorkflow";
+import {
+  useTaskTemplateCatalog,
+  type TaskTemplateCatalogFeatureMode,
+} from "./useTaskTemplateCatalog";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
 
 interface TaskTemplateLibraryProps {
+  catalogBridge?: TaskTemplateCatalogApiBridge;
+  catalogMode?: TaskTemplateCatalogFeatureMode;
+  catalogSessionKey?: string | null;
   locale: BusinessContentLocale;
   ownerWorkflow: OwnerCampaignTaskIntentContract;
   templates?: TaskTemplate[];
@@ -160,7 +173,7 @@ const isPersistenceVerificationType = (value: string): value is VerificationType
 const templateCodeFromId = (templateId: string) =>
   templateId.startsWith("tpl-") ? templateId.slice(4) : templateId;
 
-const persistenceTemplateRegistry = new Map<string, AddOwnerCampaignTaskInput>(
+const createPersistenceTemplateRegistry = () => new Map<string, AddOwnerCampaignTaskInput>(
   taskTemplateLibrary.flatMap((template) => {
     if (!isPersistenceVerificationType(template.verificationType)) {
       return [];
@@ -181,12 +194,15 @@ const persistenceTemplateRegistry = new Map<string, AddOwnerCampaignTaskInput>(
   }),
 );
 
-const supportedSuggestionTemplateCodes = new Set(
-  [...persistenceTemplateRegistry.values()].map((entry) => entry.templateCode),
-);
+const createSupportedSuggestionTemplateCodes = (
+  registry: ReadonlyMap<string, AddOwnerCampaignTaskInput>,
+) => new Set([...registry.values()].map((entry) => entry.templateCode));
 
-const taskInputForTemplate = (template: TaskTemplate) => {
-  const registered = persistenceTemplateRegistry.get(template.id);
+const taskInputForTemplate = (
+  template: TaskTemplate,
+  registry: ReadonlyMap<string, AddOwnerCampaignTaskInput>,
+) => {
+  const registered = registry.get(template.id);
 
   if (
     !registered
@@ -205,7 +221,10 @@ const taskInputForTemplate = (template: TaskTemplate) => {
   };
 };
 
-const suggestionDisabledReason = (suggestion: OwnerTaskPreviewSuggestion) => {
+const suggestionDisabledReason = (
+  suggestion: OwnerTaskPreviewSuggestion,
+  supportedTemplateCodes: ReadonlySet<string>,
+) => {
   if (
     suggestion.verificationType === "REFERRAL"
     || suggestion.rejectionCode === referralPersistenceReason
@@ -216,7 +235,7 @@ const suggestionDisabledReason = (suggestion: OwnerTaskPreviewSuggestion) => {
   if (
     !suggestion.adoptable
     || !isPersistenceVerificationType(suggestion.verificationType)
-    || !supportedSuggestionTemplateCodes.has(suggestion.templateCode)
+    || !supportedTemplateCodes.has(suggestion.templateCode)
   ) {
     return unsupportedPersistenceReason;
   }
@@ -580,13 +599,310 @@ const globalCommandDisabledReason = (
   return null;
 };
 
-export const TaskTemplateLibrary = ({
+const catalogVerificationOptions: readonly TaskTemplateVerificationType[] = [
+  "WALLET",
+  "ON_CHAIN",
+  "DAPP_API",
+  "SOCIAL",
+  "MANUAL",
+];
+const catalogWalletOptions: readonly TaskTemplateWalletCompatibility[] = ["ANY", "AA_ONLY", "EOA_ONLY"];
+const catalogLocaleOptions: readonly BusinessContentLocale[] = ["en-US", "zh-CN", "zh-TW"];
+
+const catalogAdoptionLabel = (mode: TaskTemplateCatalogTemplate["adoptionMode"]) => {
+  if (mode === "manual_review") {
+    return "Manual review";
+  }
+  if (mode === "deferred") {
+    return "Deferred";
+  }
+  return "Direct";
+};
+
+const catalogWalletLabel = (wallet: TaskTemplateWalletCompatibility) => {
+  if (wallet === "AA_ONLY") {
+    return "AA only";
+  }
+  if (wallet === "EOA_ONLY") {
+    return "EOA only";
+  }
+  return "Any";
+};
+
+const ConfiguredTaskTemplateLibrary = ({
+  catalogBridge,
+  catalogSessionKey,
+  locale,
+  ownerWorkflow,
+}: Required<Pick<TaskTemplateLibraryProps, "catalogMode">>
+  & Pick<TaskTemplateLibraryProps, "catalogBridge" | "catalogSessionKey" | "locale" | "ownerWorkflow">) => {
+  const labels = copy[locale];
+  const ownerLabels = projectConsoleCopy[locale];
+  const alertRef = useRef<HTMLDivElement>(null);
+  const adoptionButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const adoptionFocusKeyRef = useRef<string | null>(null);
+  const catalog = useTaskTemplateCatalog({
+    bridge: catalogBridge,
+    campaignId: ownerWorkflow.activeCampaignId,
+    locale,
+    mode: "configured",
+    onAdoptedTask: () => ownerWorkflow.onRetryDetail(),
+    sessionKey: catalogSessionKey,
+  });
+  const { state } = catalog;
+  const categories = useMemo(() => [...new Set([
+    ...state.filters.categories,
+    ...(state.page?.items.map((template) => template.category) ?? []),
+  ])].sort((left, right) => left.localeCompare(right)), [state.filters.categories, state.page]);
+
+  useEffect(() => {
+    if ((state.status === "error" || state.status === "stale_adoption") && state.error) {
+      alertRef.current?.focus();
+    }
+  }, [state.error, state.status]);
+
+  useEffect(() => {
+    const focusKey = adoptionFocusKeyRef.current;
+    if (
+      !focusKey
+      || state.status !== "ready"
+      || !state.announcement.startsWith("Catalog updated.")
+    ) {
+      return;
+    }
+    const trigger = adoptionButtonRefs.current.get(focusKey);
+    if (trigger) {
+      trigger.focus();
+      adoptionFocusKeyRef.current = null;
+    }
+  }, [state.announcement, state.page, state.status]);
+
+  const toggleCategory = (category: string) => catalog.setFilters({
+    categories: toggleFilterValue(state.filters.categories, category),
+  });
+  const toggleVerification = (verification: TaskTemplateVerificationType) => catalog.setFilters({
+    verificationTypes: toggleFilterValue(state.filters.verificationTypes, verification),
+  });
+  const toggleWallet = (wallet: TaskTemplateWalletCompatibility) => catalog.setFilters({
+    walletCompatibility: toggleFilterValue(state.filters.walletCompatibility, wallet),
+  });
+  const refreshLabel = state.status === "stale_adoption" ? "Refresh catalog" : "Retry catalog";
+
+  return (
+    <section aria-label={labels.title} className="task-template-catalog" style={sectionStyle}>
+      <div style={headingRowStyle}>
+        <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <h3 style={{ fontSize: 20, lineHeight: 1.2, margin: 0 }}>{labels.title}</h3>
+          <p style={bodyStyle}>
+            <strong>{ownerLabels.ownerTaskActiveCampaign}: </strong>
+            <span title={ownerWorkflow.activeCampaignId ?? ownerLabels.ownerTaskNoActiveCampaign}>
+              {ownerWorkflow.activeCampaignId ?? ownerLabels.ownerTaskNoActiveCampaign}
+            </span>
+          </p>
+        </div>
+        {state.page ? (
+          <strong className="task-template-catalog__count">
+            {state.page.items.length} of {state.page.totalActive} active templates
+          </strong>
+        ) : null}
+      </div>
+
+      <div aria-atomic="true" aria-live="polite" role="status" className="task-template-catalog__status">
+        {state.status === "loading" ? "Loading task templates." : state.announcement}
+      </div>
+
+      <section
+        aria-label={ownerLabels.ownerTaskCanonicalTasks}
+        role="region"
+        className="task-template-catalog__campaign-tasks"
+      >
+        <div style={headingRowStyle}>
+          <h4 style={{ fontSize: 16, lineHeight: 1.25, margin: 0 }}>
+            {ownerLabels.ownerTaskCanonicalTasks}
+          </h4>
+          <span style={{ ...labelStyle, textTransform: "none" }}>{ownerWorkflow.tasks.length}</span>
+        </div>
+        {ownerWorkflow.tasks.length > 0 ? (
+          <ul style={listStyle}>
+            {ownerWorkflow.tasks.map((task) => (
+              <li className="task-template-catalog__campaign-task" data-task-id={task.id} key={task.id}>
+                <strong title={task.id}>{task.id}</strong>
+                <span>{task.templateCode ?? task.verificationType} · {task.points}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p style={emptyStateStyle}>{ownerLabels.ownerTaskNoCanonicalTasks}</p>
+        )}
+      </section>
+
+      <div aria-label={labels.filters} className="task-template-catalog__filters" role="group">
+        <fieldset style={fieldsetStyle}>
+          <legend style={legendStyle}>Category</legend>
+          <div className="task-template-catalog__filter-options">
+            {categories.map((category) => (
+              <label key={category} style={checkboxLabelStyle}>
+                <input
+                  aria-label={`Category ${category}`}
+                  checked={state.filters.categories.includes(category)}
+                  onChange={() => toggleCategory(category)}
+                  style={checkboxStyle}
+                  type="checkbox"
+                />
+                <span>{category}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset style={fieldsetStyle}>
+          <legend style={legendStyle}>{labels.verification}</legend>
+          <div className="task-template-catalog__filter-options">
+            {catalogVerificationOptions.map((verification) => (
+              <label key={verification} style={checkboxLabelStyle}>
+                <input
+                  aria-label={`Verification ${verification}`}
+                  checked={state.filters.verificationTypes.includes(verification)}
+                  onChange={() => toggleVerification(verification)}
+                  style={checkboxStyle}
+                  type="checkbox"
+                />
+                <span>{verification}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset style={fieldsetStyle}>
+          <legend style={legendStyle}>{labels.walletCompatibility}</legend>
+          <div className="task-template-catalog__filter-options">
+            {catalogWalletOptions.map((wallet) => (
+              <label key={wallet} style={checkboxLabelStyle}>
+                <input
+                  aria-label={`Wallet ${catalogWalletLabel(wallet)}`}
+                  checked={state.filters.walletCompatibility.includes(wallet)}
+                  onChange={() => toggleWallet(wallet)}
+                  style={checkboxStyle}
+                  type="checkbox"
+                />
+                <span>{catalogWalletLabel(wallet)}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <label className="task-template-catalog__locale">
+          <span>{labels.languageStatus}</span>
+          <select
+            aria-label="Content language"
+            onChange={(event) => catalog.setFilters({ locale: event.target.value })}
+            style={inputStyle}
+            value={state.filters.locale}
+          >
+            {catalogLocaleOptions.map((contentLocale) => (
+              <option key={contentLocale} value={contentLocale}>{contentLocale}</option>
+            ))}
+          </select>
+        </label>
+        <button onClick={catalog.resetFilters} style={secondaryButtonStyle} type="button">
+          {labels.clearFilters}
+        </button>
+      </div>
+
+      {state.error ? (
+        <div
+          className="task-template-catalog__alert"
+          ref={alertRef}
+          role="alert"
+          tabIndex={-1}
+        >
+          <strong><CircleAlert aria-hidden="true" size={16} strokeWidth={2.4} /> {state.error.code}</strong>
+          <span>Trace ID: {state.error.traceId}</span>
+          <button
+            aria-label={refreshLabel}
+            onClick={catalog.retry}
+            style={secondaryButtonStyle}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={16} strokeWidth={2.4} />
+            {refreshLabel}
+          </button>
+        </div>
+      ) : null}
+
+      {state.status === "empty" ? <p style={emptyStateStyle}>No active task templates.</p> : null}
+      {state.status === "filtered_empty" ? <p style={emptyStateStyle}>{labels.emptyState}</p> : null}
+
+      {state.page?.items.length ? (
+        <div className="task-template-catalog__grid">
+          {state.page.items.map((template) => {
+            const key = `${template.templateCode}:${template.version}`;
+            const pending = state.pendingTemplateKey === key;
+            const localeFact = `${template.locale.requestedLocale ?? template.locale.resolvedLocale} -> ${template.locale.resolvedLocale} · ${template.locale.status}`;
+            return (
+              <article className="task-template-catalog__card" key={key}>
+                <div className="task-template-catalog__card-heading">
+                  <div>
+                    <p style={labelStyle}>{template.category}</p>
+                    <h4>{template.content.title}</h4>
+                  </div>
+                  <span className="task-template-catalog__facts">
+                    <span className="task-template-catalog__status-fact">{template.status}</span>
+                    <span className="task-template-catalog__mode">{catalogAdoptionLabel(template.adoptionMode)}</span>
+                  </span>
+                </div>
+                <p className="task-template-catalog__description">{template.content.description}</p>
+                <dl className="task-template-catalog__metadata">
+                  <div><dt>{labels.verification}</dt><dd>{template.verificationType}</dd></div>
+                  <div><dt>{labels.defaultPoints}</dt><dd>{template.points.default}</dd></div>
+                  <div><dt>{labels.risk}</dt><dd>{template.riskLevel}</dd></div>
+                  <div><dt>{labels.walletCompatibility}</dt><dd>{template.walletCompatibility}</dd></div>
+                </dl>
+                <p className="task-template-catalog__locale-fact">{localeFact}</p>
+                {template.adoptionMode === "direct" && template.status === "active" ? (
+                  <button
+                    aria-label={`Adopt ${template.content.title}`}
+                    disabled={state.pendingTemplateKey !== null}
+                    onClick={() => {
+                      adoptionFocusKeyRef.current = key;
+                      void catalog.adopt(template);
+                    }}
+                    ref={(element) => {
+                      if (element) {
+                        adoptionButtonRefs.current.set(key, element);
+                      } else {
+                        adoptionButtonRefs.current.delete(key);
+                      }
+                    }}
+                    style={{
+                      ...commandButtonStyle,
+                      width: "100%",
+                      ...(state.pendingTemplateKey !== null ? disabledButtonStyle : {}),
+                    }}
+                    type="button"
+                  >
+                    <Check aria-hidden="true" size={16} strokeWidth={2.4} />
+                    {pending ? `Adopting ${template.content.title}` : `Adopt ${template.content.title}`}
+                  </button>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+};
+
+const DemoTaskTemplateLibrary = ({
   locale,
   ownerWorkflow,
   templates = taskTemplateLibrary,
-}: TaskTemplateLibraryProps) => {
+}: Pick<TaskTemplateLibraryProps, "locale" | "ownerWorkflow" | "templates">) => {
   const labels = copy[locale];
   const ownerLabels = projectConsoleCopy[locale];
+  const persistenceTemplateRegistry = useMemo(createPersistenceTemplateRegistry, []);
+  const supportedSuggestionTemplateCodes = useMemo(
+    () => createSupportedSuggestionTemplateCodes(persistenceTemplateRegistry),
+    [persistenceTemplateRegistry],
+  );
   const [filters, setFilters] = useState<TaskTemplateFilterState>(defaultTaskTemplateFilters);
   const [generateForm, setGenerateForm] = useState<GenerateFormState>({
     goal: "",
@@ -924,7 +1240,10 @@ export const TaskTemplateLibrary = ({
           {visiblePreview.suggestions.length > 0 ? (
             <div style={gridStyle}>
               {visiblePreview.suggestions.map((item, index) => {
-                const persistenceReason = suggestionDisabledReason(item);
+                const persistenceReason = suggestionDisabledReason(
+                  item,
+                  supportedSuggestionTemplateCodes,
+                );
                 const reasonId = `owner-task-suggestion-reason-${index}`;
                 const pendingKey = createOwnerCampaignAdoptPendingTargetKey(item);
                 const pending = ownerWorkflow.pendingTargetKey === pendingKey;
@@ -1021,7 +1340,7 @@ export const TaskTemplateLibrary = ({
       {summary.isEmpty ? <p style={emptyStateStyle}>{labels.emptyState}</p> : null}
       <div style={gridStyle}>
         {filteredTemplates.map((template, index) => {
-          const taskInput = taskInputForTemplate(template);
+          const taskInput = taskInputForTemplate(template, persistenceTemplateRegistry);
           const persistenceReason = !taskInput ? unsupportedPersistenceReason : null;
           const reason = globalDisabledReason ?? persistenceReason;
           const reasonId = `owner-task-template-reason-${index}`;
@@ -1102,3 +1421,22 @@ export const TaskTemplateLibrary = ({
     </section>
   );
 };
+
+export const TaskTemplateLibrary = ({
+  catalogBridge,
+  catalogMode = "disabled_demo",
+  catalogSessionKey,
+  locale,
+  ownerWorkflow,
+  templates,
+}: TaskTemplateLibraryProps) => catalogMode === "configured" ? (
+  <ConfiguredTaskTemplateLibrary
+    catalogBridge={catalogBridge}
+    catalogMode={catalogMode}
+    catalogSessionKey={catalogSessionKey}
+    locale={locale}
+    ownerWorkflow={ownerWorkflow}
+  />
+) : (
+  <DemoTaskTemplateLibrary locale={locale} ownerWorkflow={ownerWorkflow} templates={templates} />
+);

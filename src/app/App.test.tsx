@@ -20,6 +20,13 @@ import type {
   ProjectOwnerCampaignApiBridge,
 } from "../api/projectOwnerCampaignApiBridge";
 import type {
+  TaskTemplateCatalogAdoptResult,
+  TaskTemplateCatalogApiBridge,
+  TaskTemplateCatalogDetailResult,
+  TaskTemplateCatalogListResult,
+} from "../api/taskTemplateCatalogApiBridge";
+import * as taskTemplateCatalogApiBridgeModule from "../api/taskTemplateCatalogApiBridge";
+import type {
   ParticipantCampaignListResult,
   ParticipantJourneyApiBridge,
   ParticipantJourneyFailure,
@@ -57,10 +64,43 @@ vi.mock("../api/walletSessionApiBridge", async (importOriginal) => {
   };
 });
 
+const appTaskTemplateCatalogBridge = (
+  list = vi.fn(async (): Promise<TaskTemplateCatalogListResult> => ({
+    code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+    field: "catalog",
+    httpStatus: 503,
+    ok: false,
+    operation: "list",
+    retryable: true,
+    traceId: "trace-app-catalog-unused",
+  })),
+): TaskTemplateCatalogApiBridge => ({
+  adopt: vi.fn(async (): Promise<TaskTemplateCatalogAdoptResult> => ({
+    code: "BRIDGE_CLOSED",
+    field: "bridge",
+    ok: false,
+    operation: "adopt",
+    retryable: false,
+    traceId: "trace-app-catalog-adopt-unused",
+  })),
+  close: vi.fn(),
+  detail: vi.fn(async (): Promise<TaskTemplateCatalogDetailResult> => ({
+    code: "BRIDGE_CLOSED",
+    field: "bridge",
+    ok: false,
+    operation: "detail",
+    retryable: false,
+    traceId: "trace-app-catalog-detail-unused",
+  })),
+  list,
+});
+
 describe("Campaign OS app shell", () => {
   const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
   const defaultDocumentTitle = "aelf Campaign OS";
   const originalApiBaseUrl = import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL;
+  const originalTaskTemplateCatalogEnabled =
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED;
   const originalStageReviewEnabled = import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED;
   const mockedSubmitWalletSessionApiPreview = vi.mocked(submitWalletSessionApiPreview);
   const getProductNavigation = () =>
@@ -330,6 +370,7 @@ describe("Campaign OS app shell", () => {
 
   beforeEach(() => {
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "";
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED = "0";
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = "0";
     mockedSubmitWalletSessionApiPreview.mockReset();
     mockedSubmitWalletSessionApiPreview.mockImplementation(async (input) => {
@@ -347,6 +388,8 @@ describe("Campaign OS app shell", () => {
     pushRoute("/");
     removeDynamicMetadata();
     import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = originalApiBaseUrl;
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED =
+      originalTaskTemplateCatalogEnabled;
     import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED = originalStageReviewEnabled;
   });
 
@@ -397,6 +440,100 @@ describe("Campaign OS app shell", () => {
 
     expect(screen.queryByRole("combobox", { name: "Review identity" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use seeded wallet preview" })).toBeInTheDocument();
+  });
+
+  it("enables the protected task-template catalog only for the exact frontend flag", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED = "1";
+    const catalogBridge = appTaskTemplateCatalogBridge();
+    render(<App taskTemplateCatalogBridge={catalogBridge} />);
+
+    fireEvent.click(within(getProjectWorkspaceNavigation()).getByRole("button", { name: "Templates" }));
+
+    expect(await screen.findByText("BRIDGE_INVALID_INPUT")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Connect wallet" })).not.toBeInTheDocument();
+    expect(catalogBridge.list).not.toHaveBeenCalled();
+  });
+
+  it("keeps an owned catalog bridge live through StrictMode replay and closes it on real unmount", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5194";
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED = "1";
+    let closed = false;
+    const list = vi.fn(async (): Promise<TaskTemplateCatalogListResult> => closed
+      ? {
+          code: "BRIDGE_CLOSED",
+          field: "bridge",
+          ok: false,
+          operation: "list",
+          retryable: false,
+          traceId: "trace-app-catalog-closed",
+        }
+      : {
+          code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+          field: "catalog",
+          httpStatus: 503,
+          ok: false,
+          operation: "list",
+          retryable: true,
+          traceId: "trace-app-catalog-live",
+        });
+    const catalogBridge = appTaskTemplateCatalogBridge(list);
+    vi.mocked(catalogBridge.close).mockImplementation(() => {
+      closed = true;
+    });
+    const factory = vi.spyOn(
+      taskTemplateCatalogApiBridgeModule,
+      "createTaskTemplateCatalogApiBridge",
+    ).mockReturnValue(catalogBridge);
+
+    const view = render(<StrictMode><App /></StrictMode>);
+    expect(factory).toHaveBeenCalled();
+    factory.mockRestore();
+    await act(async () => Promise.resolve());
+
+    expect(catalogBridge.close).not.toHaveBeenCalled();
+    await expect(catalogBridge.list()).resolves.toMatchObject({
+      code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+      traceId: "trace-app-catalog-live",
+    });
+
+    view.unmount();
+    await act(async () => Promise.resolve());
+    expect(catalogBridge.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a replaced owned catalog bridge without closing its borrowed replacement", async () => {
+    import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL = "http://127.0.0.1:5194";
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED = "1";
+    const ownedBridge = appTaskTemplateCatalogBridge();
+    const borrowedBridge = appTaskTemplateCatalogBridge();
+    const factory = vi.spyOn(
+      taskTemplateCatalogApiBridgeModule,
+      "createTaskTemplateCatalogApiBridge",
+    ).mockReturnValue(ownedBridge);
+    const view = render(<App />);
+    factory.mockRestore();
+
+    view.rerender(<App taskTemplateCatalogBridge={borrowedBridge} />);
+    await act(async () => Promise.resolve());
+
+    expect(ownedBridge.close).toHaveBeenCalledTimes(1);
+    expect(borrowedBridge.close).not.toHaveBeenCalled();
+
+    view.unmount();
+    await act(async () => Promise.resolve());
+    expect(ownedBridge.close).toHaveBeenCalledTimes(1);
+    expect(borrowedBridge.close).not.toHaveBeenCalled();
+  });
+
+  it("keeps the explicit seeded demo for non-canonical catalog flag values", () => {
+    import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED = "true";
+    const catalogBridge = appTaskTemplateCatalogBridge();
+    render(<App taskTemplateCatalogBridge={catalogBridge} />);
+
+    fireEvent.click(within(getProjectWorkspaceNavigation()).getByRole("button", { name: "Templates" }));
+
+    expect(screen.getByRole("button", { name: "Add Connect wallet" })).toBeInTheDocument();
+    expect(catalogBridge.list).not.toHaveBeenCalled();
   });
 
   it("keeps stage review navigation on durable product destinations only", () => {

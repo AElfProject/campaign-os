@@ -1,0 +1,224 @@
+.task-template-catalog {
+  contain: inline-size;
+  min-width: 0;
+}
+
+.task-template-catalog :where(button, input, select) {
+  letter-spacing: 0;
+}
+
+.task-template-catalog__count,
+.task-template-catalog__mode,
+.task-template-catalog__status-fact {
+  align-items: center;
+  border: 1px solid #b8c7da;
+  border-radius: 6px;
+  color: #334155;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  min-height: 28px;
+  overflow-wrap: anywhere;
+  padding: 4px 8px;
+}
+
+.task-template-catalog__count {
+  background: #ecfdf5;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.task-template-catalog__status {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+  min-height: 22px;
+  overflow-wrap: anywhere;
+}
+
+.task-template-catalog__campaign-tasks {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-template-catalog__campaign-task {
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 7px 0;
+}
+
+.task-template-catalog__campaign-task > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-template-catalog__filters {
+  align-items: start;
+  background: #f8fbff;
+  border: 1px solid #dbe6f4;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  min-width: 0;
+  padding: 12px;
+}
+
+.task-template-catalog__filter-options {
+  display: grid;
+  gap: 7px;
+  max-height: 152px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.task-template-catalog__locale {
+  color: #334155;
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+  min-width: 0;
+}
+
+.task-template-catalog__alert {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  color: #7c2d12;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 12px;
+}
+
+.task-template-catalog__alert strong {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+}
+
+.task-template-catalog__grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  min-width: 0;
+}
+
+.task-template-catalog__card {
+  background: #ffffff;
+  border: 1px solid #dbe6f4;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.task-template-catalog__card-heading {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.task-template-catalog__card-heading > div {
+  min-width: 0;
+}
+
+.task-template-catalog__card h4 {
+  font-size: 17px;
+  line-height: 1.25;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.task-template-catalog__facts {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.task-template-catalog__status-fact {
+  background: #ecfdf5;
+  border-color: #86efac;
+  color: #166534;
+  text-transform: capitalize;
+}
+
+.task-template-catalog__mode {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.task-template-catalog__description,
+.task-template-catalog__locale-fact {
+  color: #475569;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-template-catalog__metadata {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  min-width: 0;
+}
+
+.task-template-catalog__metadata div {
+  min-width: 0;
+}
+
+.task-template-catalog__metadata dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.task-template-catalog__metadata dd {
+  color: #071426;
+  font-size: 14px;
+  font-weight: 800;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.task-template-catalog :focus-visible {
+  outline: 3px solid #1c64f2;
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .task-template-catalog__filters,
+  .task-template-catalog__grid,
+  .task-template-catalog__metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .task-template-catalog__card-heading,
+  .task-template-catalog__facts {
+    align-items: stretch;
+  }
+
+  .task-template-catalog__facts {
+    width: 100%;
+  }
+}

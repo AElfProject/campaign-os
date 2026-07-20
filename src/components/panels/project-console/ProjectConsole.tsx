@@ -24,6 +24,7 @@ import {
   type OwnerTaskResult,
   type ProjectOwnerCampaignApiBridge,
 } from "../../../api/projectOwnerCampaignApiBridge";
+import type { TaskTemplateCatalogApiBridge } from "../../../api/taskTemplateCatalogApiBridge";
 import {
   backendRuntimeReadinessApiBoundary,
   createBackendRuntimeReadinessApiLoadingState,
@@ -209,6 +210,7 @@ import { PublishGateDecisionCenter } from "./builder/PublishGateDecisionCenter";
 import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
 import { RewardsEligibilityBuilder } from "./builder/RewardsEligibilityBuilder";
 import { TaskTemplateLibrary } from "./builder/TaskTemplateLibrary";
+import type { TaskTemplateCatalogFeatureMode } from "./builder/useTaskTemplateCatalog";
 import { BackendRuntimeReadinessPanel } from "./BackendRuntimeReadinessPanel";
 import { AnalyticsIngestionRuntimePanel } from "./AnalyticsIngestionRuntimePanel";
 import { ContractWriterRuntimePanel } from "./ContractWriterRuntimePanel";
@@ -272,6 +274,9 @@ export interface ProjectConsoleProps {
   ownerSessionReady?: boolean;
   projectId?: string;
   stageReviewMode?: boolean;
+  taskTemplateCatalogBridge?: TaskTemplateCatalogApiBridge;
+  taskTemplateCatalogMode?: TaskTemplateCatalogFeatureMode;
+  taskTemplateCatalogSessionKey?: string | null;
 }
 
 const panelStyle: CSSProperties = {
@@ -499,7 +504,7 @@ const toDateInputValue = (value: string) => value.slice(0, 10);
 
 const toUtcDateTime = (value: string) => (value ? `${value}T00:00:00Z` : "");
 
-const createSeededDraftComposerState = (): DraftComposerState => ({
+const createSeededDraftComposerState = (includeSeededTaskTemplates = true): DraftComposerState => ({
   aiPrompt: seededCampaignDraft.aiPrompt.prompt,
   aiReviewedByHuman: seededCampaignDraft.aiPrompt.reviewedByHuman,
   campaignName: seededCampaignDraft.campaignName["en-US"],
@@ -507,7 +512,9 @@ const createSeededDraftComposerState = (): DraftComposerState => ({
   endDate: toDateInputValue(seededCampaignDraft.timePeriod.endTime),
   objective: seededCampaignDraft.objective,
   projectName: seededCampaignDraft.projectName,
-  selectedTaskTemplateIds: [...seededCampaignDraft.selectedTaskTemplateIds],
+  selectedTaskTemplateIds: includeSeededTaskTemplates
+    ? [...seededCampaignDraft.selectedTaskTemplateIds]
+    : [],
   startDate: toDateInputValue(seededCampaignDraft.timePeriod.startTime),
   supportedLocales: editableCampaignLocales.filter((supportedLocale) =>
     seededCampaignDraft.supportedLocales.includes(supportedLocale),
@@ -2705,8 +2712,12 @@ export const ProjectConsole = ({
   ownerSessionReady = false,
   projectId: configuredProjectId,
   stageReviewMode = false,
+  taskTemplateCatalogBridge,
+  taskTemplateCatalogMode = "disabled_demo",
+  taskTemplateCatalogSessionKey = null,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
+  const catalogConfigured = taskTemplateCatalogMode === "configured";
   const defaultOwnerCampaignBridge = useMemo(
     () => createProjectOwnerCampaignApiBridge({
       config: {
@@ -2719,9 +2730,8 @@ export const ProjectConsole = ({
   const resolvedOwnerCampaignBridge = ownerCampaignBridge ?? defaultOwnerCampaignBridge;
   const resolvedOwnerProjectId = ownerProjectId(campaign, configuredProjectId);
   const [internalActiveWorkspace, setInternalActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
-  const [draftComposer, setDraftComposer] = useState<DraftComposerState>(
-    createSeededDraftComposerState,
-  );
+  const [draftComposer, setDraftComposer] = useState<DraftComposerState>(() =>
+    createSeededDraftComposerState(!catalogConfigured));
   const publishDeliveryApiRequestSeq = useRef(0);
   const pointsRankingLedgerRuntimeApiRequestSeq = useRef(0);
   const objectStorageExportRuntimeApiRequestSeq = useRef(0);
@@ -2733,6 +2743,15 @@ export const ProjectConsole = ({
   const productionDatabaseHandoffReadinessApiRequestSeq = useRef(0);
   const exportDeliveryApiRequestSeq = useRef(0);
   const backendReadinessApiRequestSeq = useRef(0);
+
+  useEffect(() => {
+    if (!catalogConfigured) {
+      return;
+    }
+    setDraftComposer((current) => current.selectedTaskTemplateIds.length === 0
+      ? current
+      : { ...current, selectedTaskTemplateIds: [] });
+  }, [catalogConfigured]);
   const requestedActiveWorkspace = controlledActiveWorkspace ?? internalActiveWorkspace;
   const activeWorkspace = stageReviewMode
     && !stageReviewWorkspaceKeys.some((workspace) => workspace === requestedActiveWorkspace)
@@ -2748,6 +2767,7 @@ export const ProjectConsole = ({
   const contractReview = campaign.reviewItems.find((item) => item.type === "CONTRACT_IMPACT");
   const warningCount = campaign.publishReadiness.warnings.length;
   const blockerCount = campaign.publishReadiness.blockers.length;
+  const seededTaskTemplateIds = catalogConfigured ? [] : seededCampaignDraft.selectedTaskTemplateIds;
   const hasCustomDraftInput =
     draftComposer.aiPrompt !== seededCampaignDraft.aiPrompt.prompt ||
     draftComposer.aiReviewedByHuman !== seededCampaignDraft.aiPrompt.reviewedByHuman ||
@@ -2759,12 +2779,12 @@ export const ProjectConsole = ({
     draftComposer.startDate !== toDateInputValue(seededCampaignDraft.timePeriod.startTime) ||
     draftComposer.targetUsers !== seededCampaignDraft.targetUsers.join(", ") ||
     draftComposer.walletPolicy !== seededCampaignDraft.walletPolicy ||
-    draftComposer.selectedTaskTemplateIds.join("|") !== seededCampaignDraft.selectedTaskTemplateIds.join("|") ||
+    draftComposer.selectedTaskTemplateIds.join("|") !== seededTaskTemplateIds.join("|") ||
     draftComposer.supportedLocales.join("|") !==
       editableCampaignLocales
         .filter((supportedLocale) => seededCampaignDraft.supportedLocales.includes(supportedLocale))
         .join("|");
-  const builderDraft = hasCustomDraftInput
+  const builderDraft = hasCustomDraftInput || catalogConfigured
     ? createLocalCampaignDraft({
         aiPrompt: draftComposer.creationMode === "AI_ASSISTED" ? draftComposer.aiPrompt : undefined,
         aiReviewedByHuman: draftComposer.aiReviewedByHuman,
@@ -2773,7 +2793,7 @@ export const ProjectConsole = ({
         endTime: toUtcDateTime(draftComposer.endDate),
         objective: draftComposer.objective,
         projectName: draftComposer.projectName,
-        selectedTaskTemplateIds: draftComposer.selectedTaskTemplateIds,
+        selectedTaskTemplateIds: catalogConfigured ? [] : draftComposer.selectedTaskTemplateIds,
         startTime: toUtcDateTime(draftComposer.startDate),
         supportedLocales: draftComposer.supportedLocales,
         targetUsers: draftComposer.targetUsers,
@@ -2802,6 +2822,9 @@ export const ProjectConsole = ({
         walletSource: ownerSession.walletSource,
       }
     : null;
+  const resolvedTaskTemplateCatalogSessionKey = taskTemplateCatalogSessionKey
+    ?? ownerContext?.sessionKey
+    ?? null;
   const retryOwnerCampaignDetail = () => {
     if (ownerWorkflowState.activeCampaignId) {
       ownerCampaignOrchestrator.refreshCampaignDetail(ownerWorkflowState.activeCampaignId);
@@ -5645,7 +5668,9 @@ export const ProjectConsole = ({
                       aiReviewedByHuman: false,
                       campaignName: generatedOutline.title,
                       creationMode: "AI_ASSISTED",
-                      selectedTaskTemplateIds: generatedOutline.selectedTaskTemplateIds,
+                      selectedTaskTemplateIds: catalogConfigured
+                        ? []
+                        : generatedOutline.selectedTaskTemplateIds,
                       targetUsers: generatedOutline.targetUsers.join(", "),
                     };
                   })
@@ -5695,6 +5720,7 @@ export const ProjectConsole = ({
             </div>
           </article>
 
+          {!catalogConfigured ? (
           <article style={{ ...cardStyle, minHeight: 0 }}>
             <div style={headingRowStyle}>
               <div>
@@ -5738,6 +5764,7 @@ export const ProjectConsole = ({
               ))}
             </div>
           </article>
+          ) : null}
         </div>
 
         <div style={compactSectionGridStyle}>
@@ -5808,7 +5835,7 @@ export const ProjectConsole = ({
               {copy.createDraftLocalBoundary}
             </p>
             <button
-              onClick={() => setDraftComposer(createSeededDraftComposerState())}
+              onClick={() => setDraftComposer(createSeededDraftComposerState(!catalogConfigured))}
               style={ghostButtonStyle}
               type="button"
             >
@@ -5966,6 +5993,9 @@ export const ProjectConsole = ({
           )}
 
           <OwnerTaskTemplateLibrary
+            catalogBridge={taskTemplateCatalogBridge}
+            catalogMode={taskTemplateCatalogMode}
+            catalogSessionKey={resolvedTaskTemplateCatalogSessionKey}
             locale={locale}
             ownerWorkflow={ownerTaskIntents}
           />

@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { useEffect, useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   taskTemplateLibrary,
@@ -11,6 +13,16 @@ import type {
   OwnerTaskPreview,
   OwnerTaskPreviewSuggestion,
 } from "../../../../api/projectOwnerCampaignApiBridge";
+import type {
+  TaskTemplateCatalogAdoptInput,
+  TaskTemplateCatalogAdoptResult,
+  TaskTemplateCatalogApiBridge,
+  TaskTemplateCatalogDetailResult,
+  TaskTemplateCatalogListResult,
+  TaskTemplateCatalogPage,
+  TaskTemplateCatalogRequestContext,
+  TaskTemplateCatalogTemplate,
+} from "../../../../api/taskTemplateCatalogApiBridge";
 import {
   createOwnerCampaignAddPendingTargetKey,
   createOwnerCampaignAdoptPendingTargetKey,
@@ -215,6 +227,101 @@ const renderLibrary = (
     locale="en-US"
     ownerWorkflow={ownerWorkflow}
     templates={templates}
+  />,
+);
+
+const catalogChecksum = "c".repeat(64);
+const catalogTemplate = (
+  overrides: Partial<TaskTemplateCatalogTemplate> = {},
+): TaskTemplateCatalogTemplate => ({
+  adoptionMode: "direct",
+  catalogSchemaVersion: "task-template-catalog-v1",
+  category: "wallet",
+  checksum: catalogChecksum,
+  content: {
+    description: "Connect a supported wallet.",
+    title: "Connect wallet",
+  },
+  evidenceRule: { source: "WALLET_SESSION" },
+  locale: {
+    requestedLocale: "en-US",
+    resolvedLocale: "en-US",
+    status: "exact",
+  },
+  points: { default: 40, maximum: 80, minimum: 20 },
+  requiredPolicy: { default: true, overrideAllowed: true },
+  riskLevel: "low",
+  status: "active",
+  templateCode: "wallet-connect",
+  verificationType: "WALLET",
+  version: 3,
+  walletCompatibility: "ANY",
+  ...overrides,
+});
+
+const catalogPage = (
+  items: readonly TaskTemplateCatalogTemplate[] = [catalogTemplate()],
+  totalActive = items.length,
+): TaskTemplateCatalogPage => ({
+  catalogSchemaVersion: "task-template-catalog-v1",
+  items,
+  page: { limit: 24, nextCursor: null },
+  snapshotAt: "2026-07-20T07:00:00.000Z",
+  totalActive,
+});
+
+const catalogListSuccess = (
+  data = catalogPage(),
+): TaskTemplateCatalogListResult => ({
+  data,
+  httpStatus: 200,
+  ok: true,
+  traceId: "trace-catalog-component-list",
+});
+
+const catalogDetailFailure = (): TaskTemplateCatalogDetailResult => ({
+  code: "BRIDGE_CLOSED",
+  field: "bridge",
+  ok: false,
+  operation: "detail",
+  retryable: false,
+  traceId: "trace-unused-detail",
+});
+
+const createCatalogBridge = (
+  overrides: Partial<TaskTemplateCatalogApiBridge> = {},
+): TaskTemplateCatalogApiBridge => ({
+  adopt: vi.fn(async (): Promise<TaskTemplateCatalogAdoptResult> => ({
+    data: {
+      campaignId: "campaign-canonical",
+      replayed: false,
+      taskId: "task-api-adopted",
+      templateChecksum: catalogChecksum,
+      templateCode: "wallet-connect",
+      templateVersion: 3,
+    },
+    httpStatus: 201,
+    ok: true,
+    traceId: "trace-catalog-component-adopt",
+  })),
+  close: vi.fn(),
+  detail: vi.fn(async () => catalogDetailFailure()),
+  list: vi.fn(async () => catalogListSuccess()),
+  ...overrides,
+});
+
+const renderConfiguredLibrary = (
+  catalogBridge: TaskTemplateCatalogApiBridge,
+  ownerWorkflow = createWorkflow(),
+  locale: "en-US" | "zh-CN" | "zh-TW" = "en-US",
+) => render(
+  <TaskTemplateLibrary
+    catalogBridge={catalogBridge}
+    catalogMode="configured"
+    catalogSessionKey="issued-owner-session-a"
+    locale={locale}
+    ownerWorkflow={ownerWorkflow}
+    templates={[unknownTemplate()]}
   />,
 );
 
@@ -1041,5 +1148,266 @@ describe("TaskTemplateLibrary", () => {
     expect(adoptButton).toHaveStyle({ width: "100%" });
     expect(screen.getByLabelText("Task template library")).toHaveStyle({ minWidth: "0" });
     expect(addButton).toHaveStyle({ minHeight: "40px", width: "100%" });
+  });
+});
+
+describe("TaskTemplateLibrary configured catalog", () => {
+  it("keeps seeded persistence authority lazy and demo-scoped", () => {
+    const source = readFileSync(resolve(
+      process.cwd(),
+      "src/components/panels/project-console/builder/TaskTemplateLibrary.tsx",
+    ), "utf8");
+
+    expect(source).not.toMatch(/^const persistenceTemplateRegistry\s*=/mu);
+    expect(source).not.toMatch(/^const supportedSuggestionTemplateCodes\s*=/mu);
+    expect(source).toMatch(/const persistenceTemplateRegistry = useMemo\(/u);
+  });
+
+  it("renders loading then exact server count, locale facts and bounded adoption modes", async () => {
+    let resolveList!: (value: TaskTemplateCatalogListResult) => void;
+    const list = vi.fn(() => new Promise<TaskTemplateCatalogListResult>((resolve) => {
+      resolveList = resolve;
+    }));
+    const ownerWorkflow = createWorkflow();
+    renderConfiguredLibrary(createCatalogBridge({ list }), ownerWorkflow);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Loading task templates");
+    await act(async () => resolveList(catalogListSuccess(catalogPage([
+      catalogTemplate(),
+      catalogTemplate({
+        adoptionMode: "manual_review",
+        category: "social",
+        content: {
+          description: "Requires operator review.",
+          title: "Social review task",
+        },
+        locale: {
+          requestedLocale: "en-US",
+          resolvedLocale: "zh-CN",
+          status: "fallback",
+        },
+        templateCode: "social-review",
+        verificationType: "SOCIAL",
+        version: 1,
+      }),
+      catalogTemplate({
+        adoptionMode: "deferred",
+        category: "on-chain",
+        content: {
+          description: "Deferred until provider readiness.",
+          title: "Provider deferred task",
+        },
+        templateCode: "provider-deferred",
+        verificationType: "ON_CHAIN",
+        version: 2,
+      }),
+    ], 17))));
+
+    expect(await screen.findByText("3 of 17 active templates")).toBeInTheDocument();
+    expect(screen.getByText("Social review task")).toBeInTheDocument();
+    expect(screen.getByText("en-US -> zh-CN · fallback")).toBeInTheDocument();
+    expect(screen.getByText("Manual review")).toBeInTheDocument();
+    expect(screen.getByText("Deferred")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adopt Connect wallet" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Adopt Social review task/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Unknown provider task")).not.toBeInTheDocument();
+    expect(ownerWorkflow.onAdd).not.toHaveBeenCalled();
+    expect(ownerWorkflow.onAdopt).not.toHaveBeenCalled();
+  });
+
+  it("sends category, verification, wallet and language filters to the API", async () => {
+    const list = vi.fn(async () => catalogListSuccess(catalogPage([
+      catalogTemplate(),
+      catalogTemplate({
+        category: "social",
+        content: { description: "Share safely.", title: "Social share" },
+        templateCode: "social-share",
+        verificationType: "SOCIAL",
+      }),
+    ], 17)));
+    renderConfiguredLibrary(createCatalogBridge({ list }));
+    await screen.findByText("2 of 17 active templates");
+
+    fireEvent.click(screen.getByLabelText("Category social"));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({
+      categories: ["social"],
+      locale: "en-US",
+      status: "active",
+    }, expect.any(Object)));
+    fireEvent.click(screen.getByLabelText("Verification SOCIAL"));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      categories: ["social"],
+      verificationTypes: ["SOCIAL"],
+    }), expect.any(Object)));
+    fireEvent.click(screen.getByLabelText("Wallet AA only"));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      walletCompatibility: ["AA_ONLY"],
+    }), expect.any(Object)));
+    fireEvent.change(screen.getByLabelText("Content language"), { target: { value: "zh-CN" } });
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({
+      locale: "zh-CN",
+    }), expect.any(Object)));
+    expect(screen.getByText(/17 active templates/)).toBeInTheDocument();
+  });
+
+  it("does not expose Adopt for an inactive direct template", async () => {
+    const inactive = catalogTemplate({
+      content: { description: "Retired catalog entry.", title: "Retired direct task" },
+      status: "retired",
+      templateCode: "retired-direct-task",
+    });
+    renderConfiguredLibrary(createCatalogBridge({
+      list: vi.fn(async () => catalogListSuccess(catalogPage([inactive]))),
+    }));
+
+    expect(await screen.findByText("Retired direct task")).toBeInTheDocument();
+    expect(screen.getByText("retired")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adopt Retired direct task" })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes empty/filtered-empty and retries a safe API error without hiding canonical tasks", async () => {
+    const list = vi.fn()
+      .mockResolvedValueOnce({
+        code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+        field: "catalog",
+        httpStatus: 503,
+        ok: false,
+        operation: "list",
+        retryable: true,
+        traceId: "trace-catalog-down",
+      } satisfies TaskTemplateCatalogListResult)
+      .mockResolvedValueOnce(catalogListSuccess(catalogPage([])))
+      .mockResolvedValueOnce(catalogListSuccess(catalogPage([])));
+    renderConfiguredLibrary(createCatalogBridge({ list }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("TASK_TEMPLATE_CATALOG_UNAVAILABLE");
+    expect(alert).toHaveTextContent("trace-catalog-down");
+    expect(screen.getByRole("region", { name: "Canonical campaign tasks" }))
+      .toHaveTextContent("task-canonical-001");
+    const retry = screen.getByRole("button", { name: "Retry catalog" });
+    retry.focus();
+    fireEvent.click(retry);
+
+    expect(await screen.findByText("No active task templates.")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Wallet AA only"));
+    expect(await screen.findByText("No task templates match the selected filters.")).toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(3);
+  });
+
+  it("adopts direct templates once, sends no canonical fields and refreshes Campaign detail", async () => {
+    let resolveAdopt!: (value: TaskTemplateCatalogAdoptResult) => void;
+    const adopt = vi.fn((
+      _input: TaskTemplateCatalogAdoptInput,
+      _context?: TaskTemplateCatalogRequestContext,
+    ) => new Promise<TaskTemplateCatalogAdoptResult>((resolve) => {
+      resolveAdopt = resolve;
+    }));
+    const list = vi.fn(async () => catalogListSuccess());
+    const ownerWorkflow = createWorkflow();
+    renderConfiguredLibrary(createCatalogBridge({ adopt, list }), ownerWorkflow);
+    const button = await screen.findByRole("button", { name: "Adopt Connect wallet" });
+
+    button.focus();
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(adopt).toHaveBeenCalledTimes(1);
+    expect(adopt.mock.calls[0][0]).toEqual({
+      campaignId: "campaign-canonical",
+      idempotencyKey: expect.stringMatching(/^catalog-adopt-/),
+      template: { templateCode: "wallet-connect", version: 3 },
+    });
+    expect(JSON.stringify(adopt.mock.calls[0][0])).not.toMatch(/checksum|evidence|verificationType|walletCompatibility/);
+    expect(button).toBeDisabled();
+
+    await act(async () => resolveAdopt({
+      data: {
+        campaignId: "campaign-canonical",
+        replayed: false,
+        taskId: "task-api-adopted",
+        templateChecksum: catalogChecksum,
+        templateCode: "wallet-connect",
+        templateVersion: 3,
+      },
+      httpStatus: 201,
+      ok: true,
+      traceId: "trace-catalog-component-adopt",
+    }));
+    await waitFor(() => expect(ownerWorkflow.onRetryDetail).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent(/Catalog updated|Task created/);
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Adopt Connect wallet" }),
+    ).toHaveFocus());
+    expect(ownerWorkflow.onAdd).not.toHaveBeenCalled();
+  });
+
+  it("restores focus after replayed adoption refetches the same server template", async () => {
+    const list = vi.fn(async () => catalogListSuccess());
+    const adopt = vi.fn(async (): Promise<TaskTemplateCatalogAdoptResult> => ({
+      data: {
+        campaignId: "campaign-canonical",
+        replayed: true,
+        taskId: "task-api-adopted",
+        templateChecksum: catalogChecksum,
+        templateCode: "wallet-connect",
+        templateVersion: 3,
+      },
+      httpStatus: 200,
+      ok: true,
+      traceId: "trace-catalog-component-replay",
+    }));
+    renderConfiguredLibrary(createCatalogBridge({ adopt, list }));
+    const button = await screen.findByRole("button", { name: "Adopt Connect wallet" });
+    button.focus();
+
+    fireEvent.click(button);
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Adopt Connect wallet" }),
+    ).toHaveFocus());
+  });
+
+  it("focuses a stale-adoption alert and refreshes without replaying the command", async () => {
+    const adopt = vi.fn(async (): Promise<TaskTemplateCatalogAdoptResult> => ({
+      code: "TASK_TEMPLATE_STALE",
+      field: "template",
+      httpStatus: 422,
+      ok: false,
+      operation: "adopt",
+      retryable: false,
+      traceId: "trace-stale-component",
+    }));
+    const list = vi.fn(async () => catalogListSuccess());
+    renderConfiguredLibrary(createCatalogBridge({ adopt, list }));
+    fireEvent.click(await screen.findByRole("button", { name: "Adopt Connect wallet" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("TASK_TEMPLATE_STALE");
+    expect(alert).toHaveTextContent("trace-stale-component");
+    expect(alert).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(adopt).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders long and markup-like server content as escaped responsive text", async () => {
+    const longTitle = `${"LongCatalogTitle".repeat(14)}<script>privateMarker()</script>`;
+    const list = vi.fn(async () => catalogListSuccess(catalogPage([
+      catalogTemplate({
+        content: {
+          description: "<img src=x onerror=privateMarker()>",
+          title: longTitle,
+        },
+      }),
+    ])));
+    const view = renderConfiguredLibrary(createCatalogBridge({ list }));
+
+    expect(await screen.findByText(longTitle)).toBeInTheDocument();
+    expect(screen.getByText("<img src=x onerror=privateMarker()>" )).toBeInTheDocument();
+    expect(view.container.querySelector("script")).toBeNull();
+    expect(view.container.querySelector("img")).toBeNull();
+    expect(screen.getByLabelText("Task template library")).toHaveClass("task-template-catalog");
   });
 });

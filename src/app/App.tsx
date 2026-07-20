@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "../styles.css";
 import {
   createAdminDurableReviewApiBridge,
   type AdminDurableReviewApiBridge,
@@ -18,6 +19,10 @@ import {
   type ParticipantJourneyMode,
 } from "../api/participantJourneyApiBridge";
 import type { ProjectOwnerCampaignApiBridge } from "../api/projectOwnerCampaignApiBridge";
+import {
+  createTaskTemplateCatalogApiBridge,
+  type TaskTemplateCatalogApiBridge,
+} from "../api/taskTemplateCatalogApiBridge";
 import {
   createWalletSessionApiLoadingState,
   createWalletSessionApiSeededFallbackState,
@@ -256,6 +261,8 @@ const workspaceProductDestinationMap: Partial<Record<ProjectWorkspaceKey, Produc
 const walletSessionApiBaseUrl = () => import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 const isStageReviewModeEnabled = () =>
   import.meta.env.VITE_CAMPAIGN_OS_STAGE_REVIEW_ENABLED === "1";
+const isTaskTemplateCatalogEnabled = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED === "1";
 
 const stageReviewHeaderStyle = `
 [data-app-controls] > button {
@@ -1238,6 +1245,7 @@ export interface AppProps {
   liveWalletAuthentication?: LiveWalletAppComposition;
   ownerCampaignBridge?: ProjectOwnerCampaignApiBridge;
   participantJourneyBridge?: ParticipantJourneyApiBridge;
+  taskTemplateCatalogBridge?: TaskTemplateCatalogApiBridge;
 }
 
 export const App = ({
@@ -1245,6 +1253,7 @@ export const App = ({
   liveWalletAuthentication,
   ownerCampaignBridge,
   participantJourneyBridge,
+  taskTemplateCatalogBridge,
 }: AppProps = {}) => {
   const [defaultLiveWalletRetryEpoch, setDefaultLiveWalletRetryEpoch] = useState(0);
   const defaultLiveWalletAuthentication = useMemo(
@@ -1308,6 +1317,24 @@ export const App = ({
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [activeCampaignSessionKey, setActiveCampaignSessionKey] = useState<string | null>(null);
   const apiBaseUrl = walletSessionApiBaseUrl();
+  const taskTemplateCatalogMode = isTaskTemplateCatalogEnabled()
+    ? "configured" as const
+    : "disabled_demo" as const;
+  const resolvedTaskTemplateCatalogBridge = useMemo(
+    () => taskTemplateCatalogMode === "configured"
+      ? taskTemplateCatalogBridge ?? createTaskTemplateCatalogApiBridge({
+        config: {
+          baseUrl: apiBaseUrl,
+          tracePrefix: "project-console-task-template-catalog",
+        },
+      })
+      : undefined,
+    [apiBaseUrl, taskTemplateCatalogBridge, taskTemplateCatalogMode],
+  );
+  const pendingTaskTemplateCatalogCloseRef = useRef<{
+    bridge: TaskTemplateCatalogApiBridge;
+    cancelled: boolean;
+  } | null>(null);
   const participantJourneyMode: ParticipantJourneyMode = liveWalletMode
     || stageReviewMode
     || apiBaseUrl?.trim()
@@ -1386,6 +1413,34 @@ export const App = ({
     setActiveCampaignId(null);
     setActiveCampaignSessionKey(ownerSessionKey);
   }, [ownerSessionKey]);
+
+  useEffect(() => {
+    const retainedBridge = resolvedTaskTemplateCatalogBridge ?? taskTemplateCatalogBridge;
+    const pendingClose = pendingTaskTemplateCatalogCloseRef.current;
+    if (pendingClose && pendingClose.bridge === retainedBridge) {
+      pendingClose.cancelled = true;
+      pendingTaskTemplateCatalogCloseRef.current = null;
+    }
+
+    if (!resolvedTaskTemplateCatalogBridge || taskTemplateCatalogBridge) {
+      return undefined;
+    }
+    const ownedBridge = resolvedTaskTemplateCatalogBridge;
+
+    return () => {
+      const resourceClose = { bridge: ownedBridge, cancelled: false };
+      pendingTaskTemplateCatalogCloseRef.current = resourceClose;
+      queueMicrotask(() => {
+        if (resourceClose.cancelled) {
+          return;
+        }
+        if (pendingTaskTemplateCatalogCloseRef.current === resourceClose) {
+          pendingTaskTemplateCatalogCloseRef.current = null;
+        }
+        ownedBridge.close();
+      });
+    };
+  }, [resolvedTaskTemplateCatalogBridge, taskTemplateCatalogBridge]);
 
   useEffect(() => () => {
     activeHeaderWalletRequestId.current += 1;
@@ -1602,6 +1657,9 @@ export const App = ({
             ownerCampaignBridge={ownerCampaignBridge}
             ownerSession={ownerSessionReady ? headerWalletSession : null}
             ownerSessionReady={ownerSessionReady}
+            taskTemplateCatalogBridge={resolvedTaskTemplateCatalogBridge}
+            taskTemplateCatalogMode={taskTemplateCatalogMode}
+            taskTemplateCatalogSessionKey={ownerSessionKey}
           />
         ) : activeSurface === "user" ? (
           <UserAppPanel
