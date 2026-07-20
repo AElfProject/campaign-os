@@ -1,7 +1,10 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from "vitest";
-import type { TaskTemplateCatalogVersion } from "../domain/taskTemplateCatalog";
+import {
+  TASK_TEMPLATE_EVIDENCE_RULE_MAX_BYTES,
+  type TaskTemplateCatalogVersion,
+} from "../domain/taskTemplateCatalog";
 import {
   issueResolvedWalletSessionAuthority,
   issueVerifiedWalletSubject,
@@ -143,6 +146,293 @@ const adoptedTask = (
   walletCompatibility: directTemplate.walletCompatibility,
   ...overrides,
 });
+
+type MutableAdoptionResult = Record<string, unknown> & {
+  snapshot: Record<string, unknown>;
+};
+
+type AdoptionResultMutation = (task: MutableAdoptionResult) => unknown;
+
+const taskRequiredFields = [
+  "campaignId",
+  "createdAt",
+  "evidenceRule",
+  "points",
+  "replayed",
+  "required",
+  "snapshot",
+  "taskId",
+  "templateChecksum",
+  "templateCode",
+  "templateVersion",
+  "updatedAt",
+  "verificationType",
+  "walletCompatibility",
+] as const;
+
+const snapshotRequiredFields = [
+  "adoptionMode",
+  "category",
+  "evidenceRule",
+  "points",
+  "required",
+  "templateChecksum",
+  "templateCode",
+  "templateVersion",
+  "verificationType",
+  "version",
+  "walletCompatibility",
+] as const;
+
+const mutableAdoptionResult = (): MutableAdoptionResult => {
+  const task = adoptedTask();
+  return {
+    ...task,
+    snapshot: { ...task.snapshot },
+  };
+};
+
+const omitField = (
+  record: Readonly<Record<string, unknown>>,
+  field: string,
+): Record<string, unknown> => {
+  const result = { ...record };
+  delete result[field];
+  return result;
+};
+
+const replaceSnapshot = (
+  task: MutableAdoptionResult,
+  snapshot: Record<string, unknown>,
+): MutableAdoptionResult => ({ ...task, snapshot });
+
+const malformedAdoptionResults: readonly Readonly<{
+  name: string;
+  mutate: AdoptionResultMutation;
+}>[] = [
+  ...taskRequiredFields.map((field) => ({
+    name: `missing Task.${field}`,
+    mutate: (task: MutableAdoptionResult) => omitField(task, field),
+  })),
+  ...snapshotRequiredFields.map((field) => ({
+    name: `missing snapshot.${field}`,
+    mutate: (task: MutableAdoptionResult) => replaceSnapshot(
+      task,
+      omitField(task.snapshot, field),
+    ),
+  })),
+  ...(["evidenceRule", "points", "required", "verificationType", "walletCompatibility"] as const)
+    .map((field) => ({
+      name: `paired missing Task/snapshot ${field}`,
+      mutate: (task: MutableAdoptionResult) => replaceSnapshot(
+        omitField(task, field) as MutableAdoptionResult,
+        omitField(task.snapshot, field),
+      ),
+    })),
+  {
+    name: "Task field is not enumerable",
+    mutate: (task) => Object.defineProperty({ ...task }, "createdAt", {
+      enumerable: false,
+      value: task.createdAt,
+    }),
+  },
+  {
+    name: "snapshot field is an accessor",
+    mutate: (task) => replaceSnapshot(
+      task,
+      Object.defineProperty({ ...task.snapshot }, "points", {
+        enumerable: true,
+        get: () => directTemplate.points.default,
+      }),
+    ),
+  },
+  { name: "Task campaignId type", mutate: (task) => ({ ...task, campaignId: 1 }) },
+  { name: "Task createdAt type", mutate: (task) => ({ ...task, createdAt: 1 }) },
+  { name: "Task createdAt timestamp", mutate: (task) => ({ ...task, createdAt: "not-an-iso-timestamp" }) },
+  { name: "Task updatedAt timestamp", mutate: (task) => ({ ...task, updatedAt: "2026-07-20T10:00:00Z" }) },
+  {
+    name: "Task timestamp order",
+    mutate: (task) => ({ ...task, createdAt: "2026-07-20T10:00:01.000Z" }),
+  },
+  { name: "Task evidenceRule type", mutate: (task) => ({ ...task, evidenceRule: [] }) },
+  { name: "Task points type", mutate: (task) => ({ ...task, points: "100" }) },
+  { name: "Task points bound", mutate: (task) => ({ ...task, points: Number.MAX_SAFE_INTEGER }) },
+  { name: "Task replayed type", mutate: (task) => ({ ...task, replayed: "false" }) },
+  { name: "Task required type", mutate: (task) => ({ ...task, required: "false" }) },
+  { name: "Task snapshot type", mutate: (task) => ({ ...task, snapshot: [] }) },
+  { name: "Task taskId type", mutate: (task) => ({ ...task, taskId: 1 }) },
+  { name: "Task taskId shape", mutate: (task) => ({ ...task, taskId: "unsafe/task" }) },
+  { name: "Task checksum type", mutate: (task) => ({ ...task, templateChecksum: 1 }) },
+  { name: "Task templateCode type", mutate: (task) => ({ ...task, templateCode: 1 }) },
+  { name: "Task templateVersion type", mutate: (task) => ({ ...task, templateVersion: 1.5 }) },
+  { name: "Task updatedAt type", mutate: (task) => ({ ...task, updatedAt: 1 }) },
+  { name: "Task verificationType type", mutate: (task) => ({ ...task, verificationType: 1 }) },
+  { name: "Task walletCompatibility type", mutate: (task) => ({ ...task, walletCompatibility: 1 }) },
+  {
+    name: "snapshot adoptionMode type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, adoptionMode: 1 }),
+  },
+  {
+    name: "snapshot category type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, category: 1 }),
+  },
+  {
+    name: "snapshot category canonical shape",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, category: "Invalid Category" }),
+  },
+  {
+    name: "snapshot evidenceRule type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, evidenceRule: [] }),
+  },
+  {
+    name: "snapshot points type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, points: "100" }),
+  },
+  {
+    name: "snapshot required type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, required: "false" }),
+  },
+  {
+    name: "snapshot checksum type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, templateChecksum: 1 }),
+  },
+  {
+    name: "snapshot templateCode type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, templateCode: 1 }),
+  },
+  {
+    name: "snapshot templateVersion type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, templateVersion: 1.5 }),
+  },
+  {
+    name: "snapshot verificationType type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, verificationType: 1 }),
+  },
+  {
+    name: "snapshot schema version type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, version: 1 }),
+  },
+  {
+    name: "snapshot walletCompatibility type",
+    mutate: (task) => replaceSnapshot(task, { ...task.snapshot, walletCompatibility: 1 }),
+  },
+  {
+    name: "paired invalid evidenceRule type",
+    mutate: (task) => {
+      const evidenceRule: unknown[] = [];
+      return replaceSnapshot(
+        { ...task, evidenceRule },
+        { ...task.snapshot, evidenceRule },
+      );
+    },
+  },
+  {
+    name: "paired invalid points type",
+    mutate: (task) => replaceSnapshot(
+      { ...task, points: "100" },
+      { ...task.snapshot, points: "100" },
+    ),
+  },
+  {
+    name: "paired invalid required type",
+    mutate: (task) => replaceSnapshot(
+      { ...task, required: "false" },
+      { ...task.snapshot, required: "false" },
+    ),
+  },
+  {
+    name: "paired invalid verificationType value",
+    mutate: (task) => replaceSnapshot(
+      { ...task, verificationType: "UNKNOWN" },
+      { ...task.snapshot, verificationType: "UNKNOWN" },
+    ),
+  },
+  {
+    name: "paired invalid walletCompatibility value",
+    mutate: (task) => replaceSnapshot(
+      { ...task, walletCompatibility: "UNKNOWN" },
+      { ...task.snapshot, walletCompatibility: "UNKNOWN" },
+    ),
+  },
+  {
+    name: "Task/snapshot evidence mismatch",
+    mutate: (task) => ({ ...task, evidenceRule: { source: "sensitive-result-material" } }),
+  },
+  {
+    name: "canonical evidence nested value",
+    mutate: (task) => ({ ...task, evidenceRule: { score: 0.5 } }),
+  },
+  {
+    name: "canonical evidence cycle",
+    mutate: (task) => {
+      const evidenceRule: Record<string, unknown> = {};
+      evidenceRule.self = evidenceRule;
+      return { ...task, evidenceRule };
+    },
+  },
+  {
+    name: "canonical evidence string byte bound",
+    mutate: (task) => ({
+      ...task,
+      evidenceRule: { proof: "x".repeat(4_097) },
+    }),
+  },
+  {
+    name: "canonical evidence total byte bound",
+    mutate: (task) => ({
+      ...task,
+      evidenceRule: Object.fromEntries(
+        Array.from({ length: 5 }, (_, index) => [
+          `proof${index}`,
+          "x".repeat(TASK_TEMPLATE_EVIDENCE_RULE_MAX_BYTES / 4),
+        ]),
+      ),
+    }),
+  },
+  {
+    name: "canonical evidence array bound",
+    mutate: (task) => ({
+      ...task,
+      evidenceRule: { proofs: Array.from({ length: 65 }, () => true) },
+    }),
+  },
+  {
+    name: "canonical evidence object field bound",
+    mutate: (task) => ({
+      ...task,
+      evidenceRule: Object.fromEntries(
+        Array.from({ length: 33 }, (_, index) => [`field${index}`, true]),
+      ),
+    }),
+  },
+  {
+    name: "canonical evidence key byte bound",
+    mutate: (task) => ({
+      ...task,
+      evidenceRule: { ["k".repeat(97)]: true },
+    }),
+  },
+  {
+    name: "canonical evidence depth bound",
+    mutate: (task) => {
+      let evidenceRule: Record<string, unknown> = { accepted: true };
+      for (let depth = 0; depth < 9; depth += 1) {
+        evidenceRule = { nested: evidenceRule };
+      }
+      return { ...task, evidenceRule };
+    },
+  },
+  {
+    name: "canonical evidence accessor",
+    mutate: (task) => ({
+      ...task,
+      evidenceRule: Object.defineProperty({}, "proof", {
+        enumerable: true,
+        get: () => "sensitive-result-material",
+      }),
+    }),
+  },
+];
 
 const fakeStore = (overrides: Partial<TaskTemplateCatalogStore> = {}) => ({
   adopt: vi.fn(async () => adoptedTask()),
@@ -463,6 +753,35 @@ describe("task template catalog service adoption", () => {
     });
     expect(store.adopt).toHaveBeenCalledTimes(1);
   });
+
+  it.each(malformedAdoptionResults)(
+    "rejects malformed adoption result: $name",
+    async ({ mutate }) => {
+      const command = adoptCommand();
+      const store = fakeStore({
+        adopt: vi.fn(async () => mutate(mutableAdoptionResult()) as TaskTemplateAdoptedTask),
+      });
+      const service = createService(store);
+
+      const failure = await service.adopt(command).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(TaskTemplateCatalogError);
+      expect(failure).toMatchObject({
+        code: "TASK_TEMPLATE_CORRUPT",
+        field: "adoptionResult",
+        operation: "adopt",
+        retryable: false,
+        traceId: command.traceId,
+      });
+      expect((failure as Error).stack).toBeUndefined();
+      const serialized = JSON.stringify(failure);
+      expect(serialized).not.toContain(command.idempotencyKey);
+      expect(serialized).not.toContain(command.authority.session.sessionId);
+      expect(serialized).not.toContain(command.authority.session.subject.walletAddress);
+      expect(serialized).not.toContain("sensitive-result-material");
+      expect(store.adopt).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("rejects forbidden client canonical/role fields through strict DTOs", async () => {
     const store = fakeStore();

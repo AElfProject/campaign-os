@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   TASK_TEMPLATE_CODE_MAX_LENGTH,
+  TASK_TEMPLATE_EVIDENCE_RULE_MAX_BYTES,
   TASK_TEMPLATE_POINTS_MAX,
   TASK_TEMPLATE_VERSION_MAX,
   type TaskTemplateCatalogStatus,
@@ -39,11 +40,46 @@ const TEMPLATE_CODE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CATEGORY_PATTERN = /^[a-z][a-z0-9-]*$/;
 const LOCALE_PATTERN = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const CURSOR_MAX_LENGTH = 2_048;
+const CANONICAL_DEPTH_MAX = 8;
+const CANONICAL_ARRAY_MAX_ITEMS = 64;
+const CANONICAL_OBJECT_MAX_FIELDS = 32;
+const CANONICAL_KEY_MAX_BYTES = 96;
+const CANONICAL_STRING_MAX_BYTES = 4_096;
 
 const CATALOG_STATUSES = ["active", "deprecated", "retired"] as const;
 const VERIFICATION_TYPES = ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const;
 const WALLET_COMPATIBILITIES = ["ANY", "AA_ONLY", "EOA_ONLY"] as const;
+const ADOPTION_TASK_FIELDS = new Set([
+  "campaignId",
+  "createdAt",
+  "evidenceRule",
+  "points",
+  "replayed",
+  "required",
+  "snapshot",
+  "taskId",
+  "templateChecksum",
+  "templateCode",
+  "templateVersion",
+  "updatedAt",
+  "verificationType",
+  "walletCompatibility",
+]);
+const ADOPTION_SNAPSHOT_FIELDS = new Set([
+  "adoptionMode",
+  "category",
+  "evidenceRule",
+  "points",
+  "required",
+  "templateChecksum",
+  "templateCode",
+  "templateVersion",
+  "verificationType",
+  "version",
+  "walletCompatibility",
+]);
 
 export interface TaskTemplateCatalogOwnerReadAuthority {
   readonly kind: "owner";
@@ -207,6 +243,20 @@ const strictRecord = (
     }
     throw catalogError("TASK_TEMPLATE_ARGUMENT_INVALID", field, operation, traceId);
   }
+};
+
+const strictCompleteRecord = (
+  value: unknown,
+  requiredFields: ReadonlySet<string>,
+  field: string,
+  operation: TaskTemplateCatalogOperation,
+  traceId: string,
+): InputRecord => {
+  const record = strictRecord(value, requiredFields, field, operation, traceId);
+  if (Reflect.ownKeys(record).length !== requiredFields.size) {
+    throw catalogError("TASK_TEMPLATE_ARGUMENT_INVALID", field, operation, traceId);
+  }
+  return record;
 };
 
 const requiredString = (
@@ -586,49 +636,198 @@ const integrityFailure = (traceId: string): never => {
   throw catalogError("TASK_TEMPLATE_CORRUPT", "adoptionResult", "adopt", traceId);
 };
 
+interface CanonicalRuntimeObject {
+  readonly [key: string]: CanonicalRuntimeValue;
+}
+
+type CanonicalRuntimeValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly CanonicalRuntimeValue[]
+  | CanonicalRuntimeObject;
+
+const utf8ByteLength = (value: string): number =>
+  new TextEncoder().encode(value).byteLength;
+
+const hasUnpairedSurrogate = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 >= value.length) {
+        return true;
+      }
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) {
+        return true;
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const normalizeCanonicalValue = (
+  value: unknown,
+  stack: WeakSet<object>,
+  depth: number,
+  budget: { visited: number },
+  traceId: string,
+): CanonicalRuntimeValue => {
+  budget.visited += 1;
+  if (depth > CANONICAL_DEPTH_MAX || budget.visited > TASK_TEMPLATE_EVIDENCE_RULE_MAX_BYTES) {
+    return integrityFailure(traceId);
+  }
+  if (value === null || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    if (
+      value.length > CANONICAL_STRING_MAX_BYTES
+      || hasUnpairedSurrogate(value)
+      || utf8ByteLength(value) > CANONICAL_STRING_MAX_BYTES
+    ) {
+      return integrityFailure(traceId);
+    }
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      return integrityFailure(traceId);
+    }
+    return value;
+  }
+  if (typeof value !== "object" || stack.has(value)) {
+    return integrityFailure(traceId);
+  }
+
+  stack.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (
+        Object.getPrototypeOf(value) !== Array.prototype
+        || value.length > CANONICAL_ARRAY_MAX_ITEMS
+        || Reflect.ownKeys(value).length !== value.length + 1
+      ) {
+        return integrityFailure(traceId);
+      }
+      const normalized: CanonicalRuntimeValue[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor?.enumerable || !("value" in descriptor)) {
+          return integrityFailure(traceId);
+        }
+        normalized.push(normalizeCanonicalValue(
+          descriptor.value,
+          stack,
+          depth + 1,
+          budget,
+          traceId,
+        ));
+      }
+      return Object.freeze(normalized);
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return integrityFailure(traceId);
+    }
+    const ownKeys = Reflect.ownKeys(value);
+    if (
+      ownKeys.length > CANONICAL_OBJECT_MAX_FIELDS
+      || ownKeys.some((key) => typeof key !== "string")
+    ) {
+      return integrityFailure(traceId);
+    }
+    const keys = (ownKeys as string[]).sort();
+    const normalized: Record<string, CanonicalRuntimeValue> = Object.create(null);
+    for (const key of keys) {
+      if (
+        key.length === 0
+        || key.length > CANONICAL_KEY_MAX_BYTES
+        || hasUnpairedSurrogate(key)
+        || utf8ByteLength(key) > CANONICAL_KEY_MAX_BYTES
+      ) {
+        return integrityFailure(traceId);
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        return integrityFailure(traceId);
+      }
+      normalized[key] = normalizeCanonicalValue(
+        descriptor.value,
+        stack,
+        depth + 1,
+        budget,
+        traceId,
+      );
+    }
+    return Object.freeze(normalized);
+  } finally {
+    stack.delete(value);
+  }
+};
+
+const canonicalEvidenceJson = (value: unknown, traceId: string): string => {
+  const normalized = normalizeCanonicalValue(
+    value,
+    new WeakSet<object>(),
+    0,
+    { visited: 0 },
+    traceId,
+  );
+  if (normalized === null || typeof normalized !== "object" || Array.isArray(normalized)) {
+    return integrityFailure(traceId);
+  }
+  const serialized = JSON.stringify(normalized);
+  if (
+    typeof serialized !== "string"
+    || utf8ByteLength(serialized) > TASK_TEMPLATE_EVIDENCE_RULE_MAX_BYTES
+  ) {
+    return integrityFailure(traceId);
+  }
+  return serialized;
+};
+
+const canonicalTimestampMilliseconds = (value: unknown, traceId: string): number => {
+  if (
+    typeof value !== "string"
+    || value.length !== 24
+    || !ISO_TIMESTAMP_PATTERN.test(value)
+  ) {
+    return integrityFailure(traceId);
+  }
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+    return integrityFailure(traceId);
+  }
+  return milliseconds;
+};
+
+const includesString = <TValue extends string>(
+  allowed: readonly TValue[],
+  value: unknown,
+): value is TValue => typeof value === "string" && (allowed as readonly string[]).includes(value);
+
 const validateAdoptionResult = (
   value: TaskTemplateAdoptedTask,
   request: TaskTemplateAdoptionRequest,
   traceId: string,
 ): TaskTemplateCatalogAdoptResult => {
   try {
-    const task = strictRecord(
+    const task = strictCompleteRecord(
       value,
-      new Set([
-        "campaignId",
-        "createdAt",
-        "evidenceRule",
-        "points",
-        "replayed",
-        "required",
-        "snapshot",
-        "taskId",
-        "templateChecksum",
-        "templateCode",
-        "templateVersion",
-        "updatedAt",
-        "verificationType",
-        "walletCompatibility",
-      ]),
+      ADOPTION_TASK_FIELDS,
       "adoptionResult",
       "adopt",
       traceId,
     );
-    const snapshot = strictRecord(
+    const snapshot = strictCompleteRecord(
       inputValue(task, "snapshot"),
-      new Set([
-        "adoptionMode",
-        "category",
-        "evidenceRule",
-        "points",
-        "required",
-        "templateChecksum",
-        "templateCode",
-        "templateVersion",
-        "verificationType",
-        "version",
-        "walletCompatibility",
-      ]),
+      ADOPTION_SNAPSHOT_FIELDS,
       "adoptionResult",
       "adopt",
       traceId,
@@ -639,12 +838,30 @@ const validateAdoptionResult = (
     const templateCode = inputValue(task, "templateCode");
     const templateVersion = inputValue(task, "templateVersion");
     const templateChecksum = inputValue(task, "templateChecksum");
+    const taskPoints = inputValue(task, "points");
+    const taskRequired = inputValue(task, "required");
+    const taskVerificationType = inputValue(task, "verificationType");
+    const taskWalletCompatibility = inputValue(task, "walletCompatibility");
+    const snapshotCategory = inputValue(snapshot, "category");
+    const snapshotPoints = inputValue(snapshot, "points");
+    const snapshotRequired = inputValue(snapshot, "required");
+    const snapshotVerificationType = inputValue(snapshot, "verificationType");
+    const snapshotWalletCompatibility = inputValue(snapshot, "walletCompatibility");
     if (
-      campaignId !== request.campaignId
+      typeof campaignId !== "string"
+      || !SAFE_IDENTIFIER_PATTERN.test(campaignId)
+      || campaignId !== request.campaignId
       || typeof taskId !== "string"
+      || taskId.length > 160
       || !SAFE_IDENTIFIER_PATTERN.test(taskId)
       || typeof replayed !== "boolean"
+      || typeof templateCode !== "string"
+      || templateCode.length > TASK_TEMPLATE_CODE_MAX_LENGTH
+      || !TEMPLATE_CODE_PATTERN.test(templateCode)
       || templateCode !== request.template.templateCode
+      || !Number.isSafeInteger(templateVersion)
+      || (templateVersion as number) < 1
+      || (templateVersion as number) > TASK_TEMPLATE_VERSION_MAX
       || templateVersion !== request.template.version
       || typeof templateChecksum !== "string"
       || !CHECKSUM_PATTERN.test(templateChecksum)
@@ -653,10 +870,35 @@ const validateAdoptionResult = (
       || inputValue(snapshot, "templateCode") !== templateCode
       || inputValue(snapshot, "templateVersion") !== templateVersion
       || inputValue(snapshot, "templateChecksum") !== templateChecksum
-      || inputValue(snapshot, "points") !== inputValue(task, "points")
-      || inputValue(snapshot, "required") !== inputValue(task, "required")
-      || inputValue(snapshot, "verificationType") !== inputValue(task, "verificationType")
-      || inputValue(snapshot, "walletCompatibility") !== inputValue(task, "walletCompatibility")
+      || typeof snapshotCategory !== "string"
+      || snapshotCategory.length === 0
+      || snapshotCategory.length > 64
+      || !CATEGORY_PATTERN.test(snapshotCategory)
+      || !Number.isSafeInteger(taskPoints)
+      || (taskPoints as number) < 0
+      || (taskPoints as number) > TASK_TEMPLATE_POINTS_MAX
+      || !Number.isSafeInteger(snapshotPoints)
+      || (snapshotPoints as number) < 0
+      || (snapshotPoints as number) > TASK_TEMPLATE_POINTS_MAX
+      || snapshotPoints !== taskPoints
+      || typeof taskRequired !== "boolean"
+      || typeof snapshotRequired !== "boolean"
+      || snapshotRequired !== taskRequired
+      || !includesString(VERIFICATION_TYPES, taskVerificationType)
+      || !includesString(VERIFICATION_TYPES, snapshotVerificationType)
+      || snapshotVerificationType !== taskVerificationType
+      || !includesString(WALLET_COMPATIBILITIES, taskWalletCompatibility)
+      || !includesString(WALLET_COMPATIBILITIES, snapshotWalletCompatibility)
+      || snapshotWalletCompatibility !== taskWalletCompatibility
+    ) {
+      return integrityFailure(traceId);
+    }
+    const createdAt = canonicalTimestampMilliseconds(inputValue(task, "createdAt"), traceId);
+    const updatedAt = canonicalTimestampMilliseconds(inputValue(task, "updatedAt"), traceId);
+    if (
+      createdAt > updatedAt
+      || canonicalEvidenceJson(inputValue(task, "evidenceRule"), traceId)
+        !== canonicalEvidenceJson(inputValue(snapshot, "evidenceRule"), traceId)
     ) {
       return integrityFailure(traceId);
     }
