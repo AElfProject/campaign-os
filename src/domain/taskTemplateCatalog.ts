@@ -220,7 +220,7 @@ const assertPlainRecord = (value: unknown, field: string): Record<string, unknow
 
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor)) {
-      return fail("TASK_TEMPLATE_SHAPE_INVALID", `${field}.${key}`);
+      return fail("TASK_TEMPLATE_SHAPE_INVALID", field);
     }
   }
 
@@ -234,7 +234,7 @@ const assertExactFields = (
 ): void => {
   const unknown = Object.keys(record).find((key) => !allowed.has(key));
   if (unknown) {
-    return fail("TASK_TEMPLATE_UNKNOWN_FIELD", field === "$" ? unknown : `${field}.${unknown}`);
+    return fail("TASK_TEMPLATE_UNKNOWN_FIELD", field);
   }
 };
 
@@ -332,9 +332,19 @@ const canonicalValue = (
     }
 
     const normalized: Record<string, TaskTemplateCanonicalValue> = Object.create(null);
-    for (const key of keys) {
-      assertText(key, `${field}.${key}`, TASK_TEMPLATE_CANONICAL_KEY_MAX_BYTES);
-      normalized[key] = canonicalValue(ownValue(record, key, field), `${field}.${key}`, stack, depth + 1);
+    for (const [index, key] of keys.entries()) {
+      const childField = `${field}[${index}]`;
+      assertText(key, childField, TASK_TEMPLATE_CANONICAL_KEY_MAX_BYTES);
+      const descriptor = Object.getOwnPropertyDescriptor(record, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        return fail("TASK_TEMPLATE_SHAPE_INVALID", childField);
+      }
+      normalized[key] = canonicalValue(
+        descriptor.value,
+        childField,
+        stack,
+        depth + 1,
+      );
     }
 
     return Object.freeze(normalized);
@@ -439,7 +449,28 @@ const normalizeLocales = ({
     return fail("TASK_TEMPLATE_LOCALE_INVALID", "supportedLocales", TASK_TEMPLATE_SUPPORTED_LOCALES_MAX);
   }
 
-  const locales = localesValue.map((locale, index) => {
+  if (
+    Object.getPrototypeOf(localesValue) !== Array.prototype
+    || Reflect.ownKeys(localesValue).length !== localesValue.length + 1
+  ) {
+    return fail(
+      "TASK_TEMPLATE_LOCALE_INVALID",
+      "supportedLocales",
+      TASK_TEMPLATE_SUPPORTED_LOCALES_MAX,
+    );
+  }
+
+  const locales: string[] = [];
+  for (let index = 0; index < localesValue.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(localesValue, String(index));
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      return fail(
+        "TASK_TEMPLATE_LOCALE_INVALID",
+        "supportedLocales",
+        TASK_TEMPLATE_SUPPORTED_LOCALES_MAX,
+      );
+    }
+    const locale = descriptor.value;
     if (
       typeof locale !== "string"
       || hasUnpairedSurrogate(locale)
@@ -448,8 +479,8 @@ const normalizeLocales = ({
     ) {
       return fail("TASK_TEMPLATE_LOCALE_INVALID", `supportedLocales[${index}]`, 35);
     }
-    return locale;
-  });
+    locales.push(locale);
+  }
 
   if (new Set(locales).size !== locales.length) {
     return fail("TASK_TEMPLATE_LOCALE_INVALID", "supportedLocales", TASK_TEMPLATE_SUPPORTED_LOCALES_MAX);
@@ -462,42 +493,43 @@ const normalizeLocales = ({
 
   for (const key of Object.keys(contentRecord)) {
     if (!localeSet.has(key)) {
-      return fail("TASK_TEMPLATE_LOCALE_INVALID", `localizedContent.${key}`);
+      return fail("TASK_TEMPLATE_LOCALE_INVALID", "localizedContent");
     }
   }
   for (const key of Object.keys(readinessRecord)) {
     if (!localeSet.has(key)) {
-      return fail("TASK_TEMPLATE_LOCALE_INVALID", `localeReadiness.${key}`);
+      return fail("TASK_TEMPLATE_LOCALE_INVALID", "localeReadiness");
     }
   }
 
   const localizedContent: Record<string, TaskTemplateLocalizedContent> = {};
   const localeReadiness: Record<string, TaskTemplateLocaleReadiness> = {};
-  for (const locale of locales) {
+  for (const [index, locale] of locales.entries()) {
+    const contentField = `localizedContent[${index}]`;
     const contentDescriptor = Object.getOwnPropertyDescriptor(contentRecord, locale);
     if (!contentDescriptor?.enumerable || !("value" in contentDescriptor)) {
-      return fail("TASK_TEMPLATE_LOCALE_INVALID", `localizedContent.${locale}`);
+      return fail("TASK_TEMPLATE_LOCALE_INVALID", "localizedContent");
     }
-    const content = assertPlainRecord(contentDescriptor.value, `localizedContent.${locale}`);
-    assertExactFields(content, localizedContentFields, `localizedContent.${locale}`);
+    const content = assertPlainRecord(contentDescriptor.value, contentField);
+    assertExactFields(content, localizedContentFields, contentField);
     const title = assertText(
-      ownValue(content, "title", `localizedContent.${locale}`),
-      `localizedContent.${locale}.title`,
+      ownValue(content, "title", contentField),
+      `${contentField}.title`,
       TASK_TEMPLATE_TITLE_MAX_BYTES,
     );
     const description = assertText(
-      ownValue(content, "description", `localizedContent.${locale}`),
-      `localizedContent.${locale}.description`,
+      ownValue(content, "description", contentField),
+      `${contentField}.description`,
       TASK_TEMPLATE_DESCRIPTION_MAX_BYTES,
     );
     localizedContent[locale] = Object.freeze({ description, title });
 
     const readinessDescriptor = Object.getOwnPropertyDescriptor(readinessRecord, locale);
     if (!readinessDescriptor?.enumerable || !("value" in readinessDescriptor)) {
-      return fail("TASK_TEMPLATE_LOCALE_INVALID", `localeReadiness.${locale}`);
+      return fail("TASK_TEMPLATE_LOCALE_INVALID", "localeReadiness");
     }
     if (!localeReadinessValues.has(readinessDescriptor.value as TaskTemplateLocaleReadiness)) {
-      return fail("TASK_TEMPLATE_LOCALE_INVALID", `localeReadiness.${locale}`);
+      return fail("TASK_TEMPLATE_LOCALE_INVALID", `localeReadiness[${index}]`);
     }
     localeReadiness[locale] = readinessDescriptor.value as TaskTemplateLocaleReadiness;
   }

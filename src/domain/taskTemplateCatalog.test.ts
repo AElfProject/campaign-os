@@ -67,6 +67,18 @@ const expectValidationError = (
   }
 };
 
+const captureValidationError = (
+  operation: () => unknown,
+): TaskTemplateCatalogValidationError => {
+  try {
+    operation();
+    throw new Error("Expected task template validation to fail.");
+  } catch (error) {
+    expect(error).toBeInstanceOf(TaskTemplateCatalogValidationError);
+    return error as TaskTemplateCatalogValidationError;
+  }
+};
+
 describe("task template catalog domain", () => {
   it("normalizes, copies, and deeply freezes a valid version", () => {
     const source = validSource();
@@ -121,7 +133,7 @@ describe("task template catalog domain", () => {
     expectValidationError(
       () => createTaskTemplateCatalogVersion({ ...validSource(), unexpected: true } as never),
       "TASK_TEMPLATE_UNKNOWN_FIELD",
-      "unexpected",
+      "$",
     );
 
     const inherited = Object.create({ templateCode: "inherited" }) as TaskTemplateCatalogVersionSource;
@@ -167,7 +179,7 @@ describe("task template catalog domain", () => {
     expectValidationError(
       () => createTaskTemplateCatalogVersion(missingContent),
       "TASK_TEMPLATE_LOCALE_INVALID",
-      "localizedContent.zh-CN",
+      "localizedContent",
     );
 
     const missingReadiness = validSource();
@@ -176,7 +188,7 @@ describe("task template catalog domain", () => {
     expectValidationError(
       () => createTaskTemplateCatalogVersion(missingReadiness),
       "TASK_TEMPLATE_LOCALE_INVALID",
-      "localeReadiness.zh-CN",
+      "localeReadiness",
     );
 
     expectValidationError(
@@ -188,7 +200,7 @@ describe("task template catalog domain", () => {
         },
       }),
       "TASK_TEMPLATE_LOCALE_INVALID",
-      "localeReadiness.zh-TW",
+      "localeReadiness",
     );
   });
 
@@ -215,7 +227,7 @@ describe("task template catalog domain", () => {
         requiredPolicy: { default: true, overrideAllowed: false, unexpected: true } as never,
       }),
       "TASK_TEMPLATE_UNKNOWN_FIELD",
-      "requiredPolicy.unexpected",
+      "requiredPolicy",
     );
   });
 
@@ -226,7 +238,7 @@ describe("task template catalog domain", () => {
     expectValidationError(
       () => createTaskTemplateCatalogVersion(oversizedTitle),
       "TASK_TEMPLATE_TEXT_INVALID",
-      "localizedContent.en-US.title",
+      "localizedContent[0].title",
       160,
     );
 
@@ -251,7 +263,7 @@ describe("task template catalog domain", () => {
     expectValidationError(
       () => createTaskTemplateCatalogVersion({ ...validSource(), evidenceRule: cyclic }),
       "TASK_TEMPLATE_CANONICAL_VALUE_INVALID",
-      "evidenceRule.self",
+      "evidenceRule[0]",
     );
     expectValidationError(
       () => createTaskTemplateCatalogVersion({
@@ -259,7 +271,7 @@ describe("task template catalog domain", () => {
         evidenceRule: { execute: () => true },
       }),
       "TASK_TEMPLATE_CANONICAL_VALUE_INVALID",
-      "evidenceRule.execute",
+      "evidenceRule[0]",
     );
     for (const value of [undefined, Symbol("unsafe"), Number.NaN, 1.5]) {
       expectValidationError(
@@ -268,7 +280,7 @@ describe("task template catalog domain", () => {
           evidenceRule: { value },
         }),
         "TASK_TEMPLATE_CANONICAL_VALUE_INVALID",
-        "evidenceRule.value",
+        "evidenceRule[0]",
       );
     }
     expectValidationError(
@@ -277,7 +289,7 @@ describe("task template catalog domain", () => {
         evidenceRule: { value: "invalid-\ud800" },
       }),
       "TASK_TEMPLATE_TEXT_INVALID",
-      "evidenceRule.value",
+      "evidenceRule[0]",
     );
   });
 
@@ -296,7 +308,7 @@ describe("task template catalog domain", () => {
         evidenceRule: deeplyNested,
       }),
       "TASK_TEMPLATE_CANONICAL_VALUE_INVALID",
-      `evidenceRule${".child".repeat(9)}`,
+      `evidenceRule${"[0]".repeat(9)}`,
       8,
     );
     expectValidationError(
@@ -305,7 +317,7 @@ describe("task template catalog domain", () => {
         evidenceRule: { values: Array.from({ length: 65 }, () => 1) },
       }),
       "TASK_TEMPLATE_CANONICAL_VALUE_INVALID",
-      "evidenceRule.values",
+      "evidenceRule[0]",
       64,
     );
     expectValidationError(
@@ -339,7 +351,7 @@ describe("task template catalog domain", () => {
           evidenceRule: { values },
         }),
         "TASK_TEMPLATE_CANONICAL_VALUE_INVALID",
-        "evidenceRule.values",
+        "evidenceRule[0]",
       );
     }
   });
@@ -460,5 +472,95 @@ describe("task template catalog domain", () => {
       expect(JSON.stringify(error)).not.toContain(rejected);
       expect(String(error)).not.toContain(rejected);
     }
+  });
+
+  it("does not echo caller-controlled object or locale keys in safe errors", () => {
+    const sensitiveKey = "synthetic-sensitive-field-do-not-echo";
+    const topLevel = captureValidationError(() => createTaskTemplateCatalogVersion({
+      ...validSource(),
+      [sensitiveKey]: true,
+    } as never));
+    const evidence = captureValidationError(() => createTaskTemplateCatalogVersion({
+      ...validSource(),
+      evidenceRule: { [sensitiveKey]: () => true },
+    }));
+    const localeKey = captureValidationError(() => createTaskTemplateCatalogVersion({
+      ...validSource(),
+      localizedContent: {
+        ...validSource().localizedContent,
+        [sensitiveKey]: {
+          description: "Sensitive locale description",
+          title: "Sensitive locale title",
+        },
+      },
+    }));
+    const supportedLocale = "en-secret";
+    const missingContent = captureValidationError(() => createTaskTemplateCatalogVersion({
+      ...validSource(),
+      localeReadiness: { [supportedLocale]: "ready" },
+      localizedContent: {},
+      supportedLocales: [supportedLocale],
+    }));
+
+    expect(topLevel).toMatchObject({
+      code: "TASK_TEMPLATE_UNKNOWN_FIELD",
+      field: "$",
+    });
+    expect(evidence.field).toBe("evidenceRule[0]");
+    expect(localeKey.field).toBe("localizedContent");
+    expect(missingContent.field).toBe("localizedContent");
+    for (const error of [topLevel, evidence, localeKey]) {
+      expect(JSON.stringify(error)).not.toContain(sensitiveKey);
+      expect(String(error)).not.toContain(sensitiveKey);
+    }
+    expect(JSON.stringify(missingContent)).not.toContain(supportedLocale);
+    expect(String(missingContent)).not.toContain(supportedLocale);
+  });
+
+  it("rejects malformed supported locale arrays without executing caller code", () => {
+    let callbackCount = 0;
+    const prototypeBearing = ["en-US", "zh-CN"];
+    Object.setPrototypeOf(prototypeBearing, {
+      map: () => {
+        callbackCount += 1;
+        return ["en-US", "zh-CN"];
+      },
+    });
+
+    const accessor = ["en-US", "zh-CN"];
+    Object.defineProperty(accessor, "0", {
+      enumerable: true,
+      get: () => {
+        callbackCount += 1;
+        return "en-US";
+      },
+    });
+
+    const sparse = ["en-US", , "zh-CN"] as string[];
+    const augmented = Object.assign(["en-US", "zh-CN"], { extra: "unsafe" });
+    const symbolBearing = ["en-US", "zh-CN"];
+    Object.defineProperty(symbolBearing, Symbol("unsafe"), {
+      enumerable: true,
+      value: "unsafe",
+    });
+
+    for (const supportedLocales of [
+      prototypeBearing,
+      accessor,
+      sparse,
+      augmented,
+      symbolBearing,
+    ]) {
+      expectValidationError(
+        () => createTaskTemplateCatalogVersion({
+          ...validSource(),
+          supportedLocales,
+        }),
+        "TASK_TEMPLATE_LOCALE_INVALID",
+        "supportedLocales",
+        16,
+      );
+    }
+    expect(callbackCount).toBe(0);
   });
 });
