@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { act, StrictMode, useState } from "react";
+import { act, StrictMode, useState, type ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -59,6 +59,10 @@ import {
   type ProductionDatabaseHandoffReadinessApiState,
 } from "../../../api/productionDatabaseHandoffReadinessApiBridge";
 import type {
+  CampaignAnalyticsApiBridge,
+  CampaignAnalyticsApiResult,
+} from "../../../api/campaignAnalyticsApiBridge";
+import type {
   AddOwnerCampaignTaskInput,
   CreateOwnerCampaignInput,
   GenerateOwnerTaskPreviewInput,
@@ -82,6 +86,12 @@ import {
   walletSessions,
   type NormalizedWalletSession,
 } from "../../../domain";
+import {
+  CAMPAIGN_ANALYTICS_TASK_ROW_LIMIT,
+  CAMPAIGN_ANALYTICS_VERSION,
+  getCampaignAnalyticsMetricDefinition,
+  type CampaignAnalyticsSnapshot,
+} from "../../../domain/campaignAnalytics";
 import { projectConsoleCopy } from "./copy";
 import { ProjectConsole, type ProjectWorkspaceKey } from "./ProjectConsole";
 import type {
@@ -3593,6 +3603,55 @@ const ownerSessionB: NormalizedWalletSession = {
   sessionId: "owner-session-b",
 };
 
+const ownerAnalyticsSnapshot = (
+  campaignId: string,
+  participantCount = 7,
+): CampaignAnalyticsSnapshot => ({
+  accountTypeBreakdown: [],
+  asOf: "2026-07-19T03:00:00.000Z",
+  campaignId,
+  completionBreakdown: {
+    completed: 0,
+    failed: 0,
+    manualReview: 0,
+    pending: 0,
+    verified: 0,
+  },
+  localeBreakdown: [],
+  metrics: [{
+    availability: "available",
+    definition: getCampaignAnalyticsMetricDefinition("participants.unique"),
+    value: participantCount,
+  }],
+  reviewBreakdown: {
+    approved: 0,
+    invalid: 0,
+    needsReview: 0,
+    rejected: 0,
+    stale: 0,
+    totalParticipants: participantCount,
+    unreviewed: participantCount,
+  },
+  sourceCapabilities: [],
+  status: "ready",
+  taskBreakdown: {
+    rowLimit: CAMPAIGN_ANALYTICS_TASK_ROW_LIMIT,
+    rows: [],
+    totalRows: 0,
+    truncated: false,
+  },
+  traceId: `trace-owner-analytics-${campaignId}`,
+  version: CAMPAIGN_ANALYTICS_VERSION,
+});
+
+const ownerAnalyticsSuccess = (
+  campaignId: string,
+  participantCount = 7,
+): CampaignAnalyticsApiResult => {
+  const data = ownerAnalyticsSnapshot(campaignId, participantCount);
+  return { data, httpStatus: 200, ok: true, traceId: data.traceId };
+};
+
 const ownerCampaign = (id: string): OwnerCampaignProjection => ({
   id: id as OwnerCampaignId,
   ownerAddress: ownerSessionA.address,
@@ -4880,5 +4939,164 @@ describe("Project Console Owner campaign orchestration", () => {
     await waitFor(() => expect(bridge.getCampaignDetail).toHaveBeenCalledTimes(1));
 
     expect(mockedRepositoryWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe("Project Console durable Campaign Analytics", () => {
+  const renderAnalyticsConsole = (
+    analyticsBridge: CampaignAnalyticsApiBridge,
+    overrides: Partial<ComponentProps<typeof ProjectConsole>> = {},
+  ) => render(
+    <ProjectConsole
+      activeCampaignId="campaign-analytics-owner"
+      activeWorkspace="analytics"
+      campaignAnalyticsBridge={analyticsBridge}
+      locale="en-US"
+      ownerCampaignBridge={createOwnerBridge()}
+      ownerSession={ownerSessionA}
+      ownerSessionReady
+      projectId="awaken"
+      {...overrides}
+    />,
+  );
+
+  it("reads the current Campaign through the Owner bridge operation without authority claims", async () => {
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => ownerAnalyticsSuccess("campaign-analytics-owner")),
+    };
+    renderAnalyticsConsole(analyticsBridge);
+
+    const workspace = (await screen.findByRole("heading", { name: "Campaign Analytics" }))
+      .closest("section");
+    expect(workspace).not.toBeNull();
+    expect(within(
+      within(workspace as HTMLElement).getByRole("group", { name: "Unique participants" }),
+    ).getByText("7")).toBeInTheDocument();
+    expect(within(workspace as HTMLElement).getByText("2026-07-19T03:00:00.000Z"))
+      .toHaveAttribute("datetime", "2026-07-19T03:00:00.000Z");
+
+    expect(analyticsBridge.read).toHaveBeenCalledTimes(1);
+    const request = vi.mocked(analyticsBridge.read).mock.calls[0][0];
+    expect(request).toEqual({
+      campaignId: "campaign-analytics-owner",
+      signal: expect.any(AbortSignal),
+      surface: "owner",
+    });
+    expect(Object.keys(request).sort()).toEqual(["campaignId", "signal", "surface"]);
+    expect(screen.getByLabelText("Legacy local Analytics preview")).toBeInTheDocument();
+  });
+
+  it("does not read while Analytics is inactive or an issued Owner Session is unavailable", async () => {
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => ownerAnalyticsSuccess("campaign-analytics-owner")),
+    };
+    const view = renderAnalyticsConsole(analyticsBridge, { activeWorkspace: "campaigns" });
+
+    await act(async () => Promise.resolve());
+    expect(analyticsBridge.read).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Campaign Analytics" })).not.toBeInTheDocument();
+
+    view.rerender(
+      <ProjectConsole
+        activeCampaignId="campaign-analytics-owner"
+        activeWorkspace="analytics"
+        campaignAnalyticsBridge={analyticsBridge}
+        locale="en-US"
+        ownerCampaignBridge={createOwnerBridge()}
+        ownerSession={null}
+        ownerSessionReady={false}
+        projectId="awaken"
+      />,
+    );
+
+    const workspace = screen.getByRole("heading", { name: "Campaign Analytics" })
+      .closest("section") as HTMLElement;
+    expect(within(workspace).getByRole("status")).toHaveTextContent(
+      "Connect an issued Owner Session to load durable analytics.",
+    );
+    expect(analyticsBridge.read).not.toHaveBeenCalled();
+  });
+
+  it("isolates an Analytics failure from the Campaign shell and retries with a fresh signal", async () => {
+    const observedSignals: AbortSignal[] = [];
+    const read = vi
+      .fn<CampaignAnalyticsApiBridge["read"]>()
+      .mockImplementationOnce(async (request) => {
+        observedSignals.push(request.signal);
+        return {
+          code: "CAMPAIGN_ANALYTICS_UNAVAILABLE",
+          ok: false,
+          operation: "request",
+          retryable: true,
+          traceId: "trace-owner-analytics-retry",
+        };
+      })
+      .mockImplementationOnce(async (request) => {
+        observedSignals.push(request.signal);
+        return ownerAnalyticsSuccess("campaign-analytics-owner", 9);
+      });
+    renderAnalyticsConsole({ read });
+
+    const workspace = (await screen.findByRole("heading", { name: "Campaign Analytics" }))
+      .closest("section") as HTMLElement;
+    expect(await within(workspace).findByRole("alert")).toHaveTextContent(
+      "trace-owner-analytics-retry",
+    );
+    expect(screen.getByText("Awaken Sprint")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Project Console workspace navigation" }))
+      .toBeInTheDocument();
+
+    fireEvent.click(within(workspace).getByRole("button", { name: "Retry analytics" }));
+
+    const participants = await within(workspace).findByRole("group", {
+      name: "Unique participants",
+    });
+    expect(within(participants).getByText("9")).toBeInTheDocument();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(observedSignals).toHaveLength(2);
+    expect(observedSignals[0]).not.toBe(observedSignals[1]);
+  });
+
+  it("keys Analytics requests by the issued Session epoch without binding the wallet address", async () => {
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => ownerAnalyticsSuccess("campaign-analytics-owner")),
+    };
+    const view = renderAnalyticsConsole(analyticsBridge);
+
+    await waitFor(() => expect(analyticsBridge.read).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <ProjectConsole
+        activeCampaignId="campaign-analytics-owner"
+        activeWorkspace="analytics"
+        campaignAnalyticsBridge={analyticsBridge}
+        locale="en-US"
+        ownerCampaignBridge={createOwnerBridge()}
+        ownerSession={{
+          ...ownerSessionA,
+          address: "ELF_ADDRESS_CHANGED_WITHOUT_SESSION_ROTATION",
+          displayAddress: "ELF...GED",
+        }}
+        ownerSessionReady
+        projectId="awaken"
+      />,
+    );
+
+    await act(async () => Promise.resolve());
+    expect(analyticsBridge.read).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <ProjectConsole
+        activeCampaignId="campaign-analytics-owner"
+        activeWorkspace="analytics"
+        campaignAnalyticsBridge={analyticsBridge}
+        locale="en-US"
+        ownerCampaignBridge={createOwnerBridge()}
+        ownerSession={ownerSessionB}
+        ownerSessionReady
+        projectId="awaken"
+      />,
+    );
+
+    await waitFor(() => expect(analyticsBridge.read).toHaveBeenCalledTimes(2));
   });
 });

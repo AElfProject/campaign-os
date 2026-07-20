@@ -906,6 +906,352 @@ h1 {
   color: #0f172a;
 }
 
+.campaign-analytics-workspace {
+  box-sizing: border-box;
+  display: grid;
+  gap: 14px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 18px 0;
+  border-block: 1px solid #dbe6f4;
+  color: #0f172a;
+}
+
+.campaign-analytics-workspace__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(172px, auto);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.campaign-analytics-workspace__heading {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.campaign-analytics-workspace__heading h3,
+.campaign-analytics-workspace__breakdown h4 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.campaign-analytics-workspace__heading h3 {
+  font-size: 1.25rem;
+  line-height: 1.25;
+}
+
+.campaign-analytics-workspace__freshness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin: 0;
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.campaign-analytics-workspace__freshness time {
+  color: #0f766e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.campaign-analytics-workspace__action-slot {
+  display: flex;
+  width: 172px;
+  min-width: 0;
+  min-height: 40px;
+  justify-content: flex-end;
+}
+
+.campaign-analytics-workspace__action {
+  display: inline-flex;
+  width: 172px;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid #0f766e;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #115e59;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.campaign-analytics-workspace__action:disabled,
+.campaign-analytics-workspace__action[aria-disabled="true"] {
+  border-color: #cbd5e1;
+  color: #64748b;
+  cursor: wait;
+}
+
+.campaign-analytics-workspace__action:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: #f0fdfa;
+}
+
+.campaign-analytics-workspace__action:focus-visible {
+  outline: 3px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+.campaign-analytics-workspace__status {
+  box-sizing: border-box;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  min-height: 48px;
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #0f766e;
+  background: #f0fdfa;
+  color: #134e4a;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.campaign-analytics-workspace[data-state="error"] .campaign-analytics-workspace__status {
+  border-left-color: #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.campaign-analytics-workspace__diagnostic {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  min-width: 0;
+}
+
+.campaign-analytics-workspace__diagnostic > div,
+.campaign-analytics-workspace__fact-list > div,
+.campaign-analytics-workspace__inline-facts > div {
+  min-width: 0;
+}
+
+.campaign-analytics-workspace__diagnostic dt,
+.campaign-analytics-workspace__diagnostic dd,
+.campaign-analytics-workspace__fact-list dt,
+.campaign-analytics-workspace__fact-list dd,
+.campaign-analytics-workspace__inline-facts dt,
+.campaign-analytics-workspace__inline-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.campaign-analytics-workspace__diagnostic dt,
+.campaign-analytics-workspace__fact-list dt,
+.campaign-analytics-workspace__inline-facts dt {
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.campaign-analytics-workspace__state-detail {
+  margin: -4px 0 0;
+  color: #475569;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.campaign-analytics-workspace__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+}
+
+.campaign-analytics-workspace__metric {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: minmax(72px, auto) minmax(58px, auto);
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dbe6f4;
+  border-radius: 6px;
+  background: #f8fbff;
+}
+
+.campaign-analytics-workspace__metric-definition,
+.campaign-analytics-workspace__metric-value {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+}
+
+.campaign-analytics-workspace__metric-definition > span,
+.campaign-analytics-workspace__metric-value > span:last-child {
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.campaign-analytics-workspace__metric-value > span:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+}
+
+.campaign-analytics-workspace__metric-value data {
+  color: #071426;
+  font-size: 1.35rem;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.campaign-analytics-workspace__metric-value small {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.campaign-analytics-workspace__ratio-detail {
+  color: #115e59 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+}
+
+.campaign-analytics-workspace__unavailable {
+  color: #a16207;
+  font-size: 0.9rem;
+}
+
+.campaign-analytics-workspace__breakdowns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+  min-width: 0;
+}
+
+.campaign-analytics-workspace__breakdown {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid #dbe6f4;
+}
+
+.campaign-analytics-workspace__breakdown:first-child {
+  grid-column: 1 / -1;
+}
+
+.campaign-analytics-workspace__breakdown h4 {
+  font-size: 0.98rem;
+  line-height: 1.3;
+}
+
+.campaign-analytics-workspace__task-list,
+.campaign-analytics-workspace__fact-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.campaign-analytics-workspace__task-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(0, 1.6fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.campaign-analytics-workspace__task-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.campaign-analytics-workspace__task-identity > span,
+.campaign-analytics-workspace__task-identity > small {
+  color: #64748b;
+  font-size: 0.74rem;
+}
+
+.campaign-analytics-workspace__inline-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+
+.campaign-analytics-workspace__fact-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.campaign-analytics-workspace__fact-list dd,
+.campaign-analytics-workspace__inline-facts dd {
+  color: #071426;
+  font-weight: 800;
+}
+
+.campaign-analytics-workspace__task-rate {
+  display: grid;
+  gap: 3px;
+}
+
+.campaign-analytics-workspace__notice {
+  margin: 0;
+  color: #92400e;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.campaign-analytics-workspace__wrap {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .campaign-analytics-workspace__header,
+  .campaign-analytics-workspace__breakdowns,
+  .campaign-analytics-workspace__task-row,
+  .campaign-analytics-workspace__inline-facts,
+  .campaign-analytics-workspace__diagnostic {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .campaign-analytics-workspace__action-slot,
+  .campaign-analytics-workspace__action {
+    width: 100%;
+  }
+
+  .campaign-analytics-workspace__breakdown:first-child {
+    grid-column: auto;
+  }
+
+  .campaign-analytics-workspace__metric {
+    grid-template-rows: auto;
+  }
+}
+
 @media (max-width: 760px) {
   .admin-durable-workspace {
     padding-top: 16px;

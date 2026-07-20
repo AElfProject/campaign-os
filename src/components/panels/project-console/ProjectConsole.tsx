@@ -10,6 +10,10 @@ import {
   type CSSProperties,
 } from "react";
 import {
+  createCampaignAnalyticsApiBridge,
+  type CampaignAnalyticsApiBridge,
+} from "../../../api/campaignAnalyticsApiBridge";
+import {
   createProjectOwnerCampaignApiBridge,
   type AddOwnerCampaignTaskInput,
   type CreateOwnerCampaignInput,
@@ -204,6 +208,11 @@ import {
   WalletCompatibilityBadge,
 } from "../../badges/Badges";
 import { CampaignBuilderPanel } from "./builder/CampaignBuilderPanel";
+import {
+  CampaignAnalyticsWorkspace,
+  createCampaignAnalyticsRequestIdentity,
+  type CampaignAnalyticsWorkspaceLoader,
+} from "./CampaignAnalyticsWorkspace";
 import { I18nContractReadiness } from "./builder/I18nContractReadiness";
 import { PublishGateDecisionCenter } from "./builder/PublishGateDecisionCenter";
 import { PublishReadinessPanel } from "./builder/PublishReadinessPanel";
@@ -238,7 +247,7 @@ import {
   type OwnerCampaignWorkflowEvent,
   type OwnerCampaignWorkflowState,
 } from "./ownerCampaignWorkflow";
-import { projectConsoleCopy } from "./copy";
+import { projectCampaignAnalyticsWorkspaceCopy, projectConsoleCopy } from "./copy";
 import { PublishDeliveryReviewPanel } from "./PublishDeliveryReviewPanel";
 
 type BusinessContentLocale = Exclude<SupportedLocale, "ja-JP" | "ko-KR" | "vi-VN" | "id-ID" | "tr-TR" | "es-ES">;
@@ -264,6 +273,7 @@ export interface ProjectConsoleProps {
   campaign?: CampaignShellDetail;
   activeCampaignId?: string | null;
   activeWorkspace?: ProjectWorkspaceKey;
+  campaignAnalyticsBridge?: CampaignAnalyticsApiBridge;
   onActiveCampaignIdChange?: (campaignId: string | null) => void;
   onOwnerReconnect?: () => void;
   onWorkspaceChange?: (workspace: ProjectWorkspaceKey) => void;
@@ -2261,6 +2271,9 @@ const OwnerTaskTemplateLibrary = TaskTemplateLibrary as ComponentType<OwnerTaskT
 const ownerCampaignApiBaseUrl = () =>
   import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
+const campaignAnalyticsApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
+
 const ownerCampaignCopy = {
   "en-US": {
     activeCampaign: "Active campaign",
@@ -2696,6 +2709,7 @@ export const ProjectConsole = ({
   activeCampaignId = null,
   activeWorkspace: controlledActiveWorkspace,
   campaign = campaignDetail,
+  campaignAnalyticsBridge,
   locale,
   onActiveCampaignIdChange,
   onOwnerReconnect,
@@ -2707,6 +2721,7 @@ export const ProjectConsole = ({
   stageReviewMode = false,
 }: ProjectConsoleProps) => {
   const copy = projectConsoleCopy[locale];
+  const campaignAnalyticsCopy = projectCampaignAnalyticsWorkspaceCopy[locale];
   const defaultOwnerCampaignBridge = useMemo(
     () => createProjectOwnerCampaignApiBridge({
       config: {
@@ -2717,6 +2732,19 @@ export const ProjectConsole = ({
     [],
   );
   const resolvedOwnerCampaignBridge = ownerCampaignBridge ?? defaultOwnerCampaignBridge;
+  const defaultCampaignAnalyticsBridge = useMemo(
+    () => createCampaignAnalyticsApiBridge({ baseUrl: campaignAnalyticsApiBaseUrl() ?? "" }),
+    [],
+  );
+  const resolvedCampaignAnalyticsBridge = campaignAnalyticsBridge ?? defaultCampaignAnalyticsBridge;
+  const loadOwnerCampaignAnalytics = useCallback<CampaignAnalyticsWorkspaceLoader>(
+    ({ campaignId, signal }) => resolvedCampaignAnalyticsBridge.read({
+      campaignId,
+      signal,
+      surface: "owner",
+    }),
+    [resolvedCampaignAnalyticsBridge],
+  );
   const resolvedOwnerProjectId = ownerProjectId(campaign, configuredProjectId);
   const [internalActiveWorkspace, setInternalActiveWorkspace] = useState<ProjectWorkspaceKey>("campaigns");
   const [draftComposer, setDraftComposer] = useState<DraftComposerState>(
@@ -2802,6 +2830,26 @@ export const ProjectConsole = ({
         walletSource: ownerSession.walletSource,
       }
     : null;
+  const ownerAnalyticsSessionEpoch = ownerSessionReady
+    ? ownerSession?.sessionId ?? null
+    : null;
+  const ownerAnalyticsActive = activeWorkspace === "analytics";
+  const ownerAnalyticsRequestIdentity = ownerAnalyticsActive
+    ? createCampaignAnalyticsRequestIdentity(
+        "owner",
+        activeCampaignId,
+        ownerAnalyticsSessionEpoch,
+      )
+    : null;
+  const ownerAnalyticsIdleReason = !ownerAnalyticsActive
+    ? "inactive" as const
+    : !activeCampaignId
+      ? "campaign_required" as const
+      : !ownerSessionReady
+        ? "session_required" as const
+        : !ownerAnalyticsSessionEpoch
+          ? "reconnect_required" as const
+          : "session_required" as const;
   const retryOwnerCampaignDetail = () => {
     if (ownerWorkflowState.activeCampaignId) {
       ownerCampaignOrchestrator.refreshCampaignDetail(ownerWorkflowState.activeCampaignId);
@@ -4778,7 +4826,18 @@ export const ProjectConsole = ({
       )}
 
       {activeWorkspace === "analytics" && (
-      <section aria-label={copy.analyticsExportDecision} style={panelStyle}>
+      <>
+      <CampaignAnalyticsWorkspace
+        active={ownerAnalyticsActive}
+        campaignId={activeCampaignId}
+        copy={campaignAnalyticsCopy}
+        idleReason={ownerAnalyticsIdleReason}
+        loader={loadOwnerCampaignAnalytics}
+        locale={locale}
+        requestIdentity={ownerAnalyticsRequestIdentity}
+      />
+      <section aria-label={campaignAnalyticsCopy.legacyPreview} style={panelStyle}>
+        <p style={boundaryStyle}>{campaignAnalyticsCopy.legacyBoundary}</p>
         <div style={headingRowStyle}>
           <div>
             <p style={statLabelStyle}>{copy.analyticsExport}</p>
@@ -5135,6 +5194,7 @@ export const ProjectConsole = ({
 
         <p style={boundaryStyle}>{getLocalizedText(commandCenter.boundary, locale)}</p>
       </section>
+      </>
       )}
 
       {activeWorkspace === "aiContent" && (

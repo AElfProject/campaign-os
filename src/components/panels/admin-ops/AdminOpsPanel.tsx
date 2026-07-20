@@ -1,9 +1,13 @@
-import { useState, type CSSProperties } from "react";
+import { useCallback, useMemo, useState, type CSSProperties } from "react";
 import { CheckCircle2, FileCheck2, FolderOpen, RotateCcw, Save, XCircle, type LucideIcon } from "lucide-react";
 import {
   createAdminDurableReviewApiBridge,
   type AdminDurableReviewApiBridge,
 } from "../../../api/adminDurableReviewApiBridge";
+import {
+  createCampaignAnalyticsApiBridge,
+  type CampaignAnalyticsApiBridge,
+} from "../../../api/campaignAnalyticsApiBridge";
 import { createContractWriterRuntimeApiSeededFallbackState } from "../../../api/contractWriterRuntimeApiBridge";
 import {
   campaignDetail,
@@ -125,11 +129,17 @@ import {
   WalletBadge,
 } from "../../badges/Badges";
 import { ContractWriterRuntimePanel } from "../project-console/ContractWriterRuntimePanel";
-import { adminOpsCopy } from "./copy";
+import {
+  CampaignAnalyticsWorkspace,
+  createCampaignAnalyticsRequestIdentity,
+  type CampaignAnalyticsWorkspaceLoader,
+} from "../project-console/CampaignAnalyticsWorkspace";
+import { adminCampaignAnalyticsWorkspaceCopy, adminOpsCopy } from "./copy";
 import { AdminDurableReviewWorkspace } from "./AdminDurableReviewWorkspace";
 
 interface AdminOpsPanelProps {
   campaign?: CampaignShellDetail;
+  campaignAnalyticsBridge?: CampaignAnalyticsApiBridge;
   durableReviewBridge?: AdminDurableReviewApiBridge;
   locale: SupportedLocale;
   onDurableReviewReconnect?: () => void;
@@ -181,6 +191,9 @@ const rowStyle: CSSProperties = {
 };
 
 const unavailableAdminDurableReviewBridge = createAdminDurableReviewApiBridge();
+
+const campaignAnalyticsApiBaseUrl = () =>
+  import.meta.env.VITE_CAMPAIGN_OS_API_BASE_URL as string | undefined;
 
 const companionEvidenceDetailHeaderStyle: CSSProperties = {
   display: "grid",
@@ -2020,15 +2033,48 @@ const walletCompatibilityLabel = (
   return copy.walletEoaOnly;
 };
 
-export const AdminOpsPanel = ({
-  campaign = campaignDetail,
-  durableReviewBridge = unavailableAdminDurableReviewBridge,
-  locale,
-  onDurableReviewReconnect,
-  session = null,
-  stageReviewMode = false,
-}: AdminOpsPanelProps) => {
+export const AdminOpsPanel = (props: AdminOpsPanelProps) => {
+  const {
+    campaign = campaignDetail,
+    campaignAnalyticsBridge,
+    durableReviewBridge = unavailableAdminDurableReviewBridge,
+    locale,
+    onDurableReviewReconnect,
+    session = null,
+    stageReviewMode = false,
+  } = props;
   const copy = adminOpsCopy[locale];
+  const campaignAnalyticsCopy = adminCampaignAnalyticsWorkspaceCopy[locale];
+  const defaultCampaignAnalyticsBridge = useMemo(
+    () => createCampaignAnalyticsApiBridge({ baseUrl: campaignAnalyticsApiBaseUrl() ?? "" }),
+    [],
+  );
+  const [selectedDurableCampaignId, setSelectedDurableCampaignId] = useState<string | null>(null);
+  const resolvedCampaignAnalyticsBridge = campaignAnalyticsBridge ?? defaultCampaignAnalyticsBridge;
+  const loadAdminCampaignAnalytics = useCallback<CampaignAnalyticsWorkspaceLoader>(
+    ({ campaignId, signal }) => resolvedCampaignAnalyticsBridge.read({
+      campaignId,
+      signal,
+      surface: "admin",
+    }),
+    [resolvedCampaignAnalyticsBridge],
+  );
+  const adminAnalyticsCampaignId = selectedDurableCampaignId;
+  const adminAnalyticsSessionEpoch = session?.issuer?.valid
+    ? session.sessionId
+    : null;
+  const adminAnalyticsRequestIdentity = createCampaignAnalyticsRequestIdentity(
+    "admin",
+    adminAnalyticsCampaignId,
+    adminAnalyticsSessionEpoch,
+  );
+  const adminAnalyticsIdleReason = !session
+    ? "session_required" as const
+    : !adminAnalyticsSessionEpoch
+      ? "reconnect_required" as const
+      : !adminAnalyticsCampaignId
+        ? "campaign_required" as const
+        : "session_required" as const;
   const adminOps = createAdminOpsReadModel(campaign);
   const [walletProviderEvidenceActionResult, setWalletProviderEvidenceActionResult] =
     useState<WalletProviderEvidenceReviewActionResult | null>(null);
@@ -3543,18 +3589,36 @@ export const AdminOpsPanel = ({
     <AdminDurableReviewWorkspace
       bridge={durableReviewBridge}
       locale={locale}
+      onCampaignIdChange={setSelectedDurableCampaignId}
       onReconnect={onDurableReviewReconnect}
       session={session}
     />
   );
+  const campaignAnalyticsWorkspace = (
+    <CampaignAnalyticsWorkspace
+      active
+      campaignId={adminAnalyticsCampaignId}
+      copy={campaignAnalyticsCopy}
+      idleReason={adminAnalyticsIdleReason}
+      loader={loadAdminCampaignAnalytics}
+      locale={locale}
+      requestIdentity={adminAnalyticsRequestIdentity}
+    />
+  );
 
   if (stageReviewMode) {
-    return durableReviewWorkspace;
+    return (
+      <div style={{ display: "grid", gap: 18, minWidth: 0 }}>
+        {durableReviewWorkspace}
+        {campaignAnalyticsWorkspace}
+      </div>
+    );
   }
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
       {durableReviewWorkspace}
+      {campaignAnalyticsWorkspace}
       <div aria-label="Legacy Admin preview" className="admin-ops-legacy-preview">
         <p className="admin-ops-legacy-preview__label">{copy.durableLegacyPreview}</p>
         <section style={panelStyle}>

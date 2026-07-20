@@ -49,6 +49,7 @@ import {
 interface AdminDurableReviewWorkspaceProps {
   bridge: AdminDurableReviewApiBridge;
   locale: SupportedLocale;
+  onCampaignIdChange?: (campaignId: string | null) => void;
   onReconnect?: () => void;
   session: NormalizedWalletSession | null;
 }
@@ -229,6 +230,7 @@ const artifactFreshness = (
 export const AdminDurableReviewWorkspace = ({
   bridge,
   locale,
+  onCampaignIdChange,
   onReconnect,
   session,
 }: AdminDurableReviewWorkspaceProps) => {
@@ -472,6 +474,18 @@ export const AdminDurableReviewWorkspace = ({
       releaseObjectUrl();
     };
   }, [abortAll, applyEvent, loadCampaigns, releaseObjectUrl, sessionKey]);
+
+  const publishedCampaignId = state.identity.sessionKey === sessionKey
+    ? state.identity.selectedCampaignId
+    : null;
+
+  useEffect(() => {
+    onCampaignIdChange?.(publishedCampaignId);
+  }, [onCampaignIdChange, publishedCampaignId]);
+
+  useEffect(() => () => {
+    onCampaignIdChange?.(null);
+  }, [onCampaignIdChange]);
 
   useEffect(() => {
     const previous = observedFailuresRef.current;

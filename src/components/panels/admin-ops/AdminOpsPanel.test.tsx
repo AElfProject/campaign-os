@@ -1,11 +1,16 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAdminDurableReviewApiBridge,
   type AdminCampaignListData,
+  type AdminDurableReviewApiBridge,
   type AdminDurableReviewResult,
 } from "../../../api/adminDurableReviewApiBridge";
+import type {
+  CampaignAnalyticsApiBridge,
+  CampaignAnalyticsApiResult,
+} from "../../../api/campaignAnalyticsApiBridge";
 import { App } from "../../../app/App";
 import {
   campaignDetail,
@@ -13,6 +18,12 @@ import {
   EXPORT_CSV_COLUMNS,
   walletSessions,
 } from "../../../domain";
+import {
+  CAMPAIGN_ANALYTICS_TASK_ROW_LIMIT,
+  CAMPAIGN_ANALYTICS_VERSION,
+  getCampaignAnalyticsMetricDefinition,
+  type CampaignAnalyticsSnapshot,
+} from "../../../domain/campaignAnalytics";
 import { AdminOpsPanel } from "./AdminOpsPanel";
 
 const exportColumnContract = EXPORT_CSV_COLUMNS.join(",");
@@ -30,6 +41,55 @@ const adminStageSession = {
     ttlSeconds: 900,
     valid: true,
   },
+};
+
+const adminAnalyticsSnapshot = (
+  campaignId: string,
+  participantCount = 11,
+): CampaignAnalyticsSnapshot => ({
+  accountTypeBreakdown: [],
+  asOf: "2026-07-19T03:30:00.000Z",
+  campaignId,
+  completionBreakdown: {
+    completed: 0,
+    failed: 0,
+    manualReview: 0,
+    pending: 0,
+    verified: 0,
+  },
+  localeBreakdown: [],
+  metrics: [{
+    availability: "available",
+    definition: getCampaignAnalyticsMetricDefinition("participants.unique"),
+    value: participantCount,
+  }],
+  reviewBreakdown: {
+    approved: 0,
+    invalid: 0,
+    needsReview: 0,
+    rejected: 0,
+    stale: 0,
+    totalParticipants: participantCount,
+    unreviewed: participantCount,
+  },
+  sourceCapabilities: [],
+  status: "ready",
+  taskBreakdown: {
+    rowLimit: CAMPAIGN_ANALYTICS_TASK_ROW_LIMIT,
+    rows: [],
+    totalRows: 0,
+    truncated: false,
+  },
+  traceId: `trace-admin-analytics-${campaignId}`,
+  version: CAMPAIGN_ANALYTICS_VERSION,
+});
+
+const adminAnalyticsSuccess = (
+  campaignId: string,
+  participantCount = 11,
+): CampaignAnalyticsApiResult => {
+  const data = adminAnalyticsSnapshot(campaignId, participantCount);
+  return { data, httpStatus: 200, ok: true, traceId: data.traceId };
 };
 
 const expectVisibleText = (text: string | RegExp) => {
@@ -72,7 +132,7 @@ describe("Admin/Ops shell", () => {
       retryable: true,
       traceId: "trace-admin-stage-failed",
     };
-    const durableReviewBridge = {
+    const durableReviewBridge: AdminDurableReviewApiBridge = {
       ...createAdminDurableReviewApiBridge({
         config: { baseUrl: "https://campaign-os.example.test" },
       }),
@@ -2784,5 +2844,311 @@ describe("Admin/Ops shell", () => {
     expect(within(advancedAnalyticsReview).getAllByText(/事件倉庫/).length).toBeGreaterThan(0);
     expect(within(advancedAnalyticsReview).getAllByText(/billing/).length).toBeGreaterThan(0);
     expect(within(advancedAnalyticsReview).getAllByText(/自動處罰/).length).toBeGreaterThan(0);
+  });
+});
+
+const createAdminAnalyticsSelectorBridge = (
+  selectedCampaignId: string,
+): AdminDurableReviewApiBridge => ({
+  ...createAdminDurableReviewApiBridge(),
+  listCampaigns: vi.fn(async () => ({
+    data: {
+      campaigns: [{
+        campaignId: selectedCampaignId,
+        ownerAddress: "ELF_ADMIN_SELECTOR_OWNER",
+        participantCount: 0,
+        projectId: "project-admin-selector",
+        status: "draft" as const,
+        taskCount: 0,
+      }],
+      repository: {
+        adapterId: "campaign-db-postgresql-adapter" as const,
+        durable: true as const,
+        repositoryId: "campaign-db-runtime",
+        storeId: "campaign-db" as const,
+      },
+    },
+    httpStatus: 200,
+    ok: true as const,
+    traceId: "trace-admin-selector",
+  })),
+  listReviews: vi.fn(async (campaignId: string) => ({
+    data: {
+      campaignId,
+      items: [],
+      summary: {
+        approvedCurrent: 0,
+        needsReviewCurrent: 0,
+        pendingReview: 0,
+        rejectedCurrent: 0,
+        stale: 0,
+        total: 0,
+      },
+    },
+    httpStatus: 200,
+    ok: true as const,
+    traceId: "trace-admin-selector-reviews",
+  })),
+  listWinners: vi.fn(async (campaignId: string) => ({
+    data: {
+      campaignId,
+      rows: [],
+      sourceFingerprint: "a".repeat(64),
+      sourceVersion: "artifact-source-v1" as const,
+    },
+    httpStatus: 200,
+    ok: true as const,
+    traceId: "trace-admin-selector-winners",
+  })),
+  listArtifacts: vi.fn(async (campaignId: string) => ({
+    data: { artifacts: [], campaignId },
+    httpStatus: 200,
+    ok: true as const,
+    traceId: "trace-admin-selector-artifacts",
+  })),
+});
+
+const selectAdminAnalyticsCampaign = async (campaignId: string) => {
+  const campaignSelect = await screen.findByLabelText("Campaign");
+  await screen.findByRole("option", { name: new RegExp(campaignId) });
+  await act(async () => {
+    fireEvent.change(campaignSelect, { target: { value: campaignId } });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+describe("Admin/Ops durable Campaign Analytics", () => {
+  it("uses the durable Admin selector as the live current Campaign", async () => {
+    const selectedCampaignId = "campaign-admin-selected";
+    const durableReviewBridge = createAdminAnalyticsSelectorBridge(selectedCampaignId);
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => adminAnalyticsSuccess(selectedCampaignId)),
+    };
+    render(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={adminStageSession}
+        stageReviewMode
+      />,
+    );
+
+    expect(analyticsBridge.read).not.toHaveBeenCalled();
+    await selectAdminAnalyticsCampaign(selectedCampaignId);
+
+    await waitFor(() => expect(analyticsBridge.read).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(analyticsBridge.read).mock.calls[0][0]).toEqual({
+      campaignId: selectedCampaignId,
+      signal: expect.any(AbortSignal),
+      surface: "admin",
+    });
+    expect(
+      (await screen.findByRole("heading", { name: "Admin Campaign Analytics" }))
+        .closest("section"),
+    ).toHaveClass("campaign-analytics-workspace");
+  });
+
+  it("does not use an explicit legacy Campaign prop as live Analytics authority", async () => {
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => adminAnalyticsSuccess(campaignDetail.id)),
+    };
+    render(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        locale="en-US"
+        session={adminStageSession}
+        stageReviewMode
+      />,
+    );
+
+    const workspace = (await screen.findByRole("heading", { name: "Admin Campaign Analytics" }))
+      .closest("section");
+    expect(workspace).not.toBeNull();
+    expect((workspace as HTMLElement).classList).toContain("campaign-analytics-workspace");
+    expect(screen.getByRole("heading", { name: "Durable Evidence Review" })).toBeInTheDocument();
+    expect(within(workspace as HTMLElement).getByRole("status")).toHaveTextContent(
+      "Select a current Campaign to load durable Admin analytics.",
+    );
+    expect(within(workspace as HTMLElement).queryByText("11")).not.toBeInTheDocument();
+    expect(analyticsBridge.read).not.toHaveBeenCalled();
+  });
+
+  it("keys Admin Analytics by a valid issued Session without binding display metadata", async () => {
+    const durableReviewBridge = createAdminAnalyticsSelectorBridge(campaignDetail.id);
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => adminAnalyticsSuccess(campaignDetail.id)),
+    };
+    const view = render(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={adminStageSession}
+        stageReviewMode
+      />,
+    );
+
+    await selectAdminAnalyticsCampaign(campaignDetail.id);
+    await waitFor(() => expect(analyticsBridge.read).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={{
+          ...adminStageSession,
+          displayAddress: "ELF...GED",
+        }}
+        stageReviewMode
+      />,
+    );
+
+    await act(async () => Promise.resolve());
+    expect(analyticsBridge.read).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={{ ...adminStageSession, sessionId: "admin-session-rotated" }}
+        stageReviewMode
+      />,
+    );
+
+    await waitFor(() => expect(vi.mocked(analyticsBridge.read).mock.calls[0][0].signal.aborted)
+      .toBe(true));
+    await selectAdminAnalyticsCampaign(campaignDetail.id);
+    await waitFor(() => expect(analyticsBridge.read).toHaveBeenCalledTimes(2));
+
+    view.rerender(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={{
+          ...adminStageSession,
+          issuer: { ...adminStageSession.issuer, valid: false },
+        }}
+        stageReviewMode
+      />,
+    );
+
+    const workspace = screen.getByRole("heading", { name: "Admin Campaign Analytics" })
+      .closest("section") as HTMLElement;
+    expect(await within(workspace).findByRole("status")).toHaveTextContent(
+      "Reconnect an issued Admin Session to load durable analytics.",
+    );
+    expect(analyticsBridge.read).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(analyticsBridge.read).mock.calls[1][0].signal.aborted).toBe(true);
+  });
+
+  it("does not use the legacy seeded Campaign as live Analytics authority", async () => {
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn(async () => adminAnalyticsSuccess(campaignDetail.id)),
+    };
+    render(
+      <AdminOpsPanel
+        campaignAnalyticsBridge={analyticsBridge}
+        locale="en-US"
+        session={adminStageSession}
+      />,
+    );
+
+    const workspace = (await screen.findByRole("heading", { name: "Admin Campaign Analytics" }))
+      .closest("section") as HTMLElement;
+    expect(within(workspace).getByRole("status")).toHaveTextContent(
+      "Select a current Campaign to load durable Admin analytics.",
+    );
+    expect(analyticsBridge.read).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Legacy Admin preview")).toBeInTheDocument();
+  });
+
+  it("renders a typed safe denial without leaking totals or blocking other Admin workflows", async () => {
+    const durableReviewBridge = createAdminAnalyticsSelectorBridge(campaignDetail.id);
+    const analyticsBridge: CampaignAnalyticsApiBridge = {
+      read: vi.fn<CampaignAnalyticsApiBridge["read"]>(async () => ({
+        code: "AUTH_FORBIDDEN",
+        ok: false,
+        operation: "request",
+        retryable: false,
+        traceId: "trace-admin-analytics-denied",
+      })),
+    };
+    render(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={analyticsBridge}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={adminStageSession}
+      />,
+    );
+
+    await selectAdminAnalyticsCampaign(campaignDetail.id);
+    const workspace = (await screen.findByRole("heading", { name: "Admin Campaign Analytics" }))
+      .closest("section") as HTMLElement;
+    const alert = await within(workspace).findByRole("alert");
+    expect(alert).toHaveTextContent("AUTH_FORBIDDEN");
+    expect(alert).toHaveTextContent("trace-admin-analytics-denied");
+    expect(alert).toHaveTextContent("Reconnect or change Admin access before retrying.");
+    expect(within(workspace).queryByText("11")).not.toBeInTheDocument();
+    const legacyPreview = screen.getByLabelText("Legacy Admin preview");
+    expect(within(legacyPreview).getByRole("heading", { name: "Review queue" }))
+      .toBeInTheDocument();
+  });
+
+  it("retries a retryable Admin failure with a new request signal", async () => {
+    const durableReviewBridge = createAdminAnalyticsSelectorBridge(campaignDetail.id);
+    const signals: AbortSignal[] = [];
+    const read = vi
+      .fn<CampaignAnalyticsApiBridge["read"]>()
+      .mockImplementationOnce(async (request) => {
+        signals.push(request.signal);
+        return {
+          code: "CAMPAIGN_ANALYTICS_UNAVAILABLE",
+          ok: false,
+          operation: "request",
+          retryable: true,
+          traceId: "trace-admin-analytics-retry",
+        };
+      })
+      .mockImplementationOnce(async (request) => {
+        signals.push(request.signal);
+        return adminAnalyticsSuccess(campaignDetail.id, 13);
+      });
+    render(
+      <AdminOpsPanel
+        campaign={campaignDetail}
+        campaignAnalyticsBridge={{ read }}
+        durableReviewBridge={durableReviewBridge}
+        locale="en-US"
+        session={adminStageSession}
+        stageReviewMode
+      />,
+    );
+
+    await selectAdminAnalyticsCampaign(campaignDetail.id);
+    const workspace = (await screen.findByRole("heading", { name: "Admin Campaign Analytics" }))
+      .closest("section") as HTMLElement;
+    expect(await within(workspace).findByText("trace-admin-analytics-retry")).toBeInTheDocument();
+    fireEvent.click(within(workspace).getByRole("button", { name: "Retry analytics" }));
+
+    const participants = await within(workspace).findByRole("group", {
+      name: "Unique participants",
+    });
+    expect(within(participants).getByText("13")).toBeInTheDocument();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).not.toBe(signals[1]);
   });
 });

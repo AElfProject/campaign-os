@@ -1,4 +1,6 @@
 import type { SupportedLocale } from "../../../domain";
+import type { CampaignAnalyticsWorkspaceCopy } from "../project-console/CampaignAnalyticsWorkspace";
+import { projectCampaignAnalyticsWorkspaceCopy } from "../project-console/copy";
 
 const enUS = {
     durableApprove: "Approve",
@@ -2207,3 +2209,45 @@ export const adminOpsCopy = {
     zhDraft: "Spanish English fallback/readiness",
   },
 } satisfies Record<SupportedLocale, typeof enUS>;
+
+const adminCampaignAnalyticsEnUS = {
+  ...projectCampaignAnalyticsWorkspaceCopy["en-US"],
+  campaignRequired: "Select a current Campaign to load durable Admin analytics.",
+  errorDetail: "The Admin Analytics region could not be loaded. Other Admin workflows remain available.",
+  nonRetryable: "Reconnect or change Admin access before retrying.",
+  reconnectRequired: "Reconnect an issued Admin Session to load durable analytics.",
+  sessionRequired: "Connect an issued Admin Session to load durable analytics.",
+  title: "Admin Campaign Analytics",
+} satisfies CampaignAnalyticsWorkspaceCopy;
+
+const adminCampaignAnalyticsZhCN = {
+  ...projectCampaignAnalyticsWorkspaceCopy["zh-CN"],
+  campaignRequired: "请选择当前 Campaign 以加载持久化 Admin 分析。",
+  errorDetail: "Admin Analytics 区域加载失败；其他 Admin 工作流仍可使用。",
+  nonRetryable: "请重新连接或调整 Admin 权限后再试。",
+  reconnectRequired: "请重新连接已签发的 Admin Session 以加载持久化分析。",
+  sessionRequired: "请连接已签发的 Admin Session 以加载持久化分析。",
+  title: "Admin Campaign 分析",
+} satisfies CampaignAnalyticsWorkspaceCopy;
+
+const adminCampaignAnalyticsZhTW = {
+  ...projectCampaignAnalyticsWorkspaceCopy["zh-TW"],
+  campaignRequired: "請選擇目前 Campaign 以載入持久化 Admin 分析。",
+  errorDetail: "Admin Analytics 區域載入失敗；其他 Admin 工作流程仍可使用。",
+  nonRetryable: "請重新連接或調整 Admin 權限後再試。",
+  reconnectRequired: "請重新連接已簽發的 Admin Session 以載入持久化分析。",
+  sessionRequired: "請連接已簽發的 Admin Session 以載入持久化分析。",
+  title: "Admin Campaign 分析",
+} satisfies CampaignAnalyticsWorkspaceCopy;
+
+export const adminCampaignAnalyticsWorkspaceCopy = {
+  "en-US": adminCampaignAnalyticsEnUS,
+  "es-ES": adminCampaignAnalyticsEnUS,
+  "id-ID": adminCampaignAnalyticsEnUS,
+  "ja-JP": adminCampaignAnalyticsEnUS,
+  "ko-KR": adminCampaignAnalyticsEnUS,
+  "tr-TR": adminCampaignAnalyticsEnUS,
+  "vi-VN": adminCampaignAnalyticsEnUS,
+  "zh-CN": adminCampaignAnalyticsZhCN,
+  "zh-TW": adminCampaignAnalyticsZhTW,
+} satisfies Record<SupportedLocale, CampaignAnalyticsWorkspaceCopy>;

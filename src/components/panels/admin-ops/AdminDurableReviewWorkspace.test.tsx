@@ -259,6 +259,43 @@ describe("AdminDurableReviewWorkspace", () => {
     expect(screen.queryByText(campaign.campaignId)).not.toBeInTheDocument();
   });
 
+  it("publishes the selected durable Campaign and clears it on Session rotation or unmount", async () => {
+    const bridge = createBridge();
+    const onCampaignIdChange = vi.fn();
+    const view = render(
+      <AdminDurableReviewWorkspace
+        bridge={bridge}
+        locale="en-US"
+        onCampaignIdChange={onCampaignIdChange}
+        session={session("A")}
+      />,
+    );
+
+    const campaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(campaignSelect, { target: { value: campaign.campaignId } });
+    await waitFor(() => expect(onCampaignIdChange).toHaveBeenLastCalledWith(campaign.campaignId));
+
+    view.rerender(
+      <AdminDurableReviewWorkspace
+        bridge={bridge}
+        locale="en-US"
+        onCampaignIdChange={onCampaignIdChange}
+        session={session("B")}
+      />,
+    );
+
+    await waitFor(() => expect(onCampaignIdChange).toHaveBeenLastCalledWith(null));
+
+    const rotatedCampaignSelect = await screen.findByLabelText("Campaign");
+    await screen.findByRole("option", { name: /campaign-admin-01/ });
+    fireEvent.change(rotatedCampaignSelect, { target: { value: campaign.campaignId } });
+    await waitFor(() => expect(onCampaignIdChange).toHaveBeenLastCalledWith(campaign.campaignId));
+
+    view.unmount();
+    expect(onCampaignIdChange).toHaveBeenLastCalledWith(null);
+  });
+
   it("runs queue, decision, winner, artifact, and exact-download workflows with one refresh each", async () => {
     const bridge = createBridge();
     const currentWinners: AdminWinnerListData = {
