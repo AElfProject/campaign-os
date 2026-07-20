@@ -11,6 +11,8 @@
     "server:provider-stage": "vite-node --script src/server/providerVerificationStageRuntime.ts --listen",
     "server:smoke": "vite-node src/server/backendRuntimeSmoke.ts --run",
     "server:start": "vite-node src/server/server.ts --listen",
+    "server:task-template-catalog-stage": "vite-node --script src/server/taskTemplateCatalogStageRuntime.ts --listen",
+    "server:task-template-catalog-stage:check": "vite-node --script src/server/taskTemplateCatalogStageRuntime.ts --check",
     "server:wallet-auth-stage": "vite-node --script src/server/walletAuthenticationStageRuntime.ts --listen",
     "server:wallet-ca-sandbox": "vite-node --script src/server/portkeyCaRelationSandbox.ts --listen",
     "build": "tsc -b && vite build",
@@ -18,7 +20,9 @@
     "test": "vitest run --passWithNoTests",
     "test:postgres": "vitest run src/server/postgresMigration.test.ts src/server/postgresCampaignDurableStore.test.ts src/server/postgresCampaignRuntime.integration.test.ts src/server/postgresAdminReviewStore.test.ts src/server/adminHttpPostgresAcceptance.test.ts",
     "test:postgres:required": "node --input-type=module -e \"import { existsSync } from 'node:fs'; const suites = ['src/server/postgresMigration.test.ts', 'src/server/postgresWalletAuthenticationStore.test.ts', 'src/server/postgresWalletAuthenticationRuntime.integration.test.ts']; if (suites.some((suite) => !existsSync(suite))) { console.error('Required wallet authentication PostgreSQL suites are not implemented.'); process.exit(1); }\" && vitest run src/server/postgresMigration.test.ts src/server/postgresWalletAuthenticationStore.test.ts src/server/postgresWalletAuthenticationRuntime.integration.test.ts",
-    "test:server:smoke": "npm run server:smoke"
+    "test:server:smoke": "npm run server:smoke",
+    "test:task-template-catalog:stage": "vitest run src/server/taskTemplateCatalogStageRuntime.test.ts src/server/backendRuntimeSmoke.test.ts",
+    "test:task-template-catalog:stage:required": "node --input-type=module -e \"import { existsSync } from 'node:fs'; const suites = ['src/server/taskTemplateCatalogStageRuntime.test.ts', 'src/server/backendRuntimeSmoke.test.ts']; if (suites.some((suite) => !existsSync(suite))) { console.error('Required task template catalog stage suites are not implemented.'); process.exit(1); }\" && npm run server:task-template-catalog-stage:check"
   },
   "dependencies": {
     "@aelf-web-login/wallet-adapter-base": "0.4.0-alpha.21",

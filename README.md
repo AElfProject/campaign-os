@@ -174,11 +174,46 @@ listener、authentication runtime、provider 与 PostgreSQL resources。launcher
 Start with `npm run server:wallet-auth-stage`. Stop with `SIGINT` or `SIGTERM`; bounded shutdown follows API server ownership for the listener,
 authentication runtime, providers, and PostgreSQL resources. The launcher performs read-only migration validation and never applies migrations.
 
+## Task Template Catalog Stage
+
+Task Template Catalog Stage 默认关闭，只能用于 disposable local/stage 验收。它复用 Wallet Authentication Stage 与 API runtime 的真实
+composition，在监听前额外要求 durable catalog flag、additive `0006_durable_task_template_catalog` migration 和独立 loopback API/UI
+ports。任何缺失或非法配置都会 fail closed；不会 apply migration、注入 catalog fixture 或回退到 seeded browser data。
+
+Task Template Catalog Stage is disabled by default and is limited to disposable local/stage acceptance. It reuses the real Wallet Authentication
+Stage and API runtime composition, then additionally requires the durable catalog flag, additive
+`0006_durable_task_template_catalog` migration, and independent loopback API/UI ports before listening. Missing or invalid configuration fails
+closed; the launcher never applies migrations, injects catalog fixtures, or falls back to seeded browser data.
+
+除 Wallet Authentication Stage 已列出的 key names 外，还必须配置：
+
+In addition to the key names listed for Wallet Authentication Stage, configure:
+
+- `CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED`
+
+先运行一次性 preflight；它会启动真实 composition、完成 health check，再完整 drain listener、wallet authentication runtime 和 PostgreSQL
+resources。通过后才启动常驻 listener：
+
+Run the one-shot preflight first. It starts the real composition, completes the health check, then fully drains the listener, wallet authentication
+runtime, and PostgreSQL resources. Start the persistent listener only after it passes:
+
+```bash
+npm run test:task-template-catalog:stage:required
+npm run server:task-template-catalog-stage
+```
+
+两种模式始终报告 `productionReady=false` 与 `stageProductReviewReady=false`。发送 `SIGINT`/`SIGTERM` 或重复调用 close 都走同一幂等
+drain。回滚只需停止 launcher 并清除 catalog enablement；不得删除已迁移 schema、catalog versions 或 adopted Task snapshots。
+
+Both modes always report `productionReady=false` and `stageProductReviewReady=false`. `SIGINT`/`SIGTERM` and repeated close calls use the same
+idempotent drain. Roll back by stopping the launcher and clearing catalog enablement; do not delete migrated schema, catalog versions, or adopted
+Task snapshots.
+
 ## Migrations
 
-Migration runner 按顺序加载 `0001_campaign_runtime`、additive `0002_admin_review_export`、additive `0003_admin_review_rank_projection`、additive `0004_live_provider_task_verification` 和 additive `0005_participant_wallet_authentication`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。
+Migration runner 按顺序加载 `0001_campaign_runtime`、additive `0002_admin_review_export`、additive `0003_admin_review_rank_projection`、additive `0004_live_provider_task_verification`、additive `0005_participant_wallet_authentication` 和 additive `0006_durable_task_template_catalog`。先执行只读 plan/validate；`apply` 必须通过独立 approval flag 显式授权。API server 启动不会自动执行 migration。
 
-The migration runner loads `0001_campaign_runtime`, additive `0002_admin_review_export`, additive `0003_admin_review_rank_projection`, additive `0004_live_provider_task_verification`, and additive `0005_participant_wallet_authentication` in order. Run read-only plan/validate first; `apply` requires a separate explicit approval flag. API server startup never runs migrations automatically.
+The migration runner loads `0001_campaign_runtime`, additive `0002_admin_review_export`, additive `0003_admin_review_rank_projection`, additive `0004_live_provider_task_verification`, additive `0005_participant_wallet_authentication`, and additive `0006_durable_task_template_catalog` in order. Run read-only plan/validate first; `apply` requires a separate explicit approval flag. API server startup never runs migrations automatically.
 
 ```bash
 npm run server:migrate -- --plan
@@ -206,13 +241,13 @@ npm run server:smoke
 npm run build
 ```
 
-`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` 禁止把缺失 URL、skipped suite 或 zero executed tests 记为成功。增加 `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` 后，suite 必须通过真实 loopback TCP/HTTP 和 fetch transport dispatch；缺 PostgreSQL gate 或 URL 会明确失败。`server:smoke` 验证默认关闭的 provider/Admin path fail closed；required integration suite 验证启用后的 PostgreSQL workflow。
+`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` 禁止把缺失 URL、skipped suite 或 zero executed tests 记为成功。增加 `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` 后，suite 必须通过真实 loopback TCP/HTTP 和 fetch transport dispatch；缺 PostgreSQL gate 或 URL 会明确失败。`server:smoke` 验证默认关闭的 provider/Admin/catalog path fail closed，并确认 catalog failure 不影响 health；required integration suite 验证启用后的 PostgreSQL workflow。
 
-`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` prevents a missing URL, skipped suite, or zero executed tests from being reported as success. Adding `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` requires real loopback TCP/HTTP dispatch through the fetch transport and fails when the PostgreSQL gate or URL is absent. `server:smoke` verifies that default-disabled provider/Admin paths fail closed; the required integration suite verifies the enabled PostgreSQL workflows.
+`CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1` prevents a missing URL, skipped suite, or zero executed tests from being reported as success. Adding `CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1` requires real loopback TCP/HTTP dispatch through the fetch transport and fails when the PostgreSQL gate or URL is absent. `server:smoke` verifies that default-disabled provider/Admin/catalog paths fail closed and that a catalog failure leaves health available; the required integration suite verifies the enabled PostgreSQL workflows.
 
-Integration 验收覆盖真实 `0001`/`0002`/`0003`/`0004`/`0005` migrations、Owner create、Participant A/B verify、Admin decision/winner、exact CSV/JSON artifact、并发幂等、跨 Campaign 隔离、完整 restart、active wallet session 持久恢复、rotated/revoked/logout credential 持续失效、active provider finalize-before-pool-close、Pool shutdown 和性能边界。
+Integration 验收覆盖真实 `0001`/`0002`/`0003`/`0004`/`0005`/`0006` migrations、Owner create、Participant A/B verify、Admin decision/winner、exact CSV/JSON artifact、catalog migration/seed contract、并发幂等、跨 Campaign 隔离、完整 restart、active wallet session 持久恢复、rotated/revoked/logout credential 持续失效、active provider finalize-before-pool-close、Pool shutdown 和性能边界。
 
-Integration acceptance covers real `0001`/`0002`/`0003`/`0004`/`0005` migrations, Owner creation, Participant A/B verification, Admin decisions and winners, exact CSV/JSON artifacts, concurrent idempotency, cross-Campaign isolation, full restart, durable active-wallet-session recovery, continued invalidation of rotated, revoked, or logged-out credentials, active-provider finalization before pool close, pool shutdown, and performance bounds.
+Integration acceptance covers real `0001`/`0002`/`0003`/`0004`/`0005`/`0006` migrations, Owner creation, Participant A/B verification, Admin decisions and winners, exact CSV/JSON artifacts, the catalog migration/seed contract, concurrent idempotency, cross-Campaign isolation, full restart, durable active-wallet-session recovery, continued invalidation of rotated, revoked, or logged-out credentials, active-provider finalization before pool close, pool shutdown, and performance bounds.
 
 ## Rollback
 

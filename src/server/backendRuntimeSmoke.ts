@@ -205,6 +205,23 @@ export interface BackendRuntimeSmokeAdminReviewRuntimeSummary {
   traceId: string;
 }
 
+export interface BackendRuntimeSmokeTaskTemplateCatalogRuntimeSummary {
+  coverage: "default_disabled_fail_closed";
+  enabled: false;
+  endpoint: "/api/task-templates";
+  errorCode: "TASK_TEMPLATE_CATALOG_UNAVAILABLE";
+  httpStatus: 503;
+  responseDataPresent: false;
+  routeExposed: true;
+  safeEnvelope: true;
+  shellHealthAvailable: true;
+  status: "disabled";
+  traceIds: {
+    catalog: string;
+    shellHealth: string;
+  };
+}
+
 export interface BackendRuntimeSmokeObjectStorageExportRuntimeSummary {
   blockerCount: number;
   diagnosticCodes: string[];
@@ -725,6 +742,7 @@ export interface BackendRuntimeSmokeSummary {
   schedulerRuntimeFoundation: BackendRuntimeSmokeSchedulerRuntimeFoundationSummary;
   shutdownState: "running" | "stopping" | "stopped";
   status: "passed";
+  taskTemplateCatalogRuntime: BackendRuntimeSmokeTaskTemplateCatalogRuntimeSummary;
   traceIds: {
     contracts: string;
     health: string;
@@ -736,6 +754,7 @@ export interface BackendRuntimeSmokeSummary {
 }
 
 export interface BackendRuntimeSmokeCompositionSummary {
+  catalogDefaultDisabledCheckPassed: true;
   contractsCheckPassed: true;
   entrypointId: "campaign-os-backend-service";
   healthCheckPassed: true;
@@ -2425,6 +2444,76 @@ const createDisabledAdminReviewRuntimeSmokeSample = async ({
     safeEnvelope: true,
     status: "disabled",
     traceId: disabledAdminReviewSmokeTraceId,
+  };
+};
+
+const taskTemplateCatalogSmokeTraceIds = Object.freeze({
+  catalog: "campaign-os-smoke-task-template-catalog-disabled",
+  shellHealth: "campaign-os-smoke-task-template-catalog-shell-health",
+});
+const taskTemplateCatalogSmokeOrigin = "http://127.0.0.1:5193";
+const taskTemplateCatalogSmokeUnsafePattern =
+  /postgres(?:ql)?:\/\/|bearer\s+\S+|password|private[-_\s]?key|seed phrase|token=|\/Users\/|\/private\/|campaign-os-kitty|kitty-specs|\.kittify|stack trace/i;
+
+const createDisabledTaskTemplateCatalogRuntimeSmokeSample = async ({
+  baseUrl,
+  fetchImpl,
+}: {
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+}): Promise<BackendRuntimeSmokeTaskTemplateCatalogRuntimeSummary | undefined> => {
+  const endpoint = "/api/task-templates" as const;
+  const catalogResponse = await fetchImpl(`${baseUrl}${endpoint}`, {
+    headers: {
+      cookie: "campaign_os_smoke_boundary=unissued",
+      origin: taskTemplateCatalogSmokeOrigin,
+      "x-campaign-os-trace-id": taskTemplateCatalogSmokeTraceIds.catalog,
+    },
+  });
+  const catalogPayload = await readJson(catalogResponse);
+  const catalogError = isRecord(catalogPayload.error) ? catalogPayload.error : undefined;
+  const responseDataPresent = Object.prototype.hasOwnProperty.call(catalogPayload, "data");
+  const safeEnvelope = hasExactObjectKeys(catalogPayload, ["error", "ok", "traceId"])
+    && hasExactObjectKeys(catalogError, ["code", "field", "operation", "retryable"])
+    && getString(catalogError, "field") === "runtime"
+    && getString(catalogError, "operation") === "list"
+    && catalogError?.retryable === true
+    && !taskTemplateCatalogSmokeUnsafePattern.test(JSON.stringify(catalogPayload));
+
+  const healthResponse = await fetchImpl(`${baseUrl}/api/health`, {
+    headers: { "x-campaign-os-trace-id": taskTemplateCatalogSmokeTraceIds.shellHealth },
+  });
+  const healthPayload = await readJson(healthResponse);
+  const shellHealthAvailable = healthResponse.status === 200
+    && healthPayload.ok === true
+    && healthPayload.traceId === taskTemplateCatalogSmokeTraceIds.shellHealth;
+
+  if (
+    catalogResponse.status !== 503
+    || catalogPayload.ok !== false
+    || catalogPayload.traceId !== taskTemplateCatalogSmokeTraceIds.catalog
+    || catalogResponse.headers.get("x-trace-id") !== taskTemplateCatalogSmokeTraceIds.catalog
+    || !catalogResponse.headers.get("content-type")?.startsWith("application/json")
+    || getString(catalogError, "code") !== "TASK_TEMPLATE_CATALOG_UNAVAILABLE"
+    || responseDataPresent
+    || !safeEnvelope
+    || !shellHealthAvailable
+  ) {
+    return undefined;
+  }
+
+  return {
+    coverage: "default_disabled_fail_closed",
+    enabled: false,
+    endpoint,
+    errorCode: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+    httpStatus: 503,
+    responseDataPresent: false,
+    routeExposed: true,
+    safeEnvelope: true,
+    shellHealthAvailable: true,
+    status: "disabled",
+    traceIds: taskTemplateCatalogSmokeTraceIds,
   };
 };
 
@@ -4318,6 +4407,7 @@ export const runBackendRuntimeSmoke = async ({
 
   try {
     server = await serverFactory({
+      allowedCorsOrigins: [taskTemplateCatalogSmokeOrigin],
       deprecatedNonLivePreviewAuthority: durableLocalPreviewAuthority,
       env: durableEnv.env,
       host,
@@ -4404,6 +4494,10 @@ export const runBackendRuntimeSmoke = async ({
       baseUrl: server.url,
       fetchImpl,
     });
+    const taskTemplateCatalogRuntime = await createDisabledTaskTemplateCatalogRuntimeSmokeSample({
+      baseUrl: server.url,
+      fetchImpl,
+    });
 
     if (
       health.check.status !== 200
@@ -4448,6 +4542,7 @@ export const runBackendRuntimeSmoke = async ({
       || !isProjectOwnerFundingProofReviewBridgeSmokeReady(projectOwnerFundingProofReviewBridgeSample)
       || !isProductionDatabaseHandoffReadinessSmokeReady(productionDatabaseHandoffReadinessSample)
       || !adminReviewRuntime
+      || !taskTemplateCatalogRuntime
       || !isProductionBackendReadinessSmokeReady(health.check.productionBackendReadiness)
       || !isProductionBackendReadinessSmokeReady(productionBackendReadiness)
       || !isWorkerIdempotencyStoreFoundationSmokeReady(health.check.workerIdempotencyStoreFoundation)
@@ -4478,6 +4573,7 @@ export const runBackendRuntimeSmoke = async ({
         health: health.check,
       },
       composition: {
+        catalogDefaultDisabledCheckPassed: true,
         contractsCheckPassed: true,
         entrypointId: "campaign-os-backend-service",
         healthCheckPassed: true,
@@ -4508,6 +4604,7 @@ export const runBackendRuntimeSmoke = async ({
       requiredBeforeProduction: getStringArray(deploymentHandoff, "requiredBeforeProduction"),
       schedulerRuntimeFoundation,
       status: "passed",
+      taskTemplateCatalogRuntime,
       traceIds: {
         contracts: contracts.check.traceId,
         health: health.check.traceId,

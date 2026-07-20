@@ -1604,6 +1604,7 @@ describe("backend runtime smoke command", () => {
         },
       },
       composition: {
+        catalogDefaultDisabledCheckPassed: true,
         contractsCheckPassed: true,
         entrypointId: "campaign-os-backend-service",
         healthCheckPassed: true,
@@ -1781,6 +1782,22 @@ describe("backend runtime smoke command", () => {
       },
       shutdownState: "stopped",
       status: "passed",
+      taskTemplateCatalogRuntime: {
+        coverage: "default_disabled_fail_closed",
+        enabled: false,
+        endpoint: "/api/task-templates",
+        errorCode: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+        httpStatus: 503,
+        responseDataPresent: false,
+        routeExposed: true,
+        safeEnvelope: true,
+        shellHealthAvailable: true,
+        status: "disabled",
+        traceIds: {
+          catalog: "campaign-os-smoke-task-template-catalog-disabled",
+          shellHealth: "campaign-os-smoke-task-template-catalog-shell-health",
+        },
+      },
       traceIds: {
         contracts: "campaign-os-smoke-contracts",
         health: "campaign-os-smoke-health",
@@ -1823,6 +1840,16 @@ describe("backend runtime smoke command", () => {
       request.pathname === "/api/admin/campaigns"
       && request.headers.get("x-campaign-os-trace-id") === summary.adminReviewRuntime.traceId
     );
+    const catalogRequestIndex = requests.findIndex((request) =>
+      request.pathname === summary.taskTemplateCatalogRuntime.endpoint
+      && request.headers.get("x-campaign-os-trace-id")
+        === summary.taskTemplateCatalogRuntime.traceIds.catalog
+    );
+    const catalogShellHealthRequestIndex = requests.findIndex((request) =>
+      request.pathname === "/api/health"
+      && request.headers.get("x-campaign-os-trace-id")
+        === summary.taskTemplateCatalogRuntime.traceIds.shellHealth
+    );
     const walletSessionRequestIndex = requests.findIndex((request) =>
       request.pathname === "/api/wallet/session"
       && request.headers.get("x-campaign-os-trace-id") === summary.durableLocalPersistence.traceIds.walletSession
@@ -1846,6 +1873,8 @@ describe("backend runtime smoke command", () => {
     const verificationBody = JSON.parse(verificationRequest?.body ?? "{}") as Record<string, unknown>;
 
     expect(adminReviewRequestIndex).toBeGreaterThanOrEqual(0);
+    expect(catalogRequestIndex).toBeGreaterThan(adminReviewRequestIndex);
+    expect(catalogShellHealthRequestIndex).toBeGreaterThan(catalogRequestIndex);
     expect(walletSessionRequestIndex).toBeGreaterThan(adminReviewRequestIndex);
     expect(walletSessionRequestIndex).toBeGreaterThanOrEqual(0);
     expect(campaignDraftRequestIndex).toBeGreaterThan(walletSessionRequestIndex);
@@ -1882,6 +1911,7 @@ describe("backend runtime smoke command", () => {
     }
 
     expect(summary.composition).toEqual({
+      catalogDefaultDisabledCheckPassed: true,
       contractsCheckPassed: true,
       entrypointId: "campaign-os-backend-service",
       healthCheckPassed: true,
