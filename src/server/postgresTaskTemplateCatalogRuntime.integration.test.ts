@@ -1,16 +1,15 @@
 // @vitest-environment node
 
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
+import AElf from "aelf-sdk";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createCampaignOsApiRuntime,
   type CampaignOsApiRuntime,
   type TaskTemplateCatalogPoolFactory,
-  type WalletAuthenticationAuthorityRuntime,
 } from "./apiRuntime";
-import { authSessionRolePolicyById } from "./authSession";
 import { resolveCampaignOsCampaignDbConfig } from "./config";
 import {
   loadPostgresMigrations,
@@ -27,15 +26,9 @@ import {
   type CampaignOsApiServerHandle,
 } from "./server";
 import {
-  issueResolvedWalletSessionAuthority,
-  issueVerifiedWalletSubject,
-  type ResolvedWalletSessionAuthority,
-} from "./walletAuthentication";
-import type {
-  RevalidateWalletAuthenticationFenceInput,
-  WalletAuthenticationAuthorizationFence,
-} from "./walletAuthenticationRuntime";
-import { walletAuthenticationSubjectKey } from "./walletAuthenticationStore";
+  createDefaultWalletAuthenticationServerComposition,
+  type WalletAuthenticationServerComposition,
+} from "./walletAuthenticationServerComposition";
 
 const TEST_DATABASE_URL = process.env.CAMPAIGN_OS_TEST_DATABASE_URL?.trim();
 const REQUIRE_POSTGRES_TESTS =
@@ -50,7 +43,7 @@ if (REQUIRE_POSTGRES_TESTS && !TEST_DATABASE_URL) {
 const postgresSuite = TEST_DATABASE_URL ? describe : describe.skip;
 const TEST_ORIGIN = "http://127.0.0.1:5173";
 
-type IssuedSessionRole = "project_owner" | "review_operator";
+type EphemeralSigner = ReturnType<typeof AElf.wallet.ellipticEc.genKeyPair>;
 
 interface ApiEnvelope<TData> {
   readonly data?: TData;
@@ -61,23 +54,28 @@ interface ApiEnvelope<TData> {
 
 interface HttpResult<TData> {
   readonly body: ApiEnvelope<TData>;
+  readonly response: Response;
   readonly status: number;
 }
 
-interface PreviewWalletSessionData {
-  readonly payload: Readonly<{
+interface WalletChallengeData {
+  readonly adapterId: string;
+  readonly challengeId: string;
+  readonly chainId: string;
+  readonly expiresAt: string;
+  readonly message: string;
+  readonly network: string;
+  readonly version: string;
+  readonly walletAddress: string;
+}
+
+interface WalletSessionData {
+  readonly csrfToken: string;
+  readonly session: Readonly<{
     accountType: "AA" | "EOA";
-    address: string;
-    id: string;
-    issuer?: Readonly<{ valid?: boolean }>;
-    proof?: Readonly<{ status?: string }>;
     sessionId: string;
-    walletSource:
-      | "NIGHTELF"
-      | "OTHER"
-      | "PORTKEY_AA"
-      | "PORTKEY_EOA_APP"
-      | "PORTKEY_EOA_EXTENSION";
+    status: "active";
+    walletAddress: string;
   }>;
 }
 
@@ -150,30 +148,28 @@ interface DurableTaskSnapshotRow {
   readonly wallet_compatibility: string;
 }
 
-interface IssuedTestSession {
-  readonly authority: ResolvedWalletSessionAuthority;
+interface NegativeAdoptionEvidence {
+  readonly after: number;
+  readonly before: number;
+  readonly code: string;
+  readonly label: string;
+  readonly status: number;
+}
+
+interface IssuedLiveSession {
+  readonly address: string;
   readonly adoptionHeaders: (
     traceId: string,
     idempotencyKey: string,
   ) => Record<string, string>;
   readonly catalogHeaders: (traceId: string) => Record<string, string>;
+  readonly cookieHeader: string;
+  readonly csrfToken: string;
   readonly mutationHeaders: (
     traceId: string,
     overrides?: Readonly<Record<string, string>>,
   ) => Record<string, string>;
-}
-
-interface TestAuthorization {
-  readonly authority: ResolvedWalletSessionAuthority;
-  readonly cookieHeader: string;
-  readonly csrfToken: string;
-  readonly fence: WalletAuthenticationAuthorizationFence;
-}
-
-interface TestAuthorizationRegistry {
-  readonly runtime: WalletAuthenticationAuthorityRuntime;
-  issue(data: PreviewWalletSessionData, role: IssuedSessionRole): IssuedTestSession;
-  state(): Readonly<{ accepting: boolean; sessionCount: number; stopCalls: number }>;
+  readonly sessionId: string;
 }
 
 interface CatalogPoolState {
@@ -191,225 +187,39 @@ interface CatalogPoolTracker {
 }
 
 interface RuntimeHarness {
-  readonly auth: TestAuthorizationRegistry;
   readonly catalogPool: CatalogPoolTracker;
   readonly runtime: CampaignOsApiRuntime;
   readonly server: CampaignOsApiServerHandle;
   stop(): Promise<void>;
+  readonly walletAuthentication: WalletAuthenticationServerComposition;
 }
 
-const capabilityDigest = (values: readonly string[]): string => createHash("sha256")
-  .update(["campaign-os-wallet-auth-capabilities/v1", ...[...values].sort()].join("\n"), "utf8")
-  .digest("hex");
-
-const authorizationFailure = (traceId: string) => Object.freeze({
-  diagnostic: Object.freeze({
-    code: "WALLET_AUTH_RUNTIME_SESSION_UNAUTHORIZED" as const,
-    field: "cookie",
-    retryable: false,
-    traceId,
-  }),
-  status: "unauthorized" as const,
+const EOA_BINDING = Object.freeze({
+  accountType: "EOA",
+  adapterId: "portkey-discover-eoa",
+  chainIds: ["AELF"],
+  enabled: true,
+  hashStrategyId: "aelf-web-login-discover-v1",
+  network: "testnet",
+  productionApproved: false,
+  proofMethod: "AELF_EOA_RECOVERABLE",
+  signatureEncoding: "AELF_RECOVERABLE_HEX",
+  walletSource: "PORTKEY_EOA_APP",
 });
+const TEST_CSRF_SECRET = randomBytes(32).toString("base64url");
 
-const staleFenceFailure = (traceId: string) => Object.freeze({
-  diagnostic: Object.freeze({
-    code: "WALLET_AUTH_RUNTIME_FENCE_STALE" as const,
-    field: "fence",
-    retryable: false,
-    traceId,
-  }),
-  status: "stale" as const,
-});
-
-const createTestAuthorizationRegistry = (): TestAuthorizationRegistry => {
-  const byCookie = new Map<string, TestAuthorization>();
-  const bySession = new Map<string, TestAuthorization>();
-  let accepting = true;
-  let stopCalls = 0;
-
-  const currentSession = async (input: {
-    cookieHeader?: string;
-    origin?: string;
-    traceId: string;
-  }) => {
-    const authorization = input.cookieHeader
-      ? byCookie.get(input.cookieHeader)
-      : undefined;
-    if (!accepting || input.origin !== TEST_ORIGIN || !authorization) {
-      return authorizationFailure(input.traceId);
-    }
-    const authority = authorization.authority;
-
-    return Object.freeze({
-      response: Object.freeze({
-        csrfToken: authorization.csrfToken,
-        session: Object.freeze({
-          absoluteExpiresAt: authority.absoluteExpiresAt,
-          accountType: authority.subject.accountType,
-          capabilities: authority.capabilities,
-          chainId: authority.subject.chainId,
-          idleExpiresAt: authority.idleExpiresAt,
-          issuedAt: authority.subject.verifiedAt,
-          network: authority.subject.network,
-          roleIds: authority.roleIds,
-          sessionId: authority.sessionId,
-          status: "active" as const,
-          walletAddress: authority.subject.walletAddress,
-          walletSource: authority.subject.walletSource,
-        }),
-      }),
-      status: "active" as const,
-    });
-  };
-
-  const runtime: WalletAuthenticationAuthorityRuntime = {
-    currentSession,
-    resolveAuthorization: async (input) => {
-      const authorization = input.cookieHeader
-        ? byCookie.get(input.cookieHeader)
-        : undefined;
-      if (
-        !accepting
-        || input.origin !== TEST_ORIGIN
-        || !authorization
-        || input.csrfHeader !== authorization.csrfToken
-      ) {
-        return authorizationFailure(input.traceId);
-      }
-
-      return Object.freeze({
-        authority: authorization.authority,
-        fence: authorization.fence,
-        status: "authorized" as const,
-      });
-    },
-    revalidateFenceBeforeWrite: async <TValue>(
-      input: RevalidateWalletAuthenticationFenceInput<TValue>,
-    ) => {
-      const authorization = bySession.get(input.fence.sessionId);
-      if (
-        !accepting
-        || !authorization
-        || authorization.fence.capabilityDigest !== input.fence.capabilityDigest
-        || authorization.fence.membershipRevision !== input.fence.membershipRevision
-        || authorization.fence.subjectKey !== input.fence.subjectKey
-        || authorization.fence.version !== input.fence.version
-      ) {
-        return staleFenceFailure(input.traceId);
-      }
-      const signal = input.signal ?? new AbortController().signal;
-
-      return Object.freeze({
-        status: "committed" as const,
-        value: await input.write({ authority: authorization.authority, signal }),
-      });
-    },
-    state: () => Object.freeze({
-      accepting,
-      activeOperationCount: 0,
-      controllerCount: 0,
-    }),
-    stop: async () => {
-      stopCalls += 1;
-      accepting = false;
-      return Object.freeze({
-        diagnosticCodes: Object.freeze([]),
-        diagnostics: Object.freeze([]),
-        status: "drained" as const,
-      });
-    },
-  };
-
-  const issue = (
-    data: PreviewWalletSessionData,
-    role: IssuedSessionRole,
-  ): IssuedTestSession => {
-    if (!accepting || data.payload.issuer?.valid !== true || data.payload.proof?.status !== "verified") {
-      throw new Error("Server-issued test wallet session is not verified.");
-    }
-    const payload = data.payload;
-    const subject = issueVerifiedWalletSubject({
-      accountType: payload.accountType,
-      adapterId: `m246-runtime-${payload.accountType.toLowerCase()}`,
-      ...(payload.accountType === "AA"
-        ? { caHash: createHash("sha256").update(`ca:${payload.sessionId}`).digest("hex") }
-        : {}),
-      chainId: "AELF",
-      network: "mainnet",
-      proofDigest: createHash("sha256").update(`proof:${payload.sessionId}`).digest("hex"),
-      proofMethod: payload.accountType === "AA"
-        ? "PORTKEY_AA_MANAGER_CA"
-        : "AELF_EOA_RECOVERABLE",
-      signerAddress: payload.address,
-      verifiedAt: "2026-07-20T00:00:00.000Z",
-      walletAddress: payload.address,
-      walletSource: payload.walletSource,
-    });
-    const capabilities = authSessionRolePolicyById[role].allowedCapabilities;
-    const authority = issueResolvedWalletSessionAuthority({
-      absoluteExpiresAt: "2099-12-31T23:59:59.000Z",
-      capabilities,
-      credentialBoundary: "wallet-auth-cookie/v1",
-      idleExpiresAt: "2099-12-31T23:59:59.000Z",
-      membershipRevision: `m246-runtime-membership-${role}-${payload.sessionId}`,
-      roleIds: [role],
-      sessionId: payload.sessionId,
-      subject,
-      version: 1,
-    });
-    const cookieHeader = `campaign_os_wallet_session=${randomBytes(32).toString("base64url")}`;
-    const csrfToken = randomBytes(32).toString("base64url");
-    const authorization = Object.freeze({
-      authority,
-      cookieHeader,
-      csrfToken,
-      fence: Object.freeze({
-        capabilityDigest: capabilityDigest(authority.capabilities),
-        membershipRevision: authority.membershipRevision,
-        sessionId: authority.sessionId,
-        subjectKey: walletAuthenticationSubjectKey(authority.subject),
-        version: authority.version,
-      }),
-    });
-    byCookie.set(cookieHeader, authorization);
-    bySession.set(authority.sessionId, authorization);
-
-    return Object.freeze({
-      authority,
-      adoptionHeaders: (traceId: string, idempotencyKey: string) => ({
-        "content-type": "application/json",
-        cookie: cookieHeader,
-        "idempotency-key": idempotencyKey,
-        origin: TEST_ORIGIN,
-        "x-campaign-os-trace-id": traceId,
-        "x-csrf-token": csrfToken,
-      }),
-      catalogHeaders: (traceId: string) => ({
-        cookie: cookieHeader,
-        origin: TEST_ORIGIN,
-        "x-campaign-os-trace-id": traceId,
-      }),
-      mutationHeaders: (
-        traceId: string,
-        overrides: Readonly<Record<string, string>> = {},
-      ) => ({
-        "content-type": "application/json",
-        cookie: cookieHeader,
-        origin: TEST_ORIGIN,
-        "x-campaign-os-csrf": csrfToken,
-        "x-campaign-os-trace-id": traceId,
-        ...overrides,
-      }),
-    });
-  };
-
-  return Object.freeze({
-    issue,
-    runtime,
-    state: () => Object.freeze({ accepting, sessionCount: byCookie.size, stopCalls }),
-  });
+const nonceFromMessage = (message: string): string => {
+  const nonce = message.split("\n")
+    .find((line) => line.startsWith("Nonce: "))
+    ?.slice("Nonce: ".length);
+  if (!nonce || !/^[A-Za-z0-9_-]{43}$/.test(nonce)) {
+    throw new Error("Canonical wallet challenge did not contain a valid nonce.");
+  }
+  return nonce;
 };
+
+const signExactMessage = (message: string, signer: EphemeralSigner): Uint8Array =>
+  Uint8Array.from(AElf.wallet.sign(Buffer.from(message, "utf8").toString("hex"), signer));
 
 const executeCatalogQuery = async (
   queryable: Pick<pg.Pool, "query"> | Pick<pg.PoolClient, "query">,
@@ -540,6 +350,7 @@ const requestApi = async <TData>(
   const response = await fetch(`${server.url}${path}`, init);
   return {
     body: await response.json() as ApiEnvelope<TData>,
+    response,
     status: response.status,
   };
 };
@@ -566,13 +377,23 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
   let databaseUrl = "";
   let runtimePorts: readonly number[] = [];
 
-  const startRuntime = async (port: number): Promise<RuntimeHarness> => {
-    const auth = createTestAuthorizationRegistry();
+  const startRuntime = async (
+    port: number,
+    adminAddress: string,
+  ): Promise<RuntimeHarness> => {
     const catalogPool = createCatalogPoolTracker();
     let runtime: CampaignOsApiRuntime | undefined;
+    let walletAuthentication: WalletAuthenticationServerComposition | undefined;
     const server = await startCampaignOsApiServer({
       allowedCorsOrigins: [TEST_ORIGIN],
       env: {
+        CAMPAIGN_OS_ADMIN_OPERATOR_MEMBERSHIPS_JSON: JSON.stringify([{
+          active: true,
+          campaignIds: null,
+          roleIds: ["review_operator"],
+          subjectAddress: adminAddress,
+        }]),
+        CAMPAIGN_OS_ADMIN_REVIEW_ENABLED: "true",
         CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
         CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: "2000",
         CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS: "2000",
@@ -580,6 +401,13 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
         CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
         CAMPAIGN_OS_DATABASE_URL: databaseUrl,
         CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED: "1",
+        CAMPAIGN_OS_WALLET_AUTH_ALLOWED_ORIGINS: TEST_ORIGIN,
+        CAMPAIGN_OS_WALLET_AUTH_ALLOW_INSECURE_LOOPBACK_COOKIE: "1",
+        CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: JSON.stringify([EOA_BINDING]),
+        CAMPAIGN_OS_WALLET_AUTH_CSRF_SECRET: TEST_CSRF_SECRET,
+        CAMPAIGN_OS_WALLET_AUTH_ENABLED: "1",
+        CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT: "stage",
+        CAMPAIGN_OS_WALLET_AUTH_SHUTDOWN_TIMEOUT_MS: "9000",
       },
       host: "127.0.0.1",
       logger: false,
@@ -588,22 +416,22 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
         runtime = createCampaignOsApiRuntime({
           ...options,
           taskTemplateCatalogPoolFactory: catalogPool.factory,
-          walletAuthenticationRuntime: auth.runtime,
-          walletAuthenticationRuntimeOwnership: "runtime",
         });
         return runtime;
       },
       shutdownTimeoutMs: 10_000,
-      walletAuthenticationAllowedOrigins: [TEST_ORIGIN],
-      walletAuthenticationRuntime: auth.runtime,
+      walletAuthenticationCompositionFactory: async (input) => {
+        const composition = await createDefaultWalletAuthenticationServerComposition(input);
+        walletAuthentication = composition;
+        return composition;
+      },
     });
-    if (!runtime) {
+    if (!runtime || !walletAuthentication) {
       await server.stop();
-      throw new Error("Campaign OS API runtime was not captured.");
+      throw new Error("Campaign OS API or durable wallet-auth runtime was not captured.");
     }
     let stopped = false;
     const harness: RuntimeHarness = Object.freeze({
-      auth,
       catalogPool,
       runtime,
       server,
@@ -615,6 +443,7 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
         await server.stop();
         openRuntimes.delete(harness);
       },
+      walletAuthentication,
     });
     openRuntimes.add(harness);
     return harness;
@@ -622,32 +451,92 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
 
   const issueSession = async (
     runtime: RuntimeHarness,
-    address: string,
-    role: IssuedSessionRole,
+    signer: EphemeralSigner,
     traceId: string,
-  ): Promise<IssuedTestSession> => {
-    const preview = requireSuccess(await requestApi<PreviewWalletSessionData>(
+  ): Promise<IssuedLiveSession> => {
+    const address = AElf.wallet.getAddressFromPubKey(signer.getPublic());
+    const challenge = requireSuccess(await requestApi<WalletChallengeData>(
       runtime.server,
-      "/api/wallet/session",
+      "/api/wallet/auth/challenges",
       {
         body: JSON.stringify({
-          adapterName: "PortkeyAAWallet",
-          address,
+          adapterId: EOA_BINDING.adapterId,
           chainId: "AELF",
-          network: "mainnet",
-          proofEvaluatedAt: "2026-07-20T00:00:01.000Z",
-          proofIssuedAt: "2026-07-20T00:00:00.000Z",
-          signature: randomUUID(),
+          network: "testnet",
+          walletAddress: address,
         }),
         headers: {
           "content-type": "application/json",
+          origin: TEST_ORIGIN,
           "x-campaign-os-trace-id": traceId,
         },
         method: "POST",
       },
-    ));
-    expect(preview.payload.sessionId).toBe(preview.payload.id);
-    return runtime.auth.issue(preview, role);
+    ), 201);
+    expect(challenge).toMatchObject({
+      adapterId: EOA_BINDING.adapterId,
+      network: "testnet",
+      walletAddress: address,
+    });
+    const sessionResult = await requestApi<WalletSessionData>(
+      runtime.server,
+      "/api/wallet/auth/sessions",
+      {
+        body: JSON.stringify({
+          challengeId: challenge.challengeId,
+          message: challenge.message,
+          nonce: nonceFromMessage(challenge.message),
+          publicKey: Buffer.from(signer.getPublic().encode("array", false)).toString("hex"),
+          signature: Buffer.from(signExactMessage(challenge.message, signer)).toString("hex"),
+        }),
+        headers: {
+          "content-type": "application/json",
+          origin: TEST_ORIGIN,
+          "x-campaign-os-trace-id": `${traceId}-verify`,
+        },
+        method: "POST",
+      },
+    );
+    const session = requireSuccess(sessionResult, 201);
+    const cookieHeader = sessionResult.response.headers.get("set-cookie")?.split(";", 1)[0];
+    if (!cookieHeader) {
+      throw new Error("Durable wallet authentication did not issue a session cookie.");
+    }
+    expect(session.session).toMatchObject({
+      accountType: "EOA",
+      status: "active",
+      walletAddress: address,
+    });
+    return Object.freeze({
+      address,
+      adoptionHeaders: (requestTraceId: string, idempotencyKey: string) => ({
+        "content-type": "application/json",
+        cookie: cookieHeader,
+        "idempotency-key": idempotencyKey,
+        origin: TEST_ORIGIN,
+        "x-campaign-os-trace-id": requestTraceId,
+        "x-csrf-token": session.csrfToken,
+      }),
+      catalogHeaders: (requestTraceId: string) => ({
+        cookie: cookieHeader,
+        origin: TEST_ORIGIN,
+        "x-campaign-os-trace-id": requestTraceId,
+      }),
+      cookieHeader,
+      csrfToken: session.csrfToken,
+      mutationHeaders: (
+        requestTraceId: string,
+        overrides: Readonly<Record<string, string>> = {},
+      ) => ({
+        "content-type": "application/json",
+        cookie: cookieHeader,
+        origin: TEST_ORIGIN,
+        "x-campaign-os-csrf": session.csrfToken,
+        "x-campaign-os-trace-id": requestTraceId,
+        ...overrides,
+      }),
+      sessionId: session.session.sessionId,
+    });
   };
 
   const readTaskSnapshot = async (taskId: string): Promise<DurableTaskSnapshotRow> => {
@@ -676,6 +565,17 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     } finally {
       await pool.end();
     }
+  };
+
+  const readTaskRowCount = async (pool: pg.Pool): Promise<number> => {
+    const result = await pool.query<{ readonly count: number }>(
+      "SELECT COUNT(*)::integer AS count FROM campaign_os.campaign_tasks",
+    );
+    const count = result.rows[0]?.count;
+    if (!Number.isSafeInteger(count) || (count ?? -1) < 0) {
+      throw new Error("Expected a safe PostgreSQL Task row count.");
+    }
+    return count!;
   };
 
   const waitForDatabaseSessionsToDrain = async (): Promise<void> => {
@@ -751,11 +651,28 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
   }, 60_000);
 
   it("recovers exact catalog and adopted Task facts through a fully stopped independent Runtime B", async () => {
-    const ownerAddress = `2F4M246Owner${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    const adminAddress = `2F4M246Admin${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    const runtimeA = await startRuntime(runtimePorts[0]!);
-    const ownerA = await issueSession(runtimeA, ownerAddress, "project_owner", "trace-m246-owner-a");
-    const adminA = await issueSession(runtimeA, adminAddress, "review_operator", "trace-m246-admin-a");
+    const ownerSigner = AElf.wallet.ellipticEc.genKeyPair({ entropy: randomBytes(32) });
+    const adminSigner = AElf.wallet.ellipticEc.genKeyPair({ entropy: randomBytes(32) });
+    const participantSigner = AElf.wallet.ellipticEc.genKeyPair({ entropy: randomBytes(32) });
+    const ownerAddress = AElf.wallet.getAddressFromPubKey(ownerSigner.getPublic());
+    const adminAddress = AElf.wallet.getAddressFromPubKey(adminSigner.getPublic());
+    const participantAddress = AElf.wallet.getAddressFromPubKey(participantSigner.getPublic());
+    const runtimeA = await startRuntime(runtimePorts[0]!, adminAddress);
+    const ownerA = await issueSession(
+      runtimeA,
+      ownerSigner,
+      "trace-m246-owner-a",
+    );
+    const adminA = await issueSession(
+      runtimeA,
+      adminSigner,
+      "trace-m246-admin-a",
+    );
+    const participantA = await issueSession(
+      runtimeA,
+      participantSigner,
+      "trace-m246-participant-a",
+    );
 
     const listA = requireSuccess(await requestApi<CatalogListData>(
       runtimeA.server,
@@ -782,6 +699,12 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       templateCode: ownerDetailA.templateCode,
       version: ownerDetailA.version,
     });
+    const canonicalAdoptionBody = JSON.stringify({
+      template: {
+        templateCode: selected!.templateCode,
+        version: selected!.version,
+      },
+    });
 
     const campaign = requireSuccess(await requestApi<CampaignCreateData>(
       runtimeA.server,
@@ -806,12 +729,7 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       runtimeA.server,
       `/api/campaigns/${campaign.payload.id}/tasks/from-template`,
       {
-        body: JSON.stringify({
-          template: {
-            templateCode: selected!.templateCode,
-            version: selected!.version,
-          },
-        }),
+        body: canonicalAdoptionBody,
         headers: ownerA.adoptionHeaders(
           "trace-m246-adopt-a",
           "m246-runtime-ab-adoption-1",
@@ -861,6 +779,194 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       walletCompatibility: selected!.walletCompatibility,
     });
 
+    const participantOwnedCampaign = requireSuccess(await requestApi<CampaignCreateData>(
+      runtimeA.server,
+      "/api/campaigns",
+      {
+        body: JSON.stringify({
+          duration: "2026-09-01/2026-09-30",
+          endTime: "2026-09-30T23:59:59.000Z",
+          goal: "M246 cross-Campaign negative acceptance",
+          ownerAddress: participantAddress,
+          projectId: "m246-runtime-catalog-negative-scope",
+          rewardDescription: "Durable catalog negative acceptance reward.",
+          startTime: "2026-09-01T00:00:00.000Z",
+        }),
+        headers: participantA.mutationHeaders("trace-m246-participant-campaign-a"),
+        method: "POST",
+      },
+    ));
+    expect(participantOwnedCampaign.payload.ownerAddress).toBe(participantAddress);
+
+    const badCsrfToken = randomBytes(32).toString("base64url");
+    const negativeCases = [
+      {
+        body: canonicalAdoptionBody,
+        campaignId: campaign.payload.id,
+        code: "AUTH_FORBIDDEN",
+        headers: participantA.adoptionHeaders(
+          "trace-m246-negative-participant",
+          "m246-negative-participant-1",
+        ),
+        label: "participant-owner-campaign",
+        status: 403,
+      },
+      {
+        body: canonicalAdoptionBody,
+        campaignId: participantOwnedCampaign.payload.id,
+        code: "AUTH_FORBIDDEN",
+        headers: ownerA.adoptionHeaders(
+          "trace-m246-negative-cross-campaign",
+          "m246-negative-cross-campaign-1",
+        ),
+        label: "owner-cross-campaign",
+        status: 403,
+      },
+      {
+        body: canonicalAdoptionBody,
+        campaignId: campaign.payload.id,
+        code: "AUTH_CSRF_INVALID",
+        headers: {
+          ...ownerA.adoptionHeaders(
+            "trace-m246-negative-csrf",
+            "m246-negative-csrf-1",
+          ),
+          "x-csrf-token": badCsrfToken,
+        },
+        label: "bad-csrf",
+        status: 403,
+      },
+      {
+        body: canonicalAdoptionBody,
+        campaignId: campaign.payload.id,
+        code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+        headers: {
+          ...ownerA.adoptionHeaders(
+            "trace-m246-negative-forged-role",
+            "m246-negative-forged-role-1",
+          ),
+          "x-campaign-os-role": "project_owner",
+        },
+        label: "forged-role-header",
+        status: 400,
+      },
+      {
+        body: canonicalAdoptionBody,
+        campaignId: campaign.payload.id,
+        code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+        headers: {
+          ...ownerA.adoptionHeaders(
+            "trace-m246-negative-forged-subject",
+            "m246-negative-forged-subject-1",
+          ),
+          "x-wallet-address": ownerAddress,
+        },
+        label: "forged-subject-header",
+        status: 400,
+      },
+      {
+        body: canonicalAdoptionBody,
+        campaignId: campaign.payload.id,
+        code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+        headers: {
+          ...ownerA.adoptionHeaders(
+            "trace-m246-negative-forged-capability",
+            "m246-negative-forged-capability-1",
+          ),
+          "x-campaign-os-capabilities": "campaign:write,task:build",
+        },
+        label: "forged-capability-header",
+        status: 400,
+      },
+      {
+        body: JSON.stringify({
+          template: {
+            templateCode: selected!.templateCode,
+            version: selected!.version,
+          },
+          verificationType: "MANUAL",
+        }),
+        campaignId: campaign.payload.id,
+        code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+        headers: ownerA.adoptionHeaders(
+          "trace-m246-negative-forged-canonical",
+          "m246-negative-forged-canonical-1",
+        ),
+        label: "forged-root-canonical-field",
+        status: 400,
+      },
+      {
+        body: JSON.stringify({
+          template: {
+            checksum: selected!.checksum,
+            templateCode: selected!.templateCode,
+            version: selected!.version,
+          },
+        }),
+        campaignId: campaign.payload.id,
+        code: "TASK_TEMPLATE_ARGUMENT_INVALID",
+        headers: ownerA.adoptionHeaders(
+          "trace-m246-negative-forged-checksum",
+          "m246-negative-forged-checksum-1",
+        ),
+        label: "forged-nested-canonical-field",
+        status: 400,
+      },
+    ] as const;
+    const negativeEvidence: NegativeAdoptionEvidence[] = [];
+    const evidencePool = createPool(databaseUrl, 2);
+    try {
+      for (const negativeCase of negativeCases) {
+        const before = await readTaskRowCount(evidencePool);
+        const response = await requestApi<never>(
+          runtimeA.server,
+          `/api/campaigns/${negativeCase.campaignId}/tasks/from-template`,
+          {
+            body: negativeCase.body,
+            headers: negativeCase.headers,
+            method: "POST",
+          },
+        );
+        const after = await readTaskRowCount(evidencePool);
+        expect(response.status, negativeCase.label).toBe(negativeCase.status);
+        expect(response.body, negativeCase.label).toMatchObject({
+          error: { code: negativeCase.code },
+          ok: false,
+        });
+        expect(response.body.data, negativeCase.label).toBeUndefined();
+        expect(after, negativeCase.label).toBe(before);
+        expect(response.response.headers.get("set-cookie"), negativeCase.label).toBeNull();
+
+        const safeResponse = JSON.stringify(response.body);
+        for (const sensitiveValue of [
+          ownerA.cookieHeader,
+          ownerA.csrfToken,
+          ownerA.sessionId,
+          participantA.cookieHeader,
+          participantA.csrfToken,
+          participantA.sessionId,
+          participantAddress,
+          badCsrfToken,
+        ]) {
+          expect(safeResponse, negativeCase.label).not.toContain(sensitiveValue);
+        }
+        expect(safeResponse, negativeCase.label).not.toMatch(
+          /campaign_tasks|credential|publicKey|set-cookie|signature|stack|postgres|\b(?:DELETE|INSERT|SELECT|UPDATE)\b/iu,
+        );
+        negativeEvidence.push(Object.freeze({
+          after,
+          before,
+          code: negativeCase.code,
+          label: negativeCase.label,
+          status: response.status,
+        }));
+      }
+    } finally {
+      await evidencePool.end();
+    }
+    expect(negativeEvidence).toHaveLength(negativeCases.length);
+    expect(negativeEvidence.every(({ after, before }) => after - before === 0)).toBe(true);
+
     const runtimeAUrl = runtimeA.server.url;
     await runtimeA.stop();
     expect(runtimeA.server.server.listening).toBe(false);
@@ -870,19 +976,70 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       endCalls: 1,
       ended: true,
     });
-    expect(runtimeA.auth.state()).toMatchObject({ accepting: false, stopCalls: 1 });
+    expect(runtimeA.walletAuthentication.runtime.state()).toMatchObject({
+      accepting: false,
+      activeOperationCount: 0,
+      controllerCount: 0,
+    });
     await waitForDatabaseSessionsToDrain();
     await expect(fetch(`${runtimeAUrl}/api/health`, {
       signal: AbortSignal.timeout(500),
     })).rejects.toBeDefined();
 
-    const runtimeB = await startRuntime(runtimePorts[1]!);
+    const runtimeB = await startRuntime(runtimePorts[1]!, adminAddress);
     expect(runtimeB.server.url).not.toBe(runtimeAUrl);
     expect(runtimeB.server).not.toBe(runtimeA.server);
     expect(runtimeB.runtime).not.toBe(runtimeA.runtime);
     expect(runtimeB.catalogPool.identity).not.toBe(runtimeA.catalogPool.identity);
-    const ownerB = await issueSession(runtimeB, ownerAddress, "project_owner", "trace-m246-owner-b");
-    const adminB = await issueSession(runtimeB, adminAddress, "review_operator", "trace-m246-admin-b");
+    expect(runtimeB.walletAuthentication.runtime).not.toBe(runtimeA.walletAuthentication.runtime);
+
+    const restoredOwnerDetail = requireSuccess(await requestApi<CatalogTemplateProjection>(
+      runtimeB.server,
+      detailPath,
+      { headers: ownerA.catalogHeaders("trace-m246-owner-restored-b") },
+    ));
+    const restoredAdminDetail = requireSuccess(await requestApi<CatalogTemplateProjection>(
+      runtimeB.server,
+      detailPath,
+      { headers: adminA.catalogHeaders("trace-m246-admin-restored-b") },
+    ));
+    expect(restoredOwnerDetail).toEqual(ownerDetailA);
+    expect(restoredAdminDetail).toEqual(adminDetailA);
+
+    const logout = requireSuccess(await requestApi<{ readonly revoked: boolean }>(
+      runtimeB.server,
+      "/api/wallet/auth/logout",
+      {
+        headers: {
+          cookie: ownerA.cookieHeader,
+          origin: TEST_ORIGIN,
+          "x-campaign-os-csrf": ownerA.csrfToken,
+          "x-campaign-os-trace-id": "trace-m246-owner-logout-b",
+        },
+        method: "POST",
+      },
+    ));
+    expect(logout.revoked).toBe(true);
+    const revokedOwnerRead = await requestApi<CatalogTemplateProjection>(
+      runtimeB.server,
+      detailPath,
+      { headers: ownerA.catalogHeaders("trace-m246-owner-revoked-b") },
+    );
+    expect(revokedOwnerRead.status).toBe(401);
+    expect(revokedOwnerRead.body.ok).toBe(false);
+
+    const ownerB = await issueSession(
+      runtimeB,
+      ownerSigner,
+      "trace-m246-owner-b",
+    );
+    const adminB = await issueSession(
+      runtimeB,
+      adminSigner,
+      "trace-m246-admin-b",
+    );
+    expect(ownerB.sessionId).not.toBe(ownerA.sessionId);
+    expect(adminB.sessionId).not.toBe(adminA.sessionId);
 
     const listB = requireSuccess(await requestApi<CatalogListData>(
       runtimeB.server,
@@ -927,7 +1084,11 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       endCalls: 1,
       ended: true,
     });
-    expect(runtimeB.auth.state()).toMatchObject({ accepting: false, stopCalls: 1 });
+    expect(runtimeB.walletAuthentication.runtime.state()).toMatchObject({
+      accepting: false,
+      activeOperationCount: 0,
+      controllerCount: 0,
+    });
     await waitForDatabaseSessionsToDrain();
 
     console.info(`WP06 Runtime A/B acceptance ${JSON.stringify({
@@ -935,14 +1096,25 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       listenersDistinct: true,
       listenersReleased: { A: true, B: true },
       routes: [
+        "POST /api/wallet/auth/challenges",
+        "POST /api/wallet/auth/sessions",
+        "POST /api/wallet/auth/logout",
         "GET /api/task-templates",
         "GET /api/task-templates/:templateCode/versions/:version",
         "POST /api/campaigns",
         "POST /api/campaigns/:campaignId/tasks/from-template",
         "GET /api/owner/campaigns/:campaignId",
       ],
+      revokedSessionRejected: revokedOwnerRead.status === 401,
       runtimeDistinct: true,
+      negativeMatrix: negativeEvidence.map(({ after, before, code, label, status }) => ({
+        code,
+        label,
+        rowDelta: after - before,
+        status,
+      })),
       snapshotMismatches: mismatches.length,
+      walletAuthDurableSessionRestored: true,
     })}`);
   }, 120_000);
 });

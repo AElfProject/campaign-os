@@ -230,9 +230,12 @@ Ordinary tests safely skip the real PostgreSQL suite. Full acceptance requires a
 
 ```bash
 npm test
+npm run test:task-template-catalog
 CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1 \
   CAMPAIGN_OS_TEST_DATABASE_URL="$LOCAL_CAMPAIGN_OS_DATABASE_URL" \
   npm run test:postgres
+CAMPAIGN_OS_TEST_DATABASE_URL="$LOCAL_CAMPAIGN_OS_DATABASE_URL" \
+  npm run test:task-template-catalog:postgres:required
 CAMPAIGN_OS_REQUIRE_POSTGRES_TESTS=1 \
   CAMPAIGN_OS_REQUIRE_PROVIDER_TESTS=1 \
   CAMPAIGN_OS_TEST_DATABASE_URL="$LOCAL_CAMPAIGN_OS_DATABASE_URL" \
