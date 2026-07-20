@@ -1,7 +1,9 @@
 // @vitest-environment node
 
 import { randomBytes, randomUUID } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
+import { resolve } from "node:path";
 import AElf from "aelf-sdk";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -197,6 +199,18 @@ interface RuntimeHarness {
   readonly walletAuthentication: WalletAuthenticationServerComposition;
 }
 
+interface ChildRuntimeExit {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+}
+
+interface ChildRuntimeHarness {
+  readonly child: ChildProcess;
+  readonly processId: number;
+  readonly url: string;
+  stop(): Promise<void>;
+}
+
 const EOA_BINDING = Object.freeze({
   accountType: "EOA",
   adapterId: "portkey-discover-eoa",
@@ -367,18 +381,24 @@ const reserveLoopbackPorts = async (count: number): Promise<readonly number[]> =
   return Object.freeze(reservations.map(({ port }) => port));
 };
 
-const requestApi = async <TData>(
-  server: CampaignOsApiServerHandle,
+const requestApiAtUrl = async <TData>(
+  apiUrl: string,
   path: string,
   init: RequestInit = {},
 ): Promise<HttpResult<TData>> => {
-  const response = await fetch(`${server.url}${path}`, init);
+  const response = await fetch(`${apiUrl}${path}`, init);
   return {
     body: await response.json() as ApiEnvelope<TData>,
     response,
     status: response.status,
   };
 };
+
+const requestApi = async <TData>(
+  server: CampaignOsApiServerHandle,
+  path: string,
+  init: RequestInit = {},
+): Promise<HttpResult<TData>> => requestApiAtUrl(server.url, path, init);
 
 const requireSuccess = <TData>(
   result: HttpResult<TData>,
@@ -394,9 +414,10 @@ const requireSuccess = <TData>(
 };
 
 postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
-  const databaseName = `campaign_os_m246_runtime_${process.pid}_${randomUUID()
+  const databaseName = `campaign_os_m246_stage_test_${process.pid}_${randomUUID()
     .replace(/-/g, "")
     .slice(0, 8)}`;
+  const openChildRuntimes = new Set<ChildRuntimeHarness>();
   const openRuntimes = new Set<RuntimeHarness>();
   let administratorPool: pg.Pool | undefined;
   let databaseUrl = "";
@@ -475,14 +496,14 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
   };
 
   const issueSession = async (
-    runtime: RuntimeHarness,
+    apiUrl: string,
     signer: EphemeralSigner,
     traceId: string,
     expectedAuthority: typeof STANDARD_SESSION_AUTHORITY | typeof ADMIN_SESSION_AUTHORITY,
   ): Promise<IssuedLiveSession> => {
     const address = AElf.wallet.getAddressFromPubKey(signer.getPublic());
-    const challenge = requireSuccess(await requestApi<WalletChallengeData>(
-      runtime.server,
+    const challenge = requireSuccess(await requestApiAtUrl<WalletChallengeData>(
+      apiUrl,
       "/api/wallet/auth/challenges",
       {
         body: JSON.stringify({
@@ -504,8 +525,8 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       network: "testnet",
       walletAddress: address,
     });
-    const sessionResult = await requestApi<WalletSessionData>(
-      runtime.server,
+    const sessionResult = await requestApiAtUrl<WalletSessionData>(
+      apiUrl,
       "/api/wallet/auth/sessions",
       {
         body: JSON.stringify({
@@ -629,12 +650,172 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     throw new Error("Task template catalog runtime database sessions did not drain.");
   };
 
+  const childRuntimeEnvironment = (
+    port: number,
+  ): NodeJS.ProcessEnv => {
+    const connection = new URL(databaseUrl);
+    const password = connection.password ? decodeURIComponent(connection.password) : undefined;
+    connection.password = "";
+    return Object.freeze({
+      ...process.env,
+      CAMPAIGN_OS_API_CORS_ENABLED: "true",
+      CAMPAIGN_OS_API_CORS_ORIGINS: TEST_ORIGIN,
+      CAMPAIGN_OS_API_HOST: "127.0.0.1",
+      CAMPAIGN_OS_API_PORT: String(port),
+      CAMPAIGN_OS_CAMPAIGN_DB_MODE: "postgres",
+      CAMPAIGN_OS_DATABASE_CONNECT_TIMEOUT_MS: "2000",
+      CAMPAIGN_OS_DATABASE_IDLE_TIMEOUT_MS: "2000",
+      CAMPAIGN_OS_DATABASE_POOL_MAX: "20",
+      CAMPAIGN_OS_DATABASE_SSL_MODE: "disable",
+      CAMPAIGN_OS_DATABASE_URL: connection.toString(),
+      CAMPAIGN_OS_STAGE_DISPOSABLE_DATABASE_ACK: "disposable-stage-approved",
+      CAMPAIGN_OS_TASK_TEMPLATE_CATALOG_ENABLED: "1",
+      CAMPAIGN_OS_WALLET_AUTH_ALLOWED_ORIGINS: TEST_ORIGIN,
+      CAMPAIGN_OS_WALLET_AUTH_ALLOW_INSECURE_LOOPBACK_COOKIE: "1",
+      CAMPAIGN_OS_WALLET_AUTH_BINDINGS_JSON: JSON.stringify([EOA_BINDING]),
+      CAMPAIGN_OS_WALLET_AUTH_CSRF_SECRET: TEST_CSRF_SECRET,
+      CAMPAIGN_OS_WALLET_AUTH_ENABLED: "1",
+      CAMPAIGN_OS_WALLET_AUTH_ENVIRONMENT: "stage",
+      CAMPAIGN_OS_WALLET_AUTH_SHUTDOWN_TIMEOUT_MS: "9000",
+      ...(password ? { PGPASSWORD: password } : {}),
+    });
+  };
+
+  const waitForChildExit = async (
+    exitPromise: Promise<ChildRuntimeExit>,
+    timeoutMs: number,
+  ): Promise<ChildRuntimeExit> => new Promise((resolveExit, rejectExit) => {
+    const timeout = setTimeout(() => {
+      rejectExit(new Error("Task template catalog child runtime did not exit in time."));
+    }, timeoutMs);
+    exitPromise.then(
+      (exit) => {
+        clearTimeout(timeout);
+        resolveExit(exit);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        rejectExit(error);
+      },
+    );
+  });
+
+  const startChildRuntime = async (
+    env: NodeJS.ProcessEnv,
+  ): Promise<ChildRuntimeHarness> => {
+    const child = spawn(process.execPath, [
+      resolve(process.cwd(), "node_modules/vite-node/vite-node.mjs"),
+      "--script",
+      resolve(process.cwd(), "src/server/taskTemplateCatalogStageRuntime.ts"),
+      "--listen",
+    ], {
+      cwd: process.cwd(),
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const processId = child.pid;
+    if (!processId || !child.stdout || !child.stderr) {
+      child.kill("SIGKILL");
+      throw new Error("Task template catalog child runtime could not be observed.");
+    }
+    child.stderr.resume();
+    const exitPromise = new Promise<ChildRuntimeExit>((resolveExit) => {
+      child.once("exit", (code, signal) => resolveExit({ code, signal }));
+    });
+    let ready: Readonly<{ apiUrl: string; processId: number }>;
+    try {
+      ready = await new Promise((resolveReady, rejectReady) => {
+        let buffer = "";
+        const cleanup = () => {
+          clearTimeout(timeout);
+          child.stdout?.off("data", onData);
+          child.off("exit", onExit);
+        };
+        const onExit = () => {
+          cleanup();
+          rejectReady(new Error("Task template catalog child runtime exited before ready."));
+        };
+        const onData = (chunk: Buffer | string) => {
+          buffer += chunk.toString();
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            let candidate: Record<string, unknown>;
+            try {
+              candidate = JSON.parse(line) as Record<string, unknown>;
+            } catch {
+              continue;
+            }
+            if (candidate.event !== "task_template_catalog_stage_runtime.ready") {
+              continue;
+            }
+            if (
+              typeof candidate.apiUrl !== "string"
+              || !Number.isSafeInteger(candidate.processId)
+              || candidate.processId !== processId
+            ) {
+              cleanup();
+              rejectReady(new Error("Task template catalog child readiness was invalid."));
+              return;
+            }
+            cleanup();
+            resolveReady({ apiUrl: candidate.apiUrl, processId });
+            return;
+          }
+        };
+        const timeout = setTimeout(() => {
+          cleanup();
+          rejectReady(new Error("Task template catalog child runtime did not become ready."));
+        }, 20_000);
+        child.stdout?.on("data", onData);
+        child.once("exit", onExit);
+      });
+    } catch (error) {
+      child.kill("SIGKILL");
+      await exitPromise;
+      throw error;
+    }
+    child.stdout.resume();
+
+    let stopPromise: Promise<void> | undefined;
+    const harness: ChildRuntimeHarness = Object.freeze({
+      child,
+      processId: ready.processId,
+      stop: () => {
+        if (stopPromise) {
+          return stopPromise;
+        }
+        stopPromise = (async () => {
+          if (child.exitCode === null && child.signalCode === null && !child.kill("SIGTERM")) {
+            throw new Error("Task template catalog child runtime rejected shutdown.");
+          }
+          let exit: ChildRuntimeExit;
+          try {
+            exit = await waitForChildExit(exitPromise, 15_000);
+          } catch (error) {
+            child.kill("SIGKILL");
+            await exitPromise;
+            throw error;
+          }
+          if (exit.code !== 0 || exit.signal !== null) {
+            throw new Error("Task template catalog child runtime did not drain cleanly.");
+          }
+          openChildRuntimes.delete(harness);
+        })();
+        return stopPromise;
+      },
+      url: ready.apiUrl,
+    });
+    openChildRuntimes.add(harness);
+    return harness;
+  };
+
   beforeAll(async () => {
     if (!/^[a-z0-9_]+$/.test(databaseName)) {
       throw new Error("Generated PostgreSQL runtime database name is invalid.");
     }
-    runtimePorts = await reserveLoopbackPorts(2);
-    expect(new Set(runtimePorts).size).toBe(2);
+    runtimePorts = await reserveLoopbackPorts(3);
+    expect(new Set(runtimePorts).size).toBe(3);
     administratorPool = createPool(TEST_DATABASE_URL!, 4);
     await administratorPool.query(`CREATE DATABASE "${databaseName}"`);
     databaseUrl = isolatedDatabaseUrl(TEST_DATABASE_URL!, databaseName);
@@ -658,6 +839,13 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
 
   afterAll(async () => {
     const failures: unknown[] = [];
+    const childRuntimeResults = await Promise.allSettled(
+      [...openChildRuntimes].map((runtime) => runtime.stop()),
+    );
+    failures.push(...childRuntimeResults
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason));
+    openChildRuntimes.clear();
     const runtimeResults = await Promise.allSettled(
       [...openRuntimes].map((runtime) => runtime.stop()),
     );
@@ -692,19 +880,19 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     const participantAddress = AElf.wallet.getAddressFromPubKey(participantSigner.getPublic());
     const runtimeA = await startRuntime(runtimePorts[0]!, adminAddress);
     const ownerA = await issueSession(
-      runtimeA,
+      runtimeA.server.url,
       ownerSigner,
       "trace-m246-owner-a",
       STANDARD_SESSION_AUTHORITY,
     );
     const adminA = await issueSession(
-      runtimeA,
+      runtimeA.server.url,
       adminSigner,
       "trace-m246-admin-a",
       ADMIN_SESSION_AUTHORITY,
     );
     const participantA = await issueSession(
-      runtimeA,
+      runtimeA.server.url,
       participantSigner,
       "trace-m246-participant-a",
       STANDARD_SESSION_AUTHORITY,
@@ -1093,13 +1281,13 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
     expect(revokedOwnerRead.body.ok).toBe(false);
 
     const ownerB = await issueSession(
-      runtimeB,
+      runtimeB.server.url,
       ownerSigner,
       "trace-m246-owner-b",
       STANDARD_SESSION_AUTHORITY,
     );
     const adminB = await issueSession(
-      runtimeB,
+      runtimeB.server.url,
       adminSigner,
       "trace-m246-admin-b",
       ADMIN_SESSION_AUTHORITY,
@@ -1183,4 +1371,168 @@ postgresSuite("PostgreSQL task template catalog Runtime A/B acceptance", () => {
       walletAuthDurableSessionRestored: true,
     })}`);
   }, 120_000);
+
+  it("recovers durable facts across separate processes on one immutable endpoint", async () => {
+    const apiPort = runtimePorts[2]!;
+    const apiUrl = `http://127.0.0.1:${apiPort}`;
+    const immutableEnv = childRuntimeEnvironment(apiPort);
+    const ownerSigner = AElf.wallet.ellipticEc.genKeyPair({ entropy: randomBytes(32) });
+    const revokedSigner = AElf.wallet.ellipticEc.genKeyPair({ entropy: randomBytes(32) });
+    const ownerAddress = AElf.wallet.getAddressFromPubKey(ownerSigner.getPublic());
+
+    const runtimeA = await startChildRuntime(immutableEnv);
+    expect(runtimeA.url).toBe(apiUrl);
+    expect(runtimeA.child.pid).toBe(runtimeA.processId);
+    const ownerA = await issueSession(
+      runtimeA.url,
+      ownerSigner,
+      "trace-m246-process-owner-a",
+      STANDARD_SESSION_AUTHORITY,
+    );
+    const revokedA = await issueSession(
+      runtimeA.url,
+      revokedSigner,
+      "trace-m246-process-revoked-a",
+      STANDARD_SESSION_AUTHORITY,
+    );
+    const listA = requireSuccess(await requestApiAtUrl<CatalogListData>(
+      runtimeA.url,
+      "/api/task-templates?status=active&verification=WALLET&wallet=ANY&locale=en-US&limit=24",
+      { headers: ownerA.catalogHeaders("trace-m246-process-list-a") },
+    ));
+    const selected = listA.items.find((template) =>
+      template.adoptionMode === "direct" && template.verificationType === "WALLET"
+    );
+    expect(selected).toBeDefined();
+    const detailPath = `/api/task-templates/${selected!.templateCode}/versions/${selected!.version}`;
+    const catalogDetailA = requireSuccess(await requestApiAtUrl<CatalogTemplateProjection>(
+      runtimeA.url,
+      detailPath,
+      { headers: ownerA.catalogHeaders("trace-m246-process-detail-a") },
+    ));
+    const campaign = requireSuccess(await requestApiAtUrl<CampaignCreateData>(
+      runtimeA.url,
+      "/api/campaigns",
+      {
+        body: JSON.stringify({
+          duration: "2026-10-01/2026-10-31",
+          endTime: "2026-10-31T23:59:59.000Z",
+          goal: "M246 immutable-endpoint process restart acceptance",
+          ownerAddress,
+          projectId: "m246-process-restart-acceptance",
+          rewardDescription: "Durable process restart acceptance reward.",
+          startTime: "2026-10-01T00:00:00.000Z",
+        }),
+        headers: ownerA.mutationHeaders("trace-m246-process-campaign-a"),
+        method: "POST",
+      },
+    ));
+    const adoption = requireSuccess(await requestApiAtUrl<CatalogAdoptionData>(
+      runtimeA.url,
+      `/api/campaigns/${campaign.payload.id}/tasks/from-template`,
+      {
+        body: JSON.stringify({
+          template: {
+            templateCode: selected!.templateCode,
+            version: selected!.version,
+          },
+        }),
+        headers: ownerA.adoptionHeaders(
+          "trace-m246-process-adopt-a",
+          "m246-process-restart-adoption-1",
+        ),
+        method: "POST",
+      },
+    ), 201);
+    const campaignPath = `/api/owner/campaigns/${campaign.payload.id}`;
+    const campaignDetailA = requireSuccess(await requestApiAtUrl<CampaignDetailData>(
+      runtimeA.url,
+      campaignPath,
+      { headers: ownerA.mutationHeaders("trace-m246-process-campaign-detail-a") },
+    ));
+    const durableTaskA = await readTaskSnapshot(adoption.taskId);
+    const revoked = requireSuccess(await requestApiAtUrl<{ readonly revoked: boolean }>(
+      runtimeA.url,
+      "/api/wallet/auth/logout",
+      {
+        headers: {
+          cookie: revokedA.cookieHeader,
+          origin: TEST_ORIGIN,
+          "x-campaign-os-csrf": revokedA.csrfToken,
+          "x-campaign-os-trace-id": "trace-m246-process-revoke-a",
+        },
+        method: "POST",
+      },
+    ));
+    expect(revoked.revoked).toBe(true);
+
+    await runtimeA.stop();
+    await waitForDatabaseSessionsToDrain();
+    await expect(fetch(`${apiUrl}/api/health`, {
+      signal: AbortSignal.timeout(500),
+    })).rejects.toBeDefined();
+
+    const runtimeB = await startChildRuntime(immutableEnv);
+    expect(runtimeB.url).toBe(apiUrl);
+    expect(runtimeB.processId).not.toBe(runtimeA.processId);
+    expect(runtimeB.child).not.toBe(runtimeA.child);
+    const restoredOwnerSession = requireSuccess(await requestApiAtUrl<WalletSessionData>(
+      runtimeB.url,
+      "/api/wallet/auth/session",
+      { headers: ownerA.catalogHeaders("trace-m246-process-owner-restored-b") },
+    ));
+    expect(restoredOwnerSession.session.sessionId).toBe(ownerA.sessionId);
+    const revokedSession = await requestApiAtUrl<WalletSessionData>(
+      runtimeB.url,
+      "/api/wallet/auth/session",
+      { headers: revokedA.catalogHeaders("trace-m246-process-revoked-b") },
+    );
+    expect(revokedSession.status).toBe(401);
+    expect(revokedSession.body.ok).toBe(false);
+
+    const catalogDetailB = requireSuccess(await requestApiAtUrl<CatalogTemplateProjection>(
+      runtimeB.url,
+      detailPath,
+      { headers: ownerA.catalogHeaders("trace-m246-process-detail-b") },
+    ));
+    const campaignDetailB = requireSuccess(await requestApiAtUrl<CampaignDetailData>(
+      runtimeB.url,
+      campaignPath,
+      { headers: ownerA.mutationHeaders("trace-m246-process-campaign-detail-b") },
+    ));
+    const durableTaskB = await readTaskSnapshot(adoption.taskId);
+    const ownerB = await issueSession(
+      runtimeB.url,
+      ownerSigner,
+      "trace-m246-process-owner-b",
+      STANDARD_SESSION_AUTHORITY,
+    );
+    expect(ownerB.sessionId).not.toBe(ownerA.sessionId);
+    const mismatches = [
+      ["catalog detail", catalogDetailA, catalogDetailB],
+      ["Campaign detail", campaignDetailA.payload, campaignDetailB.payload],
+      ["durable Task snapshot", durableTaskA, durableTaskB],
+    ].flatMap(([label, expected, actual]) =>
+      JSON.stringify(expected) === JSON.stringify(actual) ? [] : [label]
+    );
+    expect(mismatches).toEqual([]);
+
+    await runtimeB.stop();
+    await waitForDatabaseSessionsToDrain();
+    await expect(fetch(`${apiUrl}/api/health`, {
+      signal: AbortSignal.timeout(500),
+    })).rejects.toBeDefined();
+
+    console.info(`WP06 process restart acceptance ${JSON.stringify({
+      apiEndpointReused: runtimeA.url === runtimeB.url,
+      configuredEnvironmentReused: true,
+      durableSessionRestored: restoredOwnerSession.session.sessionId === ownerA.sessionId,
+      freshSessionIssued: ownerB.sessionId !== ownerA.sessionId,
+      listenerReleasedAfterA: true,
+      listenerReleasedAfterB: true,
+      processIdentitiesDistinct: runtimeA.processId !== runtimeB.processId,
+      revokedSessionRejected: revokedSession.status === 401,
+      snapshotMismatches: mismatches.length,
+    })}`);
+  }, 180_000);
 });

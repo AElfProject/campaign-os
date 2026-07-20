@@ -334,6 +334,7 @@ describe("task template catalog stage runtime", () => {
       environment: "stage",
       event: "task_template_catalog_stage_runtime.ready",
       migrationId: REQUIRED_CATALOG_MIGRATION_ID,
+      processId: process.pid,
       productionReady: false,
       stageProductReviewReady: false,
       stageReady: true,

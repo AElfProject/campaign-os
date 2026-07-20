@@ -360,6 +360,7 @@ export const runTaskTemplateCatalogStageRuntimeCli = async (
     environment: state.environment,
     event: "task_template_catalog_stage_runtime.ready",
     migrationId: REQUIRED_CATALOG_MIGRATION_ID,
+    processId: process.pid,
     productionReady: state.productionReady,
     stageProductReviewReady: state.stageProductReviewReady,
     stageReady: state.stageReady,
