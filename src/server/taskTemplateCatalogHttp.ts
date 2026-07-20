@@ -150,6 +150,7 @@ const CATALOG_STATUSES = new Set(["active", "deprecated", "retired"] as const);
 const VERIFICATION_TYPES = new Set(["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const);
 const WALLET_COMPATIBILITIES = new Set(["ANY", "AA_ONLY", "EOA_ONLY"] as const);
 const SAFE_FIELD_PATTERN = /^[A-Za-z][A-Za-z0-9_.\[\]-]{0,127}$/u;
+const SERVICE_AUTHORIZATION_DENIAL_FIELD = "resource";
 
 const operationForRoute = (
   routeId: TaskTemplateCatalogHttpRouteId,
@@ -189,13 +190,16 @@ const success = <TData>(
   status,
 });
 
-const statusForCatalogCode = (code: TaskTemplateCatalogErrorCode): number => {
+const statusForCatalogCode = (
+  code: TaskTemplateCatalogErrorCode,
+  operation: Exclude<TaskTemplateCatalogOperation, "close">,
+): number => {
   switch (code) {
     case "TASK_TEMPLATE_ARGUMENT_INVALID":
     case "TASK_TEMPLATE_CURSOR_INVALID":
       return 400;
     case "TASK_TEMPLATE_NOT_FOUND":
-      return 404;
+      return operation === "list" ? 503 : 404;
     case "TASK_TEMPLATE_ADOPTION_CONFLICT":
       return 409;
     case "TASK_TEMPLATE_STALE":
@@ -256,6 +260,20 @@ export const createTaskTemplateCatalogHttpFailure = ({
 }): TaskTemplateCatalogHttpResponse => {
   const safeTraceId = TRACE_ID_PATTERN.test(traceId) ? traceId : "task-template-catalog-http";
   const safeField = SAFE_FIELD_PATTERN.test(field) ? field : "request";
+  if (
+    operation === "list"
+    && code === "TASK_TEMPLATE_NOT_FOUND"
+    && field === SERVICE_AUTHORIZATION_DENIAL_FIELD
+  ) {
+    return failure({
+      code: "AUTH_FORBIDDEN",
+      field: "authorization",
+      operation,
+      retryable: false,
+      status: 403,
+      traceId: safeTraceId,
+    });
+  }
   if (code.startsWith("AUTH_")) {
     return failure({
       code: code as TaskTemplateCatalogHttpAuthErrorCode,
@@ -267,16 +285,20 @@ export const createTaskTemplateCatalogHttpFailure = ({
     });
   }
   const catalogCode = code as TaskTemplateCatalogErrorCode;
+  const safeCatalogCode = operation === "list" && catalogCode === "TASK_TEMPLATE_NOT_FOUND"
+    ? "TASK_TEMPLATE_CATALOG_UNAVAILABLE"
+    : catalogCode;
+  const safeCatalogField = safeCatalogCode === catalogCode ? safeField : "catalog";
   return failure({
-    code: catalogCode,
-    field: safeField,
+    code: safeCatalogCode,
+    field: safeCatalogField,
     operation,
     retryable: new Set<TaskTemplateCatalogErrorCode>([
       "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
       "TASK_TEMPLATE_CLEANUP_FAILED",
       "TASK_TEMPLATE_SCHEMA_NOT_READY",
-    ]).has(catalogCode),
-    status: statusForCatalogCode(catalogCode),
+    ]).has(safeCatalogCode),
+    status: statusForCatalogCode(safeCatalogCode, operation),
     traceId: safeTraceId,
   });
 };

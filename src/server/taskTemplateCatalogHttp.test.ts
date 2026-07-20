@@ -128,6 +128,23 @@ const categoryFilter = (itemLengths: readonly number[]): string => itemLengths
   .map((length, index) => `c${index}${"a".repeat(length - 2)}`)
   .join(",");
 
+const PRIVATE_ERROR_MARKER = "private-catalog-error-marker";
+
+const catalogNotFound = (
+  field: string,
+  operation: "adopt" | "detail" | "list",
+  traceId: string,
+): TaskTemplateCatalogError => {
+  const error = new TaskTemplateCatalogError({
+    code: "TASK_TEMPLATE_NOT_FOUND",
+    field,
+    operation,
+    traceId,
+  });
+  error.message = PRIVATE_ERROR_MARKER;
+  return error;
+};
+
 const baseRequest = (
   overrides: Partial<TaskTemplateCatalogHttpRequest>,
 ): TaskTemplateCatalogHttpRequest => ({
@@ -556,10 +573,154 @@ describe("task template catalog HTTP adapter", () => {
     });
   });
 
+  it("maps a stable list authorization denial to the exact safe 403 response", async () => {
+    const service = createService();
+    vi.mocked(service.list).mockRejectedValue(catalogNotFound(
+      "resource",
+      "list",
+      "trace-catalog-http-list-auth-denied",
+    ));
+
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      traceId: "trace-catalog-http-list-auth-denied",
+    }));
+
+    expect(response).toEqual({
+      body: {
+        error: {
+          code: "AUTH_FORBIDDEN",
+          field: "authorization",
+          operation: "list",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-list-auth-denied",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-list-auth-denied",
+      },
+      status: 403,
+    });
+    expect(JSON.stringify(response)).not.toContain(PRIVATE_ERROR_MARKER);
+  });
+
+  it("normalizes an unexpected list not-found to the exact safe 503 response", async () => {
+    const service = createService();
+    vi.mocked(service.list).mockRejectedValue(catalogNotFound(
+      "template",
+      "list",
+      "trace-catalog-http-list-unavailable",
+    ));
+
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      traceId: "trace-catalog-http-list-unavailable",
+    }));
+
+    expect(response).toEqual({
+      body: {
+        error: {
+          code: "TASK_TEMPLATE_CATALOG_UNAVAILABLE",
+          field: "catalog",
+          operation: "list",
+          retryable: true,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-list-unavailable",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-list-unavailable",
+      },
+      status: 503,
+    });
+    expect(JSON.stringify(response)).not.toContain(PRIVATE_ERROR_MARKER);
+  });
+
+  it("retains the exact declared detail not-found response", async () => {
+    const service = createService();
+    vi.mocked(service.detail).mockRejectedValue(catalogNotFound(
+      "template",
+      "detail",
+      "trace-catalog-http-detail-not-found",
+    ));
+
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      params: { templateCode: directTemplate.templateCode, version: String(directTemplate.version) },
+      requestTarget: `/api/task-templates/${directTemplate.templateCode}/versions/${directTemplate.version}`,
+      routeId: "task-templates.detail",
+      traceId: "trace-catalog-http-detail-not-found",
+    }));
+
+    expect(response).toEqual({
+      body: {
+        error: {
+          code: "TASK_TEMPLATE_NOT_FOUND",
+          field: "template",
+          operation: "detail",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-detail-not-found",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-detail-not-found",
+      },
+      status: 404,
+    });
+    expect(JSON.stringify(response)).not.toContain(PRIVATE_ERROR_MARKER);
+  });
+
+  it("retains the exact declared adoption not-found response", async () => {
+    const service = createService();
+    vi.mocked(service.adopt).mockRejectedValue(catalogNotFound(
+      "campaign",
+      "adopt",
+      "trace-catalog-http-adopt-not-found",
+    ));
+
+    const response = await createTaskTemplateCatalogHttpHandler({ service }).handle(baseRequest({
+      body: JSON.stringify({
+        template: {
+          templateCode: directTemplate.templateCode,
+          version: directTemplate.version,
+        },
+      }),
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "catalog-key-404",
+        "x-csrf-token": "c".repeat(16),
+      },
+      params: { campaignId: "campaign-catalog-http-1" },
+      requestTarget: "/api/campaigns/campaign-catalog-http-1/tasks/from-template",
+      routeId: "campaigns.tasks.from-template",
+      traceId: "trace-catalog-http-adopt-not-found",
+    }));
+
+    expect(response).toEqual({
+      body: {
+        error: {
+          code: "TASK_TEMPLATE_NOT_FOUND",
+          field: "campaign",
+          operation: "adopt",
+          retryable: false,
+        },
+        ok: false,
+        traceId: "trace-catalog-http-adopt-not-found",
+      },
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-trace-id": "trace-catalog-http-adopt-not-found",
+      },
+      status: 404,
+    });
+    expect(JSON.stringify(response)).not.toContain(PRIVATE_ERROR_MARKER);
+  });
+
   it.each([
     ["TASK_TEMPLATE_ARGUMENT_INVALID", 400],
     ["TASK_TEMPLATE_CURSOR_INVALID", 400],
-    ["TASK_TEMPLATE_NOT_FOUND", 404],
     ["TASK_TEMPLATE_ADOPTION_CONFLICT", 409],
     ["TASK_TEMPLATE_STALE", 422],
     ["TASK_TEMPLATE_ADOPTION_DEFERRED", 422],
