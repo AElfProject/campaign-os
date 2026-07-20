@@ -1,13 +1,21 @@
 import { randomUUID } from "node:crypto";
 import {
+  TASK_TEMPLATE_CATALOG_SCHEMA_VERSION,
   TASK_TEMPLATE_CODE_MAX_LENGTH,
   TASK_TEMPLATE_EVIDENCE_RULE_MAX_BYTES,
   TASK_TEMPLATE_POINTS_MAX,
+  TASK_TEMPLATE_SUPPORTED_LOCALES_MAX,
   TASK_TEMPLATE_VERSION_MAX,
+  type TaskTemplateAdoptionMode,
+  type TaskTemplateCanonicalObject,
   type TaskTemplateCatalogStatus,
   type TaskTemplateCatalogVersion,
+  type TaskTemplateLocaleReadiness,
+  type TaskTemplateLocalizedContent,
+  type TaskTemplatePointsPolicy,
+  type TaskTemplateRequiredPolicy,
 } from "../domain/taskTemplateCatalog";
-import type { VerificationType, WalletCompatibility } from "../domain/types";
+import type { RiskLevel, VerificationType, WalletCompatibility } from "../domain/types";
 import {
   authSessionRolePolicyById,
   type AuthRoleCapabilityId,
@@ -49,8 +57,40 @@ const CANONICAL_KEY_MAX_BYTES = 96;
 const CANONICAL_STRING_MAX_BYTES = 4_096;
 
 const CATALOG_STATUSES = ["active", "deprecated", "retired"] as const;
+const ADOPTION_MODES = ["direct", "manual_review", "deferred"] as const;
+const RISK_LEVELS = ["low", "medium", "high"] as const;
 const VERIFICATION_TYPES = ["WALLET", "ON_CHAIN", "DAPP_API", "SOCIAL", "MANUAL"] as const;
 const WALLET_COMPATIBILITIES = ["ANY", "AA_ONLY", "EOA_ONLY"] as const;
+const LOCALE_READINESS = ["ready", "reviewed", "ai_draft", "fallback", "missing"] as const;
+const CATALOG_TEMPLATE_FIELDS = new Set([
+  "adoptionMode",
+  "catalogSchemaVersion",
+  "category",
+  "checksum",
+  "evidenceRule",
+  "localeReadiness",
+  "localizedContent",
+  "points",
+  "requiredPolicy",
+  "riskLevel",
+  "status",
+  "supportedLocales",
+  "templateCode",
+  "verificationType",
+  "version",
+  "walletCompatibility",
+]);
+const CATALOG_PAGE_FIELDS = new Set([
+  "catalogSchemaVersion",
+  "items",
+  "page",
+  "snapshotAt",
+  "totalActive",
+]);
+const CATALOG_PAGE_METADATA_FIELDS = new Set(["limit", "nextCursor"]);
+const POINTS_FIELDS = new Set(["default", "maximum", "minimum"]);
+const REQUIRED_POLICY_FIELDS = new Set(["default", "overrideAllowed"]);
+const LOCALIZED_CONTENT_FIELDS = new Set(["description", "title"]);
 const ADOPTION_TASK_FIELDS = new Set([
   "campaignId",
   "createdAt",
@@ -135,15 +175,56 @@ export interface TaskTemplateCatalogCloseCommand {
   readonly traceId: string;
 }
 
+export type TaskTemplateCatalogLocaleResolutionStatus =
+  | "ai_draft"
+  | "exact"
+  | "fallback"
+  | "reviewed";
+
+export interface TaskTemplateCatalogLocaleResolution {
+  readonly requestedLocale: string | null;
+  readonly resolvedLocale: string;
+  readonly status: TaskTemplateCatalogLocaleResolutionStatus;
+}
+
+export interface TaskTemplateCatalogResolvedTemplate {
+  readonly adoptionMode: TaskTemplateAdoptionMode;
+  readonly catalogSchemaVersion: typeof TASK_TEMPLATE_CATALOG_SCHEMA_VERSION;
+  readonly category: string;
+  readonly checksum: string;
+  readonly content: TaskTemplateLocalizedContent;
+  readonly evidenceRule: TaskTemplateCanonicalObject;
+  readonly locale: TaskTemplateCatalogLocaleResolution;
+  readonly points: TaskTemplatePointsPolicy;
+  readonly requiredPolicy: TaskTemplateRequiredPolicy;
+  readonly riskLevel: RiskLevel;
+  readonly status: TaskTemplateCatalogStatus;
+  readonly templateCode: string;
+  readonly verificationType: VerificationType;
+  readonly version: number;
+  readonly walletCompatibility: WalletCompatibility;
+}
+
+export interface TaskTemplateCatalogResolvedPage {
+  readonly catalogSchemaVersion: typeof TASK_TEMPLATE_CATALOG_SCHEMA_VERSION;
+  readonly items: readonly TaskTemplateCatalogResolvedTemplate[];
+  readonly page: Readonly<{
+    limit: number;
+    nextCursor: string | null;
+  }>;
+  readonly snapshotAt: string;
+  readonly totalActive: number;
+}
+
 export interface TaskTemplateCatalogListResult {
-  readonly page: TaskTemplateCatalogPage;
+  readonly page: TaskTemplateCatalogResolvedPage;
   readonly status: "ok";
   readonly traceId: string;
 }
 
 export interface TaskTemplateCatalogDetailResult {
   readonly status: "ok";
-  readonly template: TaskTemplateCatalogVersion;
+  readonly template: TaskTemplateCatalogResolvedTemplate;
   readonly traceId: string;
 }
 
@@ -771,7 +852,7 @@ const normalizeCanonicalValue = (
   }
 };
 
-const canonicalEvidenceJson = (value: unknown, traceId: string): string => {
+const canonicalEvidence = (value: unknown, traceId: string): CanonicalRuntimeObject => {
   const normalized = normalizeCanonicalValue(
     value,
     new WeakSet<object>(),
@@ -789,28 +870,404 @@ const canonicalEvidenceJson = (value: unknown, traceId: string): string => {
   ) {
     return integrityFailure(traceId);
   }
-  return serialized;
+  return normalized as CanonicalRuntimeObject;
 };
 
-const canonicalTimestampMilliseconds = (value: unknown, traceId: string): number => {
+const canonicalEvidenceJson = (value: unknown, traceId: string): string => {
+  const serialized = JSON.stringify(canonicalEvidence(value, traceId));
+  return typeof serialized === "string" ? serialized : integrityFailure(traceId);
+};
+
+const parseCanonicalTimestamp = (value: unknown): number | null => {
   if (
     typeof value !== "string"
     || value.length !== 24
     || !ISO_TIMESTAMP_PATTERN.test(value)
   ) {
-    return integrityFailure(traceId);
+    return null;
   }
   const milliseconds = Date.parse(value);
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) {
-    return integrityFailure(traceId);
-  }
-  return milliseconds;
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value
+    ? milliseconds
+    : null;
+};
+
+const canonicalTimestampMilliseconds = (value: unknown, traceId: string): number => {
+  const milliseconds = parseCanonicalTimestamp(value);
+  return milliseconds === null ? integrityFailure(traceId) : milliseconds;
 };
 
 const includesString = <TValue extends string>(
   allowed: readonly TValue[],
   value: unknown,
 ): value is TValue => typeof value === "string" && (allowed as readonly string[]).includes(value);
+
+type CatalogReadOperation = Extract<TaskTemplateCatalogOperation, "detail" | "list">;
+type ResolvableLocaleReadiness = Exclude<TaskTemplateLocaleReadiness, "missing">;
+
+interface LocaleCandidate {
+  readonly content: TaskTemplateLocalizedContent;
+  readonly locale: string;
+  readonly readiness: ResolvableLocaleReadiness;
+}
+
+const LOCALE_QUALITY_RANK: Readonly<Record<ResolvableLocaleReadiness, number>> = Object.freeze({
+  ai_draft: 2,
+  fallback: 3,
+  ready: 0,
+  reviewed: 1,
+});
+
+const catalogReadIntegrityFailure = (
+  operation: CatalogReadOperation,
+  traceId: string,
+): never => {
+  throw catalogError("TASK_TEMPLATE_CORRUPT", "catalogResult", operation, traceId);
+};
+
+const localizedText = (
+  value: unknown,
+  maximumBytes: number,
+  traceId: string,
+): string => {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > maximumBytes
+    || hasUnpairedSurrogate(value)
+    || utf8ByteLength(value) > maximumBytes
+  ) {
+    return integrityFailure(traceId);
+  }
+  return value;
+};
+
+const resolveTemplateLocale = (
+  template: InputRecord,
+  requestedLocale: string | null,
+  operation: CatalogReadOperation,
+  traceId: string,
+): Readonly<{
+  content: TaskTemplateLocalizedContent;
+  locale: TaskTemplateCatalogLocaleResolution;
+}> => {
+  const supportedValue = inputValue(template, "supportedLocales");
+  if (
+    !Array.isArray(supportedValue)
+    || Object.getPrototypeOf(supportedValue) !== Array.prototype
+    || supportedValue.length === 0
+    || supportedValue.length > TASK_TEMPLATE_SUPPORTED_LOCALES_MAX
+    || Reflect.ownKeys(supportedValue).length !== supportedValue.length + 1
+  ) {
+    return catalogReadIntegrityFailure(operation, traceId);
+  }
+
+  const supportedLocales: string[] = [];
+  for (let index = 0; index < supportedValue.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(supportedValue, String(index));
+    const locale = descriptor?.enumerable && "value" in descriptor
+      ? descriptor.value
+      : undefined;
+    if (
+      typeof locale !== "string"
+      || locale.length > 35
+      || !LOCALE_PATTERN.test(locale)
+    ) {
+      return catalogReadIntegrityFailure(operation, traceId);
+    }
+    supportedLocales.push(locale);
+  }
+  if (new Set(supportedLocales).size !== supportedLocales.length) {
+    return catalogReadIntegrityFailure(operation, traceId);
+  }
+  supportedLocales.sort();
+
+  const supportedSet = new Set(supportedLocales);
+  const contentByLocale = strictRecord(
+    inputValue(template, "localizedContent"),
+    supportedSet,
+    "catalogResult",
+    operation,
+    traceId,
+  );
+  const readinessByLocale = strictRecord(
+    inputValue(template, "localeReadiness"),
+    supportedSet,
+    "catalogResult",
+    operation,
+    traceId,
+  );
+  const candidates: LocaleCandidate[] = [];
+
+  for (const locale of supportedLocales) {
+    const readinessDescriptor = Object.getOwnPropertyDescriptor(readinessByLocale, locale);
+    let readiness: TaskTemplateLocaleReadiness | undefined;
+    if (readinessDescriptor !== undefined) {
+      if (
+        !readinessDescriptor.enumerable
+        || !("value" in readinessDescriptor)
+        || !includesString(LOCALE_READINESS, readinessDescriptor.value)
+      ) {
+        return catalogReadIntegrityFailure(operation, traceId);
+      }
+      readiness = readinessDescriptor.value;
+    }
+
+    const contentDescriptor = Object.getOwnPropertyDescriptor(contentByLocale, locale);
+    let content: TaskTemplateLocalizedContent | undefined;
+    if (contentDescriptor !== undefined) {
+      if (!contentDescriptor.enumerable || !("value" in contentDescriptor)) {
+        return catalogReadIntegrityFailure(operation, traceId);
+      }
+      const contentRecord = strictRecord(
+        contentDescriptor.value,
+        LOCALIZED_CONTENT_FIELDS,
+        "catalogResult",
+        operation,
+        traceId,
+      );
+      const titleDescriptor = Object.getOwnPropertyDescriptor(contentRecord, "title");
+      const descriptionDescriptor = Object.getOwnPropertyDescriptor(contentRecord, "description");
+      const title = titleDescriptor === undefined
+        ? undefined
+        : localizedText(titleDescriptor.value, 160, traceId);
+      const description = descriptionDescriptor === undefined
+        ? undefined
+        : localizedText(descriptionDescriptor.value, 1_000, traceId);
+      if (title !== undefined && description !== undefined) {
+        content = Object.freeze({ description, title });
+      }
+    }
+
+    if (content !== undefined && readiness !== undefined && readiness !== "missing") {
+      candidates.push(Object.freeze({ content, locale, readiness }));
+    }
+  }
+
+  candidates.sort((left, right) =>
+    LOCALE_QUALITY_RANK[left.readiness] - LOCALE_QUALITY_RANK[right.readiness]
+    || (left.locale < right.locale ? -1 : left.locale > right.locale ? 1 : 0));
+  const exactCandidate = requestedLocale === null
+    ? undefined
+    : candidates.find(({ locale }) => locale === requestedLocale);
+  const selected = exactCandidate ?? candidates[0];
+  if (selected === undefined) {
+    return catalogReadIntegrityFailure(operation, traceId);
+  }
+  const mappedStatus: TaskTemplateCatalogLocaleResolutionStatus = selected.readiness === "ready"
+    ? "exact"
+    : selected.readiness;
+  const resolutionStatus = requestedLocale !== null && selected.locale !== requestedLocale
+    ? "fallback"
+    : mappedStatus;
+  return Object.freeze({
+    content: selected.content,
+    locale: Object.freeze({
+      requestedLocale,
+      resolvedLocale: selected.locale,
+      status: resolutionStatus,
+    }),
+  });
+};
+
+const projectCatalogTemplate = (
+  value: TaskTemplateCatalogVersion,
+  requestedLocale: string | null,
+  operation: CatalogReadOperation,
+  traceId: string,
+): TaskTemplateCatalogResolvedTemplate => {
+  try {
+    const template = strictCompleteRecord(
+      value,
+      CATALOG_TEMPLATE_FIELDS,
+      "catalogResult",
+      operation,
+      traceId,
+    );
+    const adoptionMode = inputValue(template, "adoptionMode");
+    const catalogSchemaVersion = inputValue(template, "catalogSchemaVersion");
+    const category = inputValue(template, "category");
+    const checksum = inputValue(template, "checksum");
+    const riskLevel = inputValue(template, "riskLevel");
+    const status = inputValue(template, "status");
+    const templateCode = inputValue(template, "templateCode");
+    const verificationType = inputValue(template, "verificationType");
+    const version = inputValue(template, "version");
+    const walletCompatibility = inputValue(template, "walletCompatibility");
+    if (
+      !includesString(ADOPTION_MODES, adoptionMode)
+      || catalogSchemaVersion !== TASK_TEMPLATE_CATALOG_SCHEMA_VERSION
+      || typeof category !== "string"
+      || category.length === 0
+      || category.length > 64
+      || !CATEGORY_PATTERN.test(category)
+      || typeof checksum !== "string"
+      || !CHECKSUM_PATTERN.test(checksum)
+      || !includesString(RISK_LEVELS, riskLevel)
+      || !includesString(CATALOG_STATUSES, status)
+      || typeof templateCode !== "string"
+      || templateCode.length > TASK_TEMPLATE_CODE_MAX_LENGTH
+      || !TEMPLATE_CODE_PATTERN.test(templateCode)
+      || !includesString(VERIFICATION_TYPES, verificationType)
+      || !Number.isSafeInteger(version)
+      || (version as number) < 1
+      || (version as number) > TASK_TEMPLATE_VERSION_MAX
+      || !includesString(WALLET_COMPATIBILITIES, walletCompatibility)
+    ) {
+      return catalogReadIntegrityFailure(operation, traceId);
+    }
+
+    const pointsRecord = strictCompleteRecord(
+      inputValue(template, "points"),
+      POINTS_FIELDS,
+      "catalogResult",
+      operation,
+      traceId,
+    );
+    const defaultPoints = inputValue(pointsRecord, "default");
+    const maximum = inputValue(pointsRecord, "maximum");
+    const minimum = inputValue(pointsRecord, "minimum");
+    if (
+      !Number.isSafeInteger(defaultPoints)
+      || !Number.isSafeInteger(maximum)
+      || !Number.isSafeInteger(minimum)
+      || (minimum as number) < 0
+      || (defaultPoints as number) < (minimum as number)
+      || (maximum as number) < (defaultPoints as number)
+      || (maximum as number) > TASK_TEMPLATE_POINTS_MAX
+    ) {
+      return catalogReadIntegrityFailure(operation, traceId);
+    }
+    const points: TaskTemplatePointsPolicy = Object.freeze({
+      default: defaultPoints as number,
+      maximum: maximum as number,
+      minimum: minimum as number,
+    });
+
+    const requiredRecord = strictCompleteRecord(
+      inputValue(template, "requiredPolicy"),
+      REQUIRED_POLICY_FIELDS,
+      "catalogResult",
+      operation,
+      traceId,
+    );
+    const defaultRequired = inputValue(requiredRecord, "default");
+    const overrideAllowed = inputValue(requiredRecord, "overrideAllowed");
+    if (typeof defaultRequired !== "boolean" || typeof overrideAllowed !== "boolean") {
+      return catalogReadIntegrityFailure(operation, traceId);
+    }
+    const requiredPolicy: TaskTemplateRequiredPolicy = Object.freeze({
+      default: defaultRequired,
+      overrideAllowed,
+    });
+    const evidenceRule = canonicalEvidence(
+      inputValue(template, "evidenceRule"),
+      traceId,
+    ) as TaskTemplateCanonicalObject;
+    const resolved = resolveTemplateLocale(template, requestedLocale, operation, traceId);
+
+    return Object.freeze({
+      adoptionMode,
+      catalogSchemaVersion,
+      category,
+      checksum,
+      content: resolved.content,
+      evidenceRule,
+      locale: resolved.locale,
+      points,
+      requiredPolicy,
+      riskLevel,
+      status,
+      templateCode,
+      verificationType,
+      version: version as number,
+      walletCompatibility,
+    });
+  } catch {
+    return catalogReadIntegrityFailure(operation, traceId);
+  }
+};
+
+const projectCatalogPage = (
+  value: TaskTemplateCatalogPage,
+  requestedLocale: string | null,
+  traceId: string,
+): TaskTemplateCatalogResolvedPage => {
+  try {
+    const page = strictCompleteRecord(
+      value,
+      CATALOG_PAGE_FIELDS,
+      "catalogResult",
+      "list",
+      traceId,
+    );
+    const catalogSchemaVersion = inputValue(page, "catalogSchemaVersion");
+    const itemsValue = inputValue(page, "items");
+    const snapshotAt = inputValue(page, "snapshotAt");
+    const totalActive = inputValue(page, "totalActive");
+    if (
+      catalogSchemaVersion !== TASK_TEMPLATE_CATALOG_SCHEMA_VERSION
+      || !Array.isArray(itemsValue)
+      || Object.getPrototypeOf(itemsValue) !== Array.prototype
+      || itemsValue.length > TASK_TEMPLATE_CATALOG_MAX_PAGE_SIZE
+      || Reflect.ownKeys(itemsValue).length !== itemsValue.length + 1
+      || parseCanonicalTimestamp(snapshotAt) === null
+      || !Number.isSafeInteger(totalActive)
+      || (totalActive as number) < 0
+    ) {
+      return catalogReadIntegrityFailure("list", traceId);
+    }
+
+    const metadata = strictCompleteRecord(
+      inputValue(page, "page"),
+      CATALOG_PAGE_METADATA_FIELDS,
+      "catalogResult",
+      "list",
+      traceId,
+    );
+    const limit = inputValue(metadata, "limit");
+    const nextCursor = inputValue(metadata, "nextCursor");
+    if (
+      !Number.isSafeInteger(limit)
+      || (limit as number) < 1
+      || (limit as number) > TASK_TEMPLATE_CATALOG_MAX_PAGE_SIZE
+      || itemsValue.length > (limit as number)
+      || (nextCursor !== null && (
+        typeof nextCursor !== "string"
+        || nextCursor.length === 0
+        || nextCursor.length > CURSOR_MAX_LENGTH
+      ))
+    ) {
+      return catalogReadIntegrityFailure("list", traceId);
+    }
+
+    const items: TaskTemplateCatalogResolvedTemplate[] = [];
+    for (let index = 0; index < itemsValue.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(itemsValue, String(index));
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        return catalogReadIntegrityFailure("list", traceId);
+      }
+      items.push(projectCatalogTemplate(
+        descriptor.value as TaskTemplateCatalogVersion,
+        requestedLocale,
+        "list",
+        traceId,
+      ));
+    }
+    return Object.freeze({
+      catalogSchemaVersion,
+      items: Object.freeze(items),
+      page: Object.freeze({
+        limit: limit as number,
+        nextCursor: nextCursor as string | null,
+      }),
+      snapshotAt: snapshotAt as string,
+      totalActive: totalActive as number,
+    });
+  } catch {
+    return catalogReadIntegrityFailure("list", traceId);
+  }
+};
 
 const validateAdoptionResult = (
   value: TaskTemplateAdoptedTask,
@@ -941,7 +1398,11 @@ export const createTaskTemplateCatalogService = ({
       historicalReadAllowed: authority.historicalReadAllowed,
       traceId,
     }));
-    return Object.freeze({ page, status: "ok" as const, traceId });
+    return Object.freeze({
+      page: projectCatalogPage(page, query.locale ?? null, traceId),
+      status: "ok" as const,
+      traceId,
+    });
   };
 
   const detail = async (
@@ -964,14 +1425,14 @@ export const createTaskTemplateCatalogService = ({
     if (template === null) {
       return authorizationDenied("detail", traceId);
     }
+    const projected = projectCatalogTemplate(template, null, "detail", traceId);
     if (
-      template.templateCode !== identity.templateCode
-      || template.version !== identity.version
-      || !CHECKSUM_PATTERN.test(template.checksum)
+      projected.templateCode !== identity.templateCode
+      || projected.version !== identity.version
     ) {
       throw catalogError("TASK_TEMPLATE_CORRUPT", "catalogResult", "detail", traceId);
     }
-    return Object.freeze({ status: "ok" as const, template, traceId });
+    return Object.freeze({ status: "ok" as const, template: projected, traceId });
   };
 
   const adopt = async (

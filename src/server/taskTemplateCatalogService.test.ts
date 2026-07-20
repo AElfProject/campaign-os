@@ -115,6 +115,62 @@ const catalogPage = (items: readonly TaskTemplateCatalogVersion[] = [directTempl
   totalActive: items.length,
 });
 
+const catalogTemplate = (
+  overrides: Record<string, unknown> = {},
+): TaskTemplateCatalogVersion => Object.freeze({
+  ...directTemplate,
+  ...overrides,
+}) as TaskTemplateCatalogVersion;
+
+const withoutKey = (
+  record: Readonly<Record<string, unknown>>,
+  key: string,
+): Record<string, unknown> => Object.fromEntries(
+  Object.entries(record).filter(([candidate]) => candidate !== key),
+);
+
+const resolvedTemplate = (
+  template: TaskTemplateCatalogVersion,
+  requestedLocale: string | null,
+  resolvedLocale: string,
+  resolutionStatus: "ai_draft" | "exact" | "fallback" | "reviewed",
+) => ({
+  adoptionMode: template.adoptionMode,
+  catalogSchemaVersion: template.catalogSchemaVersion,
+  category: template.category,
+  checksum: template.checksum,
+  content: template.localizedContent[resolvedLocale],
+  evidenceRule: template.evidenceRule,
+  locale: {
+    requestedLocale,
+    resolvedLocale,
+    status: resolutionStatus,
+  },
+  points: template.points,
+  requiredPolicy: template.requiredPolicy,
+  riskLevel: template.riskLevel,
+  status: template.status,
+  templateCode: template.templateCode,
+  verificationType: template.verificationType,
+  version: template.version,
+  walletCompatibility: template.walletCompatibility,
+});
+
+const resolvedCatalogPage = (
+  items: readonly TaskTemplateCatalogVersion[] = [directTemplate],
+  requestedLocale: string | null = null,
+  resolvedLocale = "en-US",
+  resolutionStatus: "ai_draft" | "exact" | "fallback" | "reviewed" = "exact",
+) => ({
+  ...catalogPage(items),
+  items: items.map((template) => resolvedTemplate(
+    template,
+    requestedLocale,
+    resolvedLocale,
+    resolutionStatus,
+  )),
+});
+
 const adoptedTask = (
   overrides: Partial<TaskTemplateAdoptedTask> = {},
 ): TaskTemplateAdoptedTask => Object.freeze({
@@ -505,7 +561,7 @@ describe("task template catalog service reads", () => {
     const service = createService(store);
 
     await expect(service.list(listCommand(ownerReadAuthority()))).resolves.toEqual({
-      page: catalogPage(),
+      page: resolvedCatalogPage(),
       status: "ok",
       traceId: "trace-catalog-service-list",
     });
@@ -513,7 +569,7 @@ describe("task template catalog service reads", () => {
       ...listCommand(adminReadAuthority()),
       traceId: "trace-catalog-service-admin-list",
     })).resolves.toEqual({
-      page: catalogPage(),
+      page: resolvedCatalogPage(),
       status: "ok",
       traceId: "trace-catalog-service-admin-list",
     });
@@ -526,6 +582,213 @@ describe("task template catalog service reads", () => {
       historicalReadAllowed: true,
       traceId: "trace-catalog-service-admin-list",
     });
+  });
+
+  it.each([
+    {
+      label: "exact ready",
+      requestedLocale: "en-US",
+      resolvedLocale: "en-US",
+      resolutionStatus: "exact" as const,
+      template: directTemplate,
+    },
+    {
+      label: "reviewed",
+      requestedLocale: "zh-CN",
+      resolvedLocale: "zh-CN",
+      resolutionStatus: "reviewed" as const,
+      template: directTemplate,
+    },
+    {
+      label: "ai draft",
+      requestedLocale: "zh-CN",
+      resolvedLocale: "zh-CN",
+      resolutionStatus: "ai_draft" as const,
+      template: catalogTemplate({
+        localeReadiness: { ...directTemplate.localeReadiness, "zh-CN": "ai_draft" },
+      }),
+    },
+    {
+      label: "explicit fallback",
+      requestedLocale: "zh-TW",
+      resolvedLocale: "zh-TW",
+      resolutionStatus: "fallback" as const,
+      template: directTemplate,
+    },
+    {
+      label: "unsupported locale",
+      requestedLocale: "fr-FR",
+      resolvedLocale: "en-US",
+      resolutionStatus: "fallback" as const,
+      template: directTemplate,
+    },
+    {
+      label: "missing requested content",
+      requestedLocale: "zh-CN",
+      resolvedLocale: "en-US",
+      resolutionStatus: "fallback" as const,
+      template: catalogTemplate({
+        localizedContent: withoutKey(directTemplate.localizedContent, "zh-CN"),
+      }),
+    },
+    {
+      label: "partial requested content",
+      requestedLocale: "zh-CN",
+      resolvedLocale: "en-US",
+      resolutionStatus: "fallback" as const,
+      template: catalogTemplate({
+        localizedContent: {
+          ...directTemplate.localizedContent,
+          "zh-CN": { title: directTemplate.localizedContent["zh-CN"]?.title },
+        },
+      }),
+    },
+    {
+      label: "missing requested readiness",
+      requestedLocale: "zh-CN",
+      resolvedLocale: "en-US",
+      resolutionStatus: "fallback" as const,
+      template: catalogTemplate({
+        localeReadiness: withoutKey(directTemplate.localeReadiness, "zh-CN"),
+      }),
+    },
+    {
+      label: "no requested locale",
+      requestedLocale: null,
+      resolvedLocale: "en-US",
+      resolutionStatus: "exact" as const,
+      template: directTemplate,
+    },
+    {
+      label: "multiple deterministic candidates",
+      requestedLocale: "ja-JP",
+      resolvedLocale: "de-DE",
+      resolutionStatus: "fallback" as const,
+      template: catalogTemplate({
+        localeReadiness: { "de-DE": "ready", "en-US": "ready", "fr-FR": "ready" },
+        localizedContent: {
+          "de-DE": { description: "German description", title: "German title" },
+          "en-US": { description: "English description", title: "English title" },
+          "fr-FR": { description: "French description", title: "French title" },
+        },
+        supportedLocales: ["fr-FR", "en-US", "de-DE"],
+      }),
+    },
+  ])("resolves $label locale projection from canonical store facts", async ({
+    requestedLocale,
+    resolvedLocale,
+    resolutionStatus,
+    template,
+  }) => {
+    const store = fakeStore({ list: vi.fn(async () => catalogPage([template])) });
+    const service = createService(store);
+    const query = requestedLocale === null ? {} : { locale: requestedLocale };
+
+    const result = await service.list({
+      authority: ownerReadAuthority(),
+      query,
+      traceId: "trace-locale-projection",
+    });
+
+    expect(result.page.items).toEqual([
+      resolvedTemplate(template, requestedLocale, resolvedLocale, resolutionStatus),
+    ]);
+    const projected = result.page.items[0]!;
+    expect(Reflect.ownKeys(projected).sort()).toEqual([
+      "adoptionMode",
+      "catalogSchemaVersion",
+      "category",
+      "checksum",
+      "content",
+      "evidenceRule",
+      "locale",
+      "points",
+      "requiredPolicy",
+      "riskLevel",
+      "status",
+      "templateCode",
+      "verificationType",
+      "version",
+      "walletCompatibility",
+    ].sort());
+    expect(Object.isFrozen(result.page)).toBe(true);
+    expect(Object.isFrozen(result.page.items)).toBe(true);
+    expect(Object.isFrozen(projected)).toBe(true);
+    expect(Object.isFrozen(projected.content)).toBe(true);
+    expect(Object.isFrozen(projected.locale)).toBe(true);
+    expect(Object.isFrozen(projected.points)).toBe(true);
+    expect(Object.isFrozen(projected.requiredPolicy)).toBe(true);
+    expect(Object.isFrozen(projected.evidenceRule)).toBe(true);
+    expect(projected.content).not.toBe(template.localizedContent[resolvedLocale]);
+    expect(projected.evidenceRule).not.toBe(template.evidenceRule);
+    expect(projected.points).not.toBe(template.points);
+    expect(projected.requiredPolicy).not.toBe(template.requiredPolicy);
+    expect(store.list).toHaveBeenCalledWith(query, {
+      historicalReadAllowed: false,
+      traceId: "trace-locale-projection",
+    });
+  });
+
+  it("returns identical locale projections for Owner and Admin reads", async () => {
+    const store = fakeStore();
+    const service = createService(store);
+
+    const owner = await service.list({
+      authority: ownerReadAuthority(),
+      query: { locale: "zh-CN" },
+      traceId: "trace-owner-locale",
+    });
+    const admin = await service.list({
+      authority: adminReadAuthority(),
+      query: { locale: "zh-CN" },
+      traceId: "trace-admin-locale",
+    });
+
+    expect(owner.page).toEqual(admin.page);
+    expect(owner.page.items[0]).toEqual(
+      resolvedTemplate(directTemplate, "zh-CN", "zh-CN", "reviewed"),
+    );
+  });
+
+  it.each([
+    ["no resolvable locale", catalogTemplate({
+      localeReadiness: {
+        "en-US": "missing",
+        "zh-CN": "missing",
+        "zh-TW": "missing",
+      },
+    })],
+    ["invalid supported locales", catalogTemplate({ supportedLocales: ["en-US", "en-US"] })],
+    ["unknown readiness", catalogTemplate({
+      localeReadiness: { ...directTemplate.localeReadiness, "en-US": "published" },
+    })],
+    ["invalid content value", catalogTemplate({
+      localizedContent: {
+        ...directTemplate.localizedContent,
+        "en-US": { description: "English description", title: 42 },
+      },
+    })],
+    ["unsupported content key", catalogTemplate({
+      localizedContent: {
+        ...directTemplate.localizedContent,
+        "fr-FR": { description: "Private description", title: "Private title" },
+      },
+    })],
+  ])("fails closed on $label locale facts", async (_label, template) => {
+    const store = fakeStore({ list: vi.fn(async () => catalogPage([template])) });
+    const service = createService(store);
+
+    await expect(service.list({
+      authority: ownerReadAuthority(),
+      query: { locale: "en-US" },
+      traceId: "trace-locale-corrupt",
+    })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_CORRUPT",
+      field: "catalogResult",
+      operation: "list",
+      traceId: "trace-locale-corrupt",
+    });
+    expect(store.list).toHaveBeenCalledTimes(1);
   });
 
   it("allows historical list/detail only for an explicit issued Admin capability", async () => {
@@ -558,13 +821,59 @@ describe("task template catalog service reads", () => {
       traceId: "trace-admin-history-detail",
     })).resolves.toEqual({
       status: "ok",
-      template: historical,
+      template: resolvedTemplate(historical, null, "en-US", "exact"),
       traceId: "trace-admin-history-detail",
     });
     expect(store.get).toHaveBeenCalledWith(
       { templateCode: historical.templateCode, version: historical.version },
       { historicalReadAllowed: true, traceId: "trace-admin-history-detail" },
     );
+  });
+
+  it("resolves detail from a deterministic canonical default without inventing a request", async () => {
+    const template = catalogTemplate({
+      localeReadiness: { "en-US": "ai_draft", "zh-CN": "reviewed" },
+      localizedContent: {
+        "en-US": { description: "English draft", title: "English draft title" },
+        "zh-CN": { description: "Reviewed Chinese", title: "Reviewed Chinese title" },
+      },
+      supportedLocales: ["en-US", "zh-CN"],
+    });
+    const store = fakeStore({ get: vi.fn(async () => template) });
+    const service = createService(store);
+
+    await expect(service.detail({
+      authority: ownerReadAuthority(),
+      template: { templateCode: template.templateCode, version: template.version },
+      traceId: "trace-detail-default-locale",
+    })).resolves.toEqual({
+      status: "ok",
+      template: resolvedTemplate(template, null, "zh-CN", "reviewed"),
+      traceId: "trace-detail-default-locale",
+    });
+  });
+
+  it("fails a detail read closed when no canonical locale can be resolved", async () => {
+    const template = catalogTemplate({
+      localeReadiness: {
+        "en-US": "missing",
+        "zh-CN": "missing",
+        "zh-TW": "missing",
+      },
+    });
+    const store = fakeStore({ get: vi.fn(async () => template) });
+    const service = createService(store);
+
+    await expect(service.detail({
+      authority: ownerReadAuthority(),
+      template: { templateCode: template.templateCode, version: template.version },
+      traceId: "trace-detail-locale-corrupt",
+    })).rejects.toMatchObject({
+      code: "TASK_TEMPLATE_CORRUPT",
+      field: "catalogResult",
+      operation: "detail",
+      traceId: "trace-detail-locale-corrupt",
+    });
   });
 
   it("maps missing exact detail to a non-leaking typed error", async () => {
