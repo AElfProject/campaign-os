@@ -914,14 +914,7 @@ const validateAdoptionResult = (
       }),
       traceId,
     }) as TaskTemplateCatalogAdoptResult;
-  } catch (error) {
-    if (
-      error instanceof TaskTemplateCatalogError
-      && error.code === "TASK_TEMPLATE_CORRUPT"
-      && error.field === "adoptionResult"
-    ) {
-      throw error;
-    }
+  } catch {
     return integrityFailure(traceId);
   }
 };

@@ -152,6 +152,9 @@ type MutableAdoptionResult = Record<string, unknown> & {
 };
 
 type AdoptionResultMutation = (task: MutableAdoptionResult) => unknown;
+type ReflectionTrapName = "getOwnPropertyDescriptor" | "getPrototypeOf" | "ownKeys";
+
+const PRIVATE_REFLECTION_MARKER = "private-reflection-marker";
 
 const taskRequiredFields = [
   "campaignId",
@@ -205,6 +208,34 @@ const replaceSnapshot = (
   task: MutableAdoptionResult,
   snapshot: Record<string, unknown>,
 ): MutableAdoptionResult => ({ ...task, snapshot });
+
+const reflectionTrapCases = (
+  ["getPrototypeOf", "ownKeys", "getOwnPropertyDescriptor"] as const
+).flatMap((trap) => (["forged", "ordinary"] as const).map((errorKind) => ({
+  errorKind,
+  name: `${trap} ${errorKind} error`,
+  trap,
+})));
+
+const resultWithThrowingReflectionTrap = (
+  trap: ReflectionTrapName,
+  error: Error,
+): TaskTemplateAdoptedTask => {
+  const raise = (): never => {
+    throw error;
+  };
+  const target = mutableAdoptionResult();
+  switch (trap) {
+    case "getPrototypeOf":
+      return new Proxy(target, { getPrototypeOf: raise }) as unknown as TaskTemplateAdoptedTask;
+    case "ownKeys":
+      return new Proxy(target, { ownKeys: raise }) as unknown as TaskTemplateAdoptedTask;
+    case "getOwnPropertyDescriptor":
+      return new Proxy(target, {
+        getOwnPropertyDescriptor: raise,
+      }) as unknown as TaskTemplateAdoptedTask;
+  }
+};
 
 const malformedAdoptionResults: readonly Readonly<{
   name: string;
@@ -779,6 +810,45 @@ describe("task template catalog service adoption", () => {
       expect(serialized).not.toContain(command.authority.session.sessionId);
       expect(serialized).not.toContain(command.authority.session.subject.walletAddress);
       expect(serialized).not.toContain("sensitive-result-material");
+      expect(store.adopt).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(reflectionTrapCases)(
+    "normalizes malformed result reflection failures: $name",
+    async ({ errorKind, trap }) => {
+      const command = adoptCommand();
+      const sourceError = errorKind === "forged"
+        ? Object.assign(new TaskTemplateCatalogError({
+          code: "TASK_TEMPLATE_CORRUPT",
+          field: "adoptionResult",
+          operation: "list",
+          traceId: PRIVATE_REFLECTION_MARKER,
+        }), { privateMetadata: PRIVATE_REFLECTION_MARKER })
+        : Object.assign(new Error(PRIVATE_REFLECTION_MARKER), {
+          privateMetadata: PRIVATE_REFLECTION_MARKER,
+        });
+      const store = fakeStore({
+        adopt: vi.fn(async () => resultWithThrowingReflectionTrap(trap, sourceError)),
+      });
+      const service = createService(store);
+
+      const failure = await service.adopt(command).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(TaskTemplateCatalogError);
+      expect(failure).not.toBe(sourceError);
+      expect(failure).toMatchObject({
+        code: "TASK_TEMPLATE_CORRUPT",
+        field: "adoptionResult",
+        message: "Task template catalog data is invalid.",
+        operation: "adopt",
+        retryable: false,
+        traceId: command.traceId,
+      });
+      expect((failure as Error).stack).toBeUndefined();
+      expect(failure).not.toHaveProperty("privateMetadata");
+      expect(String(failure)).not.toContain(PRIVATE_REFLECTION_MARKER);
+      expect(JSON.stringify(failure)).not.toContain(PRIVATE_REFLECTION_MARKER);
       expect(store.adopt).toHaveBeenCalledTimes(1);
     },
   );
